@@ -4078,7 +4078,7 @@ RCS_checkout (RCSNode *rcs, char *workfile, char *rev, char *nametag, char *opti
     size_t len;
     int free_value = 0;
     char *log = NULL;
-    size_t loglen;
+    size_t loglen = 0;
     Node *vp = NULL;
     uid_t rcs_owner = (uid_t) -1;
     gid_t rcs_group = (gid_t) -1;
@@ -7524,7 +7524,7 @@ RCS_deltas (rcs, fp, rcsbuf, version, op, text, len, log, loglen)
 
 		for (ln = 0; ln < headlines.text.nlines; ++ln)
 		{
-		    char buf[80];
+		    char *buf;
 		    /* Period which separates year from month in date.  */
 		    char *ym;
 		    /* Period which separates month from day in date.  */
@@ -7535,6 +7535,7 @@ RCS_deltas (rcs, fp, rcsbuf, version, op, text, len, log, loglen)
 		    if (prvers == NULL)
 			prvers = vers;
 
+		    buf = xmalloc (strlen (prvers->version) + 24);
 #ifdef SJIS
 		    if (strlen(prvers->author) > 8 && 
 		        _ismbslead(prvers->author, prvers->author + 7)) {
@@ -7552,6 +7553,7 @@ RCS_deltas (rcs, fp, rcsbuf, version, op, text, len, log, loglen)
 			     prvers->author);
 #endif
 		    cvs_output (buf, 0);
+		    xfree (buf);
 
 		    /* Now output the date.  */
 
