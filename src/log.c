@@ -420,7 +420,11 @@ cvslog (argc, argv)
 	{
 		int i;
 		for (i = 0; i < argc; i++)
+#ifdef SJIS
+		send_arg_fconv (argv[i]);
+#else
 		send_arg (argv[i]);
+#endif
 		send_to_server ("rlog\012", 0);
 	}
 	else

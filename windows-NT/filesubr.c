@@ -571,7 +571,7 @@ make_directory (name)
 
     if (stat (name, &sb) == 0 && (!S_ISDIR (sb.st_mode)))
 	    error (0, 0, "%s already exists but is not a directory", fn_root(name));
-    if (!noexec && mkdir (name) < 0)
+    if (!noexec && CVS_MKDIR (name, 0777) < 0)
 	error (1, errno, "cannot make directory %s", fn_root(name));
 }
 
@@ -586,7 +586,7 @@ void make_directories (char *name)
     if (noexec)
 		return;
 
-    if (mkdir (name) == 0 || errno == EEXIST)
+    if (CVS_MKDIR (name, 0777) == 0 || errno == EEXIST)
 		return;
     if (errno != ENOENT)
     {
@@ -602,7 +602,7 @@ void make_directories (char *name)
     *cp++ = '/';
     if (*cp == '\0')
 		return;
-    mkdir (name);
+    CVS_MKDIR (name, 0777);
 }
 
 /* Create directory NAME if it does not already exist; fatal error for
@@ -611,7 +611,7 @@ void make_directories (char *name)
 int
 mkdir_if_needed (char *name)
 {
-    if (mkdir (name) < 0)
+    if (CVS_MKDIR (name, 0777) < 0)
     {
 	if (errno != EEXIST
 #ifdef EACCESS
@@ -636,37 +636,43 @@ mkdir_if_needed (char *name)
  * all write permissions.  Adding write permissions honors the current umask
  * setting.
  */
-void xchmod (char *fname, int writable)
+/*
+ * Note that this isn't correct from the point of view of cygwin compat., but is
+ * a lot faster than any other way
+ */
+void xchmod (const char *fname, int writable)
 {
-	struct stat sb;
-    mode_t mode, oumask;
+	const char *fn = fname;
+	DWORD oldfa,fa = oldfa = GetFileAttributes(fn);
 
-    if (stat (fname, &sb) < 0)
-    {
-	if (!noexec)
-	    error (0, errno, "cannot stat %s", fn_root(fname));
-	return;
-    }
-    oumask = 022; /* NT Default umask */
-    (void) umask (oumask);
-    if (writable)
-    {
-		mode = sb.st_mode | (~oumask
-					& (((sb.st_mode & S_IRUSR) ? S_IWUSR : 0)
-					| ((sb.st_mode & S_IRGRP) ? S_IWGRP : 0)
-					| ((sb.st_mode & S_IROTH) ? S_IWOTH : 0)));
-    }
-    else
-    {
-		mode = sb.st_mode & ~(S_IWRITE | S_IWGRP | S_IWOTH) & ~oumask;
-    }
+	TRACE(3,"xchmod(%s,%d)",fname,writable);
 
-	TRACE(1,"chmod(%s,%o)",PATCH_NULL(fname),mode);
-    if (noexec)
+	if(fa==0xFFFFFFFF)
+	{
+		if (!noexec)
+			error (0, errno, "cannot stat %s", fn_root(fname));
 		return;
+    }
 
-    if (chmod (fname, mode) < 0)
-		error (0, errno, "cannot change mode of file %s", fn_root(fname));
+    if (noexec)
+	{
+		return;
+	}
+
+	if(writable)
+		fa&=~FILE_ATTRIBUTE_READONLY;
+	else
+		fa|=FILE_ATTRIBUTE_READONLY;
+
+
+	if(oldfa!=fa)
+	{
+		if(!SetFileAttributes(fn,fa))
+		{
+			_dosmaperr(GetLastError());
+			error (0, errno, "cannot change mode of file %s", fn_root(fname));
+		}
+	}
 }
 
 
@@ -685,8 +691,13 @@ int wnt_rename (const char *from, const char *to)
 {
     int result, save_errno;
     int readonly = !iswritable (from);
+	int count;
 
-	if(!strcmp(from,to))
+
+	TRACE(3,"wnt_rename(%s,%s)",from,to);
+	TRACE(3,"readonly=%d",readonly);
+
+	if(!fncmp(from,to))
 		return 0;
 
 	if(isfile(to))
@@ -698,11 +709,43 @@ int wnt_rename (const char *from, const char *to)
 #ifdef CVS95
 	/* Win95 doesn't support atomic rename over existing files */
 	DeleteFile(to);
-	result = MoveFile(from,to);
-    save_errno = GetLastError();
+	count=0;
+	while(!(result = MoveFile(from,to)))
+	{
+		save_errno = GetLastError();
+		TRACE(3,"MoveFile returned error %08x",save_errno);
+
+		if(save_errno != ERROR_ACCESS_DENIED)
+			break;
+		Sleep(100);
+		count++;
+		if(count==100)
+		{
+			printf("Unable to rename file %s to %s for 10 seconds, giving up...\n",fn_root(from),fn_root(to),count/10,count>10?"s":"");
+			break;
+		}
+		if(!(count%10))
+			printf("Unable to rename file %s to %s for %d second%s, still trying...\n",fn_root(from),fn_root(to),count/10,count>10?"s":"");
+	}
 #else
-	result = MoveFileExA(from,to,MOVEFILE_COPY_ALLOWED|MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH);
-    save_errno = GetLastError();
+	count=0;
+	while(!(result = MoveFileEx(from,to,MOVEFILE_COPY_ALLOWED|MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)))
+	{
+		save_errno = GetLastError();
+		TRACE(3,"MoveFile returned error %08x",save_errno);
+
+		if(save_errno != ERROR_ACCESS_DENIED)
+			break;
+		Sleep(100);
+		count++;
+		if(count==100)
+		{
+			printf("Unable to rename file %s to %s for 10 seconds, giving up...\n",fn_root(from),fn_root(to),count/10,count>10?"s":"");
+			break;
+		}
+		if(!(count%10))
+			printf("Unable to rename file %s to %s for %d second%s, still trying...\n",fn_root(from),fn_root(to),count/10,count>10?"s":"");
+	}
 #endif
     if (readonly)
     {
@@ -716,6 +759,7 @@ int wnt_rename (const char *from, const char *to)
 	if(!result)
 	{
 		_dosmaperr(save_errno);
+		TRACE(3,"failed - errno=%d, GetLastError=%08x",errno,save_errno);
 	}
     return result?0:-1;
 }

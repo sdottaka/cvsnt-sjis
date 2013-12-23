@@ -547,7 +547,27 @@ static int edit_fileproc (void *callerdat, struct file_info *finfo)
             strcat(wd, finfo->update_dir);
         }
 
+#ifdef SJIS
+	if (current_parsed_root->filename_encoding)
+	{
+	    char *pbuf;
+//	    char *pbuf2;
+	    size_t len;
+	    if (trace)
+		(void) fprintf (stderr, "kanji convert\n");
+	    transcode_buffer(get_local_charset(),
+		current_parsed_root->filename_encoding, wd, 0, &pbuf, &len);
+	    fprintf (fp, "E%s\t%s GMT\t%s\t%s\t", finfo->file, ascnow, hostname, pbuf);
+//	    transcode_buffer(get_local_charset(),
+//		current_parsed_root->filename_encoding, finfo->file, 0, &pbuf2, &len);
+//	    fprintf (fp, "E%s\t%s GMT\t%s\t%s\t", pbuf2, ascnow, hostname, pbuf);
+	    xfree (pbuf);
+	}
+	else
+	    fprintf (fp, "E%s\t%s GMT\t%s\t%s\t", finfo->file, ascnow, hostname, wd);
+#else
         fprintf (fp, "E%s\t%s GMT\t%s\t%s\t", finfo->file, ascnow, hostname, wd);
+#endif
 
         xfree(wd);
     }
@@ -783,8 +803,26 @@ unedit_fileproc (void *callerdat, struct file_info *finfo)
     (void) time (&now);
     ascnow = asctime (gmtime (&now));
     ascnow[24] = '\0';
+#ifdef SJIS
+    if (current_parsed_root->filename_encoding)
+    {
+	char *pbuf;
+	size_t len;
+	if (trace)
+	    (void) fprintf (stderr, "kanji convert\n");
+	transcode_buffer(get_local_charset(),
+	    current_parsed_root->filename_encoding, CurDir, 0, &pbuf, &len);
+        fprintf (fp, "U%s\t%s GMT\t%s\t%s\t\n", finfo->file,
+	     ascnow, hostname, pbuf);
+	xfree (pbuf);
+    }
+    else
+        fprintf (fp, "U%s\t%s GMT\t%s\t%s\t\n", finfo->file,
+	     ascnow, hostname, CurDir);
+#else
     fprintf (fp, "U%s\t%s GMT\t%s\t%s\t\n", finfo->file,
 	     ascnow, hostname, CurDir);
+#endif
 
     if (fclose (fp) < 0)
     {

@@ -594,6 +594,47 @@ static int parse_keyword(char *keyword, char **p, cvsroot_t *newroot)
 			newroot->message_encoding = xstrdup(value);
 		}
 	}
+	else if(!strcasecmp(keyword,"fnenc") || !strcasecmp(keyword,"fnencoding") || !strcasecmp(keyword,"filename_encoding") || !strcasecmp(keyword,"filename-encoding") || !strcasecmp(keyword,"filenameencoding"))
+	{
+		if(*value)
+		{
+			if(!is_valid_encoding(value))
+			{
+				error(0,0,"Bad CVSROOT: Unknown encoding '%s'",value);
+				return -1;
+			}
+			newroot->filename_encoding = xstrdup(value);
+		}
+	}
+	else if(!strcasecmp(keyword,"tenc") || !strcasecmp(keyword,"tencoding") || !strcasecmp(keyword,"text_encoding") || !strcasecmp(keyword,"text-encoding") || !strcasecmp(keyword,"textencoding"))
+	{
+		if(*value)
+		{
+			if(!is_valid_encoding(value))
+			{
+				error(0,0,"Bad CVSROOT: Unknown encoding '%s'",value);
+				return -1;
+			}
+			newroot->text_encoding = xstrdup(value);
+		}
+	}
+	else if(!strcasecmp(keyword,"senc") || !strcasecmp(keyword,"sencoding") || !strcasecmp(keyword,"server_encoding") || !strcasecmp(keyword,"server-encoding") || !strcasecmp(keyword,"serverencoding"))
+	{
+		if(*value)
+		{
+			if(!is_valid_encoding(value))
+			{
+				error(0,0,"Bad CVSROOT: Unknown encoding '%s'",value);
+				return -1;
+			}
+			if (!newroot->message_encoding)
+			    newroot->message_encoding = xstrdup(value);
+			if (!newroot->filename_encoding)
+			    newroot->filename_encoding = xstrdup(value);
+			if (!newroot->text_encoding)
+			    newroot->text_encoding = xstrdup(value);
+		}
+	}
 #endif
 #ifdef CLIENT_SUPPORT
 	else if(client_protocol && client_protocol->validate_keyword)

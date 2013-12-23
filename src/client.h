@@ -35,6 +35,9 @@ extern void server_authenticate_connection(void);
 
 /* Talking to the server. */
 void send_to_server(char const *str, size_t len);
+#ifdef SJIS
+void send_to_server_fconv(char const *str, size_t len);
+#endif
 void read_from_server(char *buf, size_t len);
 
 /* Internal functions that handle client communication to server, etc.  */
@@ -78,6 +81,9 @@ send_files(int argc, char **argv, int local, int aflag, unsigned int flags);
 
 /* Send an argument to the remote server.  */
 void send_arg(const char *string);
+#ifdef SJIS
+void send_arg_fconv(const char *string);
+#endif
 
 /* Send a string of single-char options to the remote server, one by one.  */
 void

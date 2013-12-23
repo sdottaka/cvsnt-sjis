@@ -379,7 +379,26 @@ checkout (argc, argv)
 	if (cat && !status)
 	    send_arg("-c");
 	if (where != NULL)
+#ifdef SJIS
+	{
+	    if (current_parsed_root->filename_encoding)
+	    {
+		char *pbuf;
+		size_t len;
+		if (trace)
+		    (void) fprintf (stderr, "kanji convert\n");
+		transcode_buffer(get_local_charset(),
+		    current_parsed_root->filename_encoding,
+			where, 0, &pbuf, &len);
+		option_with_arg ("-d", pbuf);
+		xfree (pbuf);
+	    }
+	    else
+		option_with_arg ("-d", where);
+	}
+#else
 	    option_with_arg ("-d", where);
+#endif
 	if (status)
 	    send_arg("-s");
 	if (options != NULL && options[0] != '\0')

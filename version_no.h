@@ -44,7 +44,7 @@
 //#define CVSNT_SPECIAL_BUILD " (Prerelease "__DATE__")"
 #endif
 #ifdef SJIS
-#define CVSNT_SPECIAL_BUILD "(SJIS-3)"
+#define CVSNT_SPECIAL_BUILD "(SJIS-4)"
 #endif
 
 //////////////////////////////////////////////////////////////////////////

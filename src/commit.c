@@ -543,13 +543,25 @@ commit (argc, argv)
 		else
 		{
 		    send_to_server ("Directory ", 0);
+#ifdef SJIS
+		    send_to_server_fconv (p->dir[0] == '\0' ? "." : p->dir, 0);
+#else
 		    send_to_server (p->dir[0] == '\0' ? "." : p->dir, 0);
+#endif
 		    send_to_server ("\012", 1);
+#ifdef SJIS
+		    send_to_server_fconv (p->repos, 0);
+#else
 		    send_to_server (p->repos, 0);
+#endif
 		    send_to_server ("\012", 1);
 
 		    send_to_server ("Questionable ", 0);
+#ifdef SJIS
+		    send_to_server_fconv (p->file, 0);
+#else
 		    send_to_server (p->file, 0);
+#endif
 		    send_to_server ("\012", 1);
 		}
 		xfree (p->dir);

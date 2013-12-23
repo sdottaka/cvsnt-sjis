@@ -30,6 +30,9 @@
 int client_overwrite_existing;
 int client_max_dotdot;
 int is_cvsnt = 1;
+#ifdef SJIS
+static int updating;
+#endif
 
 /* The protocol layer that the client is connected to */
 const struct protocol_interface *client_protocol;
@@ -853,6 +856,19 @@ static void call_in_directory (char *pathname, void (*func)(char *data, List *en
     assert (reposname != NULL);
 
 	TRACE(3,"call_in_directory '%s'",PATCH_NULL(pathname));
+	
+#ifdef SJIS
+    if (current_parsed_root->filename_encoding)
+    {
+	size_t len;
+        if (trace)
+            (void) fprintf (stderr, "kanji convert to MS-Kanji\n");
+        transcode_buffer(current_parsed_root->filename_encoding,
+            get_local_charset(), pathname, 0, &pathname, &len);
+        transcode_buffer(current_parsed_root->filename_encoding,
+            get_local_charset(), reposname, 0, &reposname, &len);
+    }
+#endif
 
     reposdirname_absolute = 0;
     if (strncmp (reposname, toplevel_repos, strlen (toplevel_repos)) != 0)
@@ -1192,6 +1208,14 @@ warning: server is not creating directories one at a time");
     (*func) (data, last_entries, short_pathname, filename);
     xfree (short_pathname);
     xfree (reposname);
+
+#ifdef SJIS
+    if (current_parsed_root->filename_encoding)
+    {
+        xfree (reposname);
+        xfree (pathname);
+    }
+#endif
 }
 
 static void
@@ -1766,10 +1790,30 @@ update_entries (data_arg, ent_list, short_pathname, filename)
 			}
 			else
 			{
+#ifdef SJIS
+			    if (current_parsed_root->text_encoding)
+			    {
+				char *pbuf;
+				size_t len;
+				if (trace)
+					(void) fprintf (stderr, "kanji convert to sjis\n");
+				transcode_buffer(current_parsed_root->text_encoding, 
+					get_local_charset(), buf, size, &pbuf, &len);
+				if (write (fd, pbuf, len) != len)
+				    error (1, errno, "writing %s", short_pathname);
+				xfree(pbuf);
+			    }
+			    else
+			    {
 				if (write (fd, buf, size) != size)
 				    error (1, errno, "writing %s", short_pathname);
+			    }
+#else
+			    if (write (fd, buf, size) != size)
+				error (1, errno, "writing %s", short_pathname);
+#endif
 			}
-	    }
+		    }
 		}
 
 	    if (close (fd) < 0)
@@ -1828,6 +1872,18 @@ update_entries (data_arg, ent_list, short_pathname, filename)
 
 	    get_file (filename, short_pathname, (binr&KFLAG_BINARY) ? FOPEN_BINARY_READ : "r",
 		      &filebuf, &filebufsize, &nread, options_flags);
+#ifdef SJIS
+	    if (current_parsed_root->text_encoding && (binr&KFLAG_BINARY))
+	    {
+		char *pbuf;
+		if (trace)
+			(void) fprintf (stderr, "kanji convert\n");
+		transcode_buffer(get_local_charset(), current_parsed_root->text_encoding,
+			filebuf, nread, &pbuf, &nread);
+		xfree(filebuf);
+		filebuf = pbuf;
+	    }
+#endif
 	    /* At this point the contents of the existing file are in
                FILEBUF, and the length of the contents is in NREAD.
                The contents of the patch from the network are in BUF,
@@ -1876,6 +1932,18 @@ update_entries (data_arg, ent_list, short_pathname, filename)
 			}
 			else
 			{
+#ifdef SJIS
+			    if (current_parsed_root->text_encoding && !binw)
+			    {
+				char *pbuf;
+				if (trace)
+					(void) fprintf (stderr, "kanji convert to sjis\n");
+				transcode_buffer(current_parsed_root->text_encoding,
+					get_local_charset(), patchedbuf, patchedlen, &pbuf, &patchedlen);
+				xfree (patchedbuf);
+				patchedbuf = pbuf;
+			    }
+#endif
 			    if (fwrite (patchedbuf, 1, patchedlen, e) != patchedlen)
 					error (1, errno, "cannot write %s", temp_filename);
 			}
@@ -2576,8 +2644,16 @@ void send_renames(const char *dir)
 		while(fgets(from,sizeof(from),fp) && fgets(to,sizeof(to),fp))
 		{
 			send_to_server("Rename ", 0);
+#ifdef SJIS
+			send_to_server_fconv(from, 0);
+#else
 			send_to_server(from, 0);
+#endif
+#ifdef SJIS
+			send_to_server_fconv(to, 0);
+#else
 			send_to_server(to, 0);
+#endif
 		}
 		fclose(fp);
 	}
@@ -2591,7 +2667,11 @@ void send_renames(const char *dir)
 		while(fgets(from,sizeof(from),fp))
 		{
 			send_to_server("VirtualRepository ", 0);
+#ifdef SJIS
+			send_to_server_fconv(from, 0);
+#else
 			send_to_server(from, 0);
+#endif
 		}
 		fclose(fp);
 	}
@@ -2668,12 +2748,27 @@ static void send_repository(char *dir, char *repos, char *update_dir)
 	   sort of duplicates code elsewhere, but each
 	   case seems slightly different...  */
 	char buf[1];
+#ifdef SJIS
+	char *real_p, *p;
+	if (current_parsed_root->filename_encoding)
+	{
+	    size_t len;
+	    if (trace)
+		(void) fprintf (stderr, "kanji convert\n");
+	    transcode_buffer(get_local_charset(),
+		current_parsed_root->filename_encoding, update_dir, 0, &real_p, &len);
+	    p = real_p;
+	}
+	else
+	    p = update_dir;
+#else
 	char *p = update_dir;
+#endif
 	while (*p != '\0')
 	{
 	    assert (*p != '\012');
-#if defined(SJIS) && !defined(JP_SERVEUCPATH)
-	    if(_ismbblead(*p)) {
+#if defined(SJIS)
+	    if(_ismbblead(*p) && !current_parsed_root->filename_encoding) {
 		buf[0] = *p++;
 		send_to_server (buf, 1);
 		buf[0] = *p;
@@ -2692,6 +2787,10 @@ static void send_repository(char *dir, char *repos, char *update_dir)
 	    }
 	    ++p;
 	}
+#ifdef SJIS
+	if (current_parsed_root->filename_encoding)
+		xfree (real_p);
+#endif
     }
     send_to_server ("\012", 1);
 	adm_name[0] = '\0';
@@ -2717,15 +2816,27 @@ static void send_repository(char *dir, char *repos, char *update_dir)
 	  line[strlen(line)-1]='\0';
 	  if(!isabsolute(line))
 	  {
+#ifdef SJIS
+		send_to_server_fconv(current_parsed_root->directory,0);
+#else
 		send_to_server(current_parsed_root->directory,0);
+#endif
 		send_to_server("/",1);
 	  }
+#ifdef SJIS
+	  send_to_server_fconv(line,0);
+#else
 	  send_to_server(line,0);
+#endif
           if (fclose (f) == EOF)
 		error (0, errno, "closing %s", adm_name);
 	}
 	else
+#ifdef SJIS
+	  send_to_server_fconv(repos,0);
+#else
 	  send_to_server(repos,0);
+#endif
 	send_to_server("\012",1);
 
     if (supported_request ("Static-directory"))
@@ -2850,7 +2961,7 @@ void send_a_repository (char *dir, char *repository, char *update_dir)
                    current_parsed_root->directory, set toplevel_repos to
                    current_parsed_root->directory. */
 		if ((repository_len > update_dir_len)
-		    && (strcmp (repository + repository_len - update_dir_len,
+		    && (fncmp (repository + repository_len - update_dir_len,
 				update_dir) == 0)
 		    /* TOPLEVEL_REPOS shouldn't be above current_parsed_root->directory */
 		    && ((repository_len - update_dir_len)
@@ -2925,7 +3036,11 @@ client_expand_modules (argc, argv, local)
     module_argv[argc] = NULL;
 
     for (i = 0; i < argc; ++i)
+#ifdef SJIS
+	send_arg_fconv (argv[i]);
+#else
 	send_arg (argv[i]);
+#endif
     send_a_repository ("", current_parsed_root->directory, "");
 
     send_to_server ("expand-modules\012", 0);
@@ -3048,26 +3163,89 @@ handle_m (args, len)
        stdout and stderr.  But I'm not sure).  */
     fflush (stderr);
 #ifdef SJIS
-	{
-    char *pbuf;
-    if (current_parsed_root->message_encoding && (strcmp(command_name, "log") == 0 || strcmp(command_name, "rlog") == 0) && (strncmp(args, "RCS file:", 9) != 0 && strncmp(args, "Working file:", 13) != 0))
     {
-        if (trace)
-            (void) fprintf (stderr, "kanji convert to MS-Kanji\n");
-        transcode_buffer(current_parsed_root->message_encoding,
-            get_local_charset(), args, 0, &pbuf, &len);
-    }
+    int isfilename = 0, ismessage = 0, istext = 0;
+    char *pbuf = args;
+    if (strcmp(command_name, "update") == 0 || strcmp(command_name, "annotate") == 0 || strcmp(command_name, "rannotate") == 0)
+    {
+	if (strncmp(args, "? ", 2) == 0 && !updating)
+	{
+	    isfilename = 1;
+	}
 	else
-		pbuf = args;
+	{
+	    updating = 1;
+	    istext = 1;
+	}
+    }
+    else if (strcmp(command_name, "log") == 0 || strcmp(command_name, "rlog") == 0)
+    {
+	if (strncmp(args, "RCS file:", 9) == 0 || strncmp(args, "Working file:", 13) == 0
+	 || (strncmp(args, "date: ", 6) == 0 && strstr(args, "filename: ") != NULL)
+	 || strncmp(args, "? ", 2) == 0)
+	{
+	    isfilename = 1;
+	}
+	else
+	{
+	    ismessage = 1;
+	}
+    }
+    else if (strcmp(command_name, "diff") == 0 || strcmp(command_name, "rdiff") == 0)
+    {
+	if (args[0] == '<' || args[0] == '>' || args[0] == '+' || args[0] == ' ')
+	{
+	    istext = 1;
+	}
+	else
+	{
+	    isfilename = 1;
+	}
+    }
+    else 
+    {
+	isfilename = 1;
+    }
+
+    if (ismessage)
+    {
+	if (current_parsed_root->message_encoding)
+	{
+	    if (trace)
+		(void) fprintf (stderr, "kanji convert to MS-Kanji\n");
+	    transcode_buffer(current_parsed_root->message_encoding,
+		get_local_charset(), args, 0, &pbuf, &len);
+	}
+    }
+    else if (isfilename)
+    {
+	if (current_parsed_root->filename_encoding)
+	{
+	    if (trace)
+		(void) fprintf (stderr, "kanji convert to MS-Kanji\n");
+	    transcode_buffer(current_parsed_root->filename_encoding,
+		get_local_charset(), args, 0, &pbuf, &len);
+	}
+    }
+    else if (istext)
+    {
+	if (current_parsed_root->text_encoding)
+	{
+	    if (trace)
+		(void) fprintf (stderr, "kanji convert to MS-Kanji\n");
+	    transcode_buffer(current_parsed_root->text_encoding,
+		get_local_charset(), args, 0, &pbuf, &len);
+	}
+    }
 #ifdef CVSGUI_PIPE
     cvs_output(pbuf, len);
     cvs_output("\n", 1);
 #else
     fwrite (pbuf, len, sizeof (*pbuf), stdout);
     putc ('\n', stdout);
-    if (args != pbuf)
-		xfree(pbuf);
 #endif
+    if (args != pbuf)
+	xfree(pbuf);
     }
 #else
 #ifdef CVSGUI_PIPE
@@ -3126,12 +3304,38 @@ handle_e (args, len)
     /* In the case where stdout and stderr point to the same place,
        fflushing stdout will make output happen in the correct order.  */
     fflush (stdout);
+#ifdef SJIS
+    {
+    char *pbuf;
+    if (current_parsed_root->filename_encoding)
+    {
+        if (trace)
+            (void) fprintf (stderr, "kanji convert to MS-Kanji\n");
+        transcode_buffer(current_parsed_root->filename_encoding,
+            get_local_charset(), args, len, &pbuf, &len);
+    }
+    else
+	pbuf = args;
+	if (strncmp(args, "cvs server: Updating", 19) == 0)
+		updating = 1;
+#ifdef CVSGUI_PIPE
+    cvs_outerr(pbuf, len);
+    cvs_outerr("\n", 1);
+#else
+    fwrite (pbuf, len, sizeof (*args), stderr);
+    putc ('\n', stderr);
+#endif
+    if (pbuf != args)
+	xfree (pbuf);
+    }
+#else
 #ifdef CVSGUI_PIPE
     cvs_outerr(args, len);
     cvs_outerr("\n", 1);
 #else
     fwrite (args, len, sizeof (*args), stderr);
     putc ('\n', stderr);
+#endif
 #endif
 }
 
@@ -3212,7 +3416,24 @@ handle_mt (args, len)
 		cvs_output (" -j", 0);
 		cvs_output (importmergecmd.mergetag2, 0);
 		cvs_output (" ", 1);
+#ifdef SJIS
+		if (current_parsed_root->filename_encoding)
+		{
+		    char *pbuf;
+		    size_t len;
+		    if (trace)
+			(void) fprintf (stderr, "kanji convert to MS-Kanji\n");
+		    transcode_buffer(current_parsed_root->filename_encoding,
+			get_local_charset(), importmergecmd.repository, 0, &
+pbuf, &len);
+		    cvs_output (pbuf, 0);
+		    xfree (pbuf);
+		}
+		else
+		    cvs_output (importmergecmd.repository, 0);
+#else
 		cvs_output (importmergecmd.repository, 0);
+#endif
 		cvs_output ("\n\n", 0);
 
 		/* Clear the static variables so that everything is
@@ -3243,7 +3464,22 @@ handle_mt (args, len)
 			cvs_output ("\n", 1);
 			xfree (updated_fname);
 		    }
+#ifdef SJIS
+		    if (current_parsed_root->filename_encoding)
+		    {
+			size_t len;
+			if (trace)
+			    (void) fprintf (stderr, "kanji convert to MS-Kanji\n");
+			transcode_buffer(current_parsed_root->filename_encoding,
+			    get_local_charset(), text, 0, &updated_fname, &len);
+		    }
+		    else
+		    {
+			updated_fname = xstrdup (text);
+		    }
+#else
 		    updated_fname = xstrdup (text);
+#endif
 		}
 		/* Swallow all other tags.  Either they are extraneous
 		   or they reflect future extensions that we can
@@ -3271,10 +3507,35 @@ handle_mt (args, len)
 		printf ("\n");
 #endif
 	    else if (text != NULL)
+#ifdef SJIS
+	    {
+		char *pbuf;
+		if (current_parsed_root->filename_encoding)
+		{
+		    size_t len;
+		    if (trace)
+			(void) fprintf (stderr, "kanji convert to MS-Kanji\n");
+		    transcode_buffer(current_parsed_root->filename_encoding,
+			get_local_charset(), text, 0, &pbuf, &len);
+		}
+		else
+		{
+		    pbuf = text;
+		}
+#ifdef CVSGUI_PIPE
+		cvs_output(pbuf, 0);
+#else
+		printf ("%s", pbuf);
+#endif
+		if (text != pbuf)
+		    xfree (pbuf);
+	    }
+#else
 #ifdef CVSGUI_PIPE
 		cvs_output(text, 0);
 #else
 		printf ("%s", text);
+#endif
 #endif
     }
 }
@@ -3380,6 +3641,26 @@ send_to_server (str, len)
 	nbytes = 0;
     }
 }
+
+#ifdef SJIS
+void send_to_server_fconv (const char *str, size_t len)
+{
+    if (current_parsed_root->filename_encoding)
+    {
+        char *pbuf;
+        if (trace)
+            (void) fprintf (stderr, "kanji convert\n");
+        transcode_buffer(get_local_charset(),
+            current_parsed_root->filename_encoding, str, len, &pbuf, &len);
+        send_to_server (pbuf, len);
+        xfree (pbuf);
+    }
+    else
+    {
+        send_to_server (str, len);
+    }
+}
+#endif
 
 /* Read up to LEN bytes from the server.  Returns actual number of
    bytes read, which will always be at least one; blocks if there is
@@ -3852,7 +4133,11 @@ int start_server (int verify_only)
     if (!rootless_encryption && !rootless)
     {
 		send_to_server ("Root ", 0);
+#ifdef SJIS
+		send_to_server_fconv (current_parsed_root->directory, 0);
+#else
 		send_to_server (current_parsed_root->directory, 0);
+#endif
 		send_to_server ("\012", 1);
     }
 
@@ -3972,7 +4257,11 @@ int start_server (int verify_only)
     if (rootless_encryption && !rootless)
     {
 		send_to_server ("Root ", 0);
+#ifdef SJIS
+		send_to_server_fconv (current_parsed_root->directory, 0);
+#else
 		send_to_server (current_parsed_root->directory, 0);
+#endif
 		send_to_server ("\012", 1);
     }
 
@@ -4128,6 +4417,25 @@ void send_arg (const char *string)
     }
     send_to_server ("\012", 1);
 }
+
+#ifdef SJIS
+void send_arg_fconv (const char *string)
+{
+    if (current_parsed_root->filename_encoding)
+    {
+        char *pbuf;
+        size_t len;
+        if (trace)
+            (void) fprintf (stderr, "kanji convert\n");
+        transcode_buffer(get_local_charset(),
+            current_parsed_root->filename_encoding, string, 0, &pbuf, &len);
+        send_arg (pbuf);
+        xfree (pbuf);
+    }
+    else
+        send_arg (string);
+}
+#endif
 
 static void send_modified PROTO ((char *, char *, Vers_TS *));
 
@@ -4215,6 +4523,18 @@ send_modified (file, short_pathname, vers)
 				newsize = convert_encoding_to_utf8(&buf,newsize,&newsize,bin?encoding:ENC_UNKNOWN);
 			else if(unicode)
 				error(0,0,"Remote server does not support Unicode files.  Checkin may be invalid.");
+#ifdef SJIS
+			if (current_parsed_root->text_encoding && (!unicode && !bin))
+			{
+				char *pbuf;
+				if (trace)
+					(void) fprintf (stderr, "kanji convert\n");
+				transcode_buffer(get_local_charset(),
+					current_parsed_root->text_encoding, buf, newsize, &pbuf, &newsize);
+				xfree (buf);
+				buf = pbuf;
+			}
+#endif
 		}
 	}
 	if (close (fd) < 0)
@@ -4241,7 +4561,11 @@ send_modified (file, short_pathname, vers)
       char tmp[80];
 
 	  send_to_server ("Modified ", 0);
+#ifdef SJIS
+	  send_to_server_fconv (file, 0);
+#else
 	  send_to_server (file, 0);
+#endif
 	  send_to_server ("\012", 1);
 	  send_to_server (mode_string, 0);
 	  send_to_server ("\012", 1);
@@ -4301,7 +4625,11 @@ static int send_fileproc (void *callerdat, struct file_info *finfo)
     {
 	/* The Entries request.  */
 	send_to_server ("Entry /", 0);
+#ifdef SJIS
+	send_to_server_fconv (filename, 0);
+#else
 	send_to_server (filename, 0);
+#endif
 	send_to_server ("/", 0);
 	send_to_server (vers->vn_user, 0);
 	send_to_server ("/", 0);
@@ -4337,7 +4665,11 @@ static int send_fileproc (void *callerdat, struct file_info *finfo)
 	if(vers->entdata && supported_request("EntryExtra"))
 	{
 		send_to_server("EntryExtra /",0);
+#ifdef SJIS
+		send_to_server_fconv (filename, 0);
+#else
 		send_to_server (filename, 0);
+#endif
 		send_to_server ("/", 0);
 		send_to_server(vers->entdata->merge_from_tag_1,0);
 		send_to_server ("/", 0);
@@ -4371,7 +4703,11 @@ static int send_fileproc (void *callerdat, struct file_info *finfo)
 	    && supported_request ("Is-modified"))
 	{
 	    send_to_server ("Is-modified ", 0);
+#ifdef SJIS
+	    send_to_server_fconv (filename, 0);
+#else
 	    send_to_server (filename, 0);
+#endif
 	    send_to_server ("\012", 1);
 	}
 	else
@@ -4393,7 +4729,11 @@ static int send_fileproc (void *callerdat, struct file_info *finfo)
     else
     {
 	send_to_server ("Unchanged ", 0);
+#ifdef SJIS
+	send_to_server_fconv (filename, 0);
+#else
 	send_to_server (filename, 0);
+#endif
 	send_to_server ("\012", 1);
     }
 
@@ -4429,7 +4769,11 @@ send_ignproc (file, dir)
     else
     {
 	send_to_server ("Questionable ", 0);
+#ifdef SJIS
+	send_to_server_fconv (file, 0);
+#else
 	send_to_server (file, 0);
+#endif
 	send_to_server ("\012", 1);
     }
 }
@@ -4631,7 +4975,8 @@ void send_file_names (int argc, char **argv, unsigned int flags)
 
     for (i = 0; i < argc; ++i)
     {
-#if defined(SJIS) && !defined(JP_SERVEUCPATH)
+#if defined(SJIS)
+	char *real_p;
 	char buf[2];
 #else
 	char buf[1];
@@ -4690,14 +5035,26 @@ void send_file_names (int argc, char **argv, unsigned int flags)
 
 	send_to_server ("Argument ", 0);
 
+#ifdef SJIS
+	if (current_parsed_root->filename_encoding)
+	{
+	    size_t len;
+	    if (trace)
+		(void) fprintf (stderr, "kanji convert\n");
+	    transcode_buffer(get_local_charset(),
+		current_parsed_root->filename_encoding, p, 0, &real_p, &len);
+	    p = real_p;
+	}
+#endif
+
 	while (*p)
 	{
 	    if (*p == '\n')
 	    {
 		send_to_server ("\012Argumentx ", 0);
 	    }
-#if defined(SJIS) && !defined(JP_SERVEUCPATH)
-	    else if( _ismbblead(*p))
+#if defined(SJIS)
+	    else if( _ismbblead(*p) && !current_parsed_root->filename_encoding)
 	    {
 		buf[0] = *p++;
 		buf[1] = *p;
@@ -4716,6 +5073,10 @@ void send_file_names (int argc, char **argv, unsigned int flags)
 	    }
 	    ++p;
 	}
+#ifdef SJIS
+	if (current_parsed_root->filename_encoding)
+		xfree (real_p);
+#endif
 	send_to_server ("\012", 1);
 	if (line != NULL)
 	    xfree (line);
@@ -5068,7 +5429,11 @@ client_notify (char *repository, char *update_dir, char *filename,
 		send_to_server("\012", 1);
 	}
     send_to_server ("Notify ", 0);
+#ifdef SJIS
+    send_to_server_fconv (filename, 0);
+#else
     send_to_server (filename, 0);
+#endif
     send_to_server ("\012", 1);
     buf[0] = notif_type;
     buf[1] = '\0';
@@ -5118,7 +5483,11 @@ send_init_command ()
 {
     /* This is here because we need the current_parsed_root->directory variable.  */
     send_to_server ("init ", 0);
+#ifdef SJIS
+    send_to_server_fconv (current_parsed_root->directory, 0);
+#else
     send_to_server (current_parsed_root->directory, 0);
+#endif
     send_to_server ("\012", 0);
 }
 

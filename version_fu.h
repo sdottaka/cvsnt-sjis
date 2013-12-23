@@ -25,7 +25,9 @@
 #ifndef VERSION_FU__H
 #define VERSION_FU__H
 
+#ifdef _WIN32
 #pragma warning(disable:4003)
+#endif
 
 //////////////////////////////////////////////////////////////////////////
 // Documentation

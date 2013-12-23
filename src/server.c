@@ -1268,8 +1268,8 @@ static void dirswitch (char *dir, char *repos)
        of the Repository file, so we do the same.  */
     if (strcmp (dir, ".") == 0
 	&& current_parsed_root != NULL
-	&& current_parsed_root->directory != NULL
-	&& strcmp (current_parsed_root->directory, repos) == 0)
+	&& current_parsed_root->unparsed_directory != NULL
+	&& strcmp (current_parsed_root->unparsed_directory, repos) == 0)
     {
         if (fprintf (f, "/.") < 0)
 	{

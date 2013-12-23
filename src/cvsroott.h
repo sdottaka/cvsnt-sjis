@@ -17,6 +17,8 @@ typedef struct cvsroot_s {
 	char *unparsed_directory; /* unparsed directory name */
 	char *mapped_directory; /* Original directory, mapped to filesystem */
 	char *message_encoding; /* Encoding of commit messase */
+	char *filename_encoding; /* Encoding of filename */
+	char *text_encoding; /* Encoding of text file */
 	char *optional_1; /* Protocol defined keyword - also text between {...} */
 	char *optional_2; /* Protocol defined keyword */
 	char *optional_3; /* Protocol defined keyword */
