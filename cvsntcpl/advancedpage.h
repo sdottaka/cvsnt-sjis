@@ -19,8 +19,6 @@ class CAdvancedPage : public CTooltipPropertyPage
 
 // Construction
 public:
-	HKEY m_hServerKey;
-
 	CAdvancedPage();
 	~CAdvancedPage();
 

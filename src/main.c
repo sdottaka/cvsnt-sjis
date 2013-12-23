@@ -533,6 +533,13 @@ void read_global_server_config(void)
 		{
 			char tmp[32];
 			int prefixnum = atoi(token+10);
+
+			char *p = &token[10];
+			while (*p && isdigit(*p))
+				p++;
+			if (*p)
+				continue;
+
 			snprintf(tmp,sizeof(tmp),"Repository%dName",prefixnum);
 			if(get_global_config_data("PServer",tmp,buffer2,sizeof(buffer2)))
 				strcpy(buffer2,buffer);

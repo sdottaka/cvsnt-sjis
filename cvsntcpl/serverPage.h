@@ -50,7 +50,6 @@ protected:
 	SC_HANDLE m_hLockService;
 //	SC_HANDLE m_hSshService;
 	SC_HANDLE m_hSCManager;
-	HKEY m_hServerKey;
 
 	LPCTSTR GetErrorString();
 	void UpdateStatus();

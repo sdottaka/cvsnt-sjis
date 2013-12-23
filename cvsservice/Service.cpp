@@ -451,7 +451,11 @@ void CALLBACK ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv)
 		if(g_bTestMode)
 			printf("Registering service SPN... ");
 		pDsServerRegisterSpn(DS_SPN_DELETE_SPN_OP,"cvs",NULL);
+		if(!g_bTestMode)
+			NotifySCM(SERVICE_START_PENDING, 0, seq++);
 		pDsServerRegisterSpn(DS_SPN_DELETE_SPN_OP,"cvs",NULL);
+		if(!g_bTestMode)
+			NotifySCM(SERVICE_START_PENDING, 0, seq++);
 		if((dwTmp=pDsServerRegisterSpn(DS_SPN_ADD_SPN_OP,"cvs",NULL))!=0)
 		{
 			if(g_bTestMode)

@@ -20,8 +20,6 @@ protected:
 
 	DECLARE_MESSAGE_MAP()
 public:
-	HKEY m_hServerKey;
-
 	CEdit m_edCertificateFile;
 	CEdit m_edPrivateKeyFile;
 	virtual BOOL OnInitDialog();

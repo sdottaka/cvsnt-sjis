@@ -24,7 +24,6 @@ CserverPage::CserverPage() : CTooltipPropertyPage(CserverPage::IDD)
 	m_szLockStatus =_T("");
 	 //}}AFX_DATA_INIT
 	m_hService=m_hLockService=m_hSCManager=NULL;
-	m_hServerKey=NULL;
 }
 
 CserverPage::~CserverPage()
@@ -71,27 +70,35 @@ BOOL CserverPage::OnInitDialog()
 		CloseServiceHandle(m_hSCManager);
 	}
 		
-	m_hSCManager=OpenSCManager(NULL,NULL,GENERIC_EXECUTE);
+	m_hSCManager=OpenSCManager(NULL,NULL,g_bPrivileged?GENERIC_EXECUTE:GENERIC_READ);
 	if(!m_hSCManager)
 	{
 		CString tmp;
 		DWORD e=GetLastError();
 
 		if(e==5)
-			tmp.Format(_T("Couldn't open service control manager - Access Denied"));
+		{
+			tmp.Format(_T("Couldn't open service control manager - Permission Denied"));
+			AfxMessageBox(tmp,MB_ICONSTOP);
+			GetParent()->PostMessage(WM_CLOSE);
+		}
 		else
+		{
 			tmp.Format(_T("Couldn't open service control manager - error %d"),GetLastError());
-		AfxMessageBox(tmp,MB_ICONSTOP);
-		PostMessage(WM_CLOSE);
+			AfxMessageBox(tmp,MB_ICONSTOP);
+			GetParent()->PostMessage(WM_CLOSE);
+		}
 	}
 	
-	m_hService=OpenService(m_hSCManager,ServiceName,SERVICE_QUERY_STATUS|SERVICE_START|SERVICE_STOP);
-	m_hLockService=OpenService(m_hSCManager,ServiceName2,SERVICE_QUERY_STATUS|SERVICE_START|SERVICE_STOP);
-
-	if(!m_hServerKey && RegCreateKeyEx(HKEY_LOCAL_MACHINE,_T("Software\\CVS\\Pserver"),NULL,_T(""),REG_OPTION_NON_VOLATILE,KEY_ALL_ACCESS,NULL,&m_hServerKey,NULL))
-	{ 
-		fprintf(stderr,"Couldn't create HKLM\\Software\\CVS\\Pserver key, error %d\n",GetLastError());
-		return -1;
+	if(g_bPrivileged)
+	{
+		m_hService=OpenService(m_hSCManager,ServiceName,SERVICE_QUERY_STATUS|SERVICE_START|SERVICE_STOP);
+		m_hLockService=OpenService(m_hSCManager,ServiceName2,SERVICE_QUERY_STATUS|SERVICE_START|SERVICE_STOP);
+	}
+	else
+	{
+		m_hService=OpenService(m_hSCManager,ServiceName,SERVICE_QUERY_STATUS);
+		m_hLockService=OpenService(m_hSCManager,ServiceName2,SERVICE_QUERY_STATUS);
 	}
 
 	UpdateStatus();
@@ -125,7 +132,7 @@ void CserverPage::UpdateStatus()
 #else
 				m_szStatus="Stopped";
 #endif
-				m_btStart.EnableWindow(TRUE);
+				m_btStart.EnableWindow(g_bPrivileged?TRUE:FALSE);
 				m_btStop.EnableWindow(FALSE);
 				break;
 			case SERVICE_START_PENDING:
@@ -153,7 +160,7 @@ void CserverPage::UpdateStatus()
 				m_szStatus="Running";
 #endif
 				m_btStart.EnableWindow(FALSE);
-				m_btStop.EnableWindow(TRUE);
+				m_btStop.EnableWindow(g_bPrivileged?TRUE:FALSE);
 				break;
 			default:
 				m_szStatus="Unknown state";
@@ -185,7 +192,7 @@ void CserverPage::UpdateStatus()
 				m_szLockStatus="Stopped";
 #endif
 
-				m_btLockStart.EnableWindow(TRUE);
+				m_btLockStart.EnableWindow(g_bPrivileged?TRUE:FALSE);
 				m_btLockStop.EnableWindow(FALSE);
 				break;
 			case SERVICE_START_PENDING:
@@ -213,7 +220,7 @@ void CserverPage::UpdateStatus()
 				m_szLockStatus="Running";
 #endif
 				m_btLockStart.EnableWindow(FALSE);
-				m_btLockStop.EnableWindow(TRUE);
+				m_btLockStop.EnableWindow(g_bPrivileged?TRUE:FALSE);
 				break;
 			default:
 				m_szLockStatus="Unknown state";

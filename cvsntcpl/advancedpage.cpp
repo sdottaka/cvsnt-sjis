@@ -21,7 +21,6 @@ CAdvancedPage::CAdvancedPage() : CTooltipPropertyPage(CAdvancedPage::IDD)
 {
 	//{{AFX_DATA_INIT(CAdvancedPage)
 	//}}AFX_DATA_INIT
-	m_hServerKey=NULL;
 }
 
 CAdvancedPage::~CAdvancedPage()
@@ -76,12 +75,6 @@ BOOL CAdvancedPage::OnInitDialog()
 
 	CTooltipPropertyPage::OnInitDialog();
 	
-	if(!m_hServerKey && RegCreateKeyEx(HKEY_LOCAL_MACHINE,_T("Software\\CVS\\Pserver"),NULL,_T(""),REG_OPTION_NON_VOLATILE,KEY_ALL_ACCESS,NULL,&m_hServerKey,NULL))
-	{ 
-		fprintf(stderr,"Couldn't create HKLM\\Software\\CVS\\Pserver key, error %d\n",GetLastError());
-		return -1;
-	}
-	
 	m_btImpersonate.SetCheck((t=QueryDword(_T("Impersonation")))>=0?t:1);
 	m_btNoDomain.SetCheck((t=QueryDword(_T("DontUseDomain")))>=0?t:0);
 	m_cbNoReverseDns.SetCheck((t=QueryDword(_T("NoReverseDns")))>=0?t:0);
@@ -91,14 +84,14 @@ BOOL CAdvancedPage::OnInitDialog()
 	m_btAllowTrace.SetCheck((t=QueryDword(_T("AllowTrace")))>=0?t:0);
 	SetDlgItemInt(IDC_PSERVERPORT,(t=QueryDword(_T("PServerPort")))>=0?t:2401,FALSE);
 	bufLen=sizeof(buf);
-	if(RegQueryValueEx(m_hServerKey,_T("LockServer"),NULL,&dwType,buf,&bufLen))
+	if(RegQueryValueEx(g_hServerKey,_T("LockServer"),NULL,&dwType,buf,&bufLen))
 	{
 		SetDlgItemText(IDC_LOCKSERVER,_T("localhost"));
 		SetDlgItemInt(IDC_LOCKSERVERPORT,(t=QueryDword(_T("LockServerPort")))>=0?t:2402,FALSE);
 	}
 	else
 	{
-		RegDeleteValue(m_hServerKey,_T("LockServerPort"));
+		RegDeleteValue(g_hServerKey,_T("LockServerPort"));
 		TCHAR *p=_tcschr((TCHAR*)buf,':');
 		if(p)
 			*p='\0';
@@ -113,7 +106,7 @@ BOOL CAdvancedPage::OnInitDialog()
 	m_sbLockPort.SetRange32(1,65535);
 
 	bufLen=sizeof(buf);
-	if(RegQueryValueEx(m_hServerKey,_T("TempDir"),NULL,&dwType,buf,&bufLen) &&
+	if(RegQueryValueEx(g_hServerKey,_T("TempDir"),NULL,&dwType,buf,&bufLen) &&
 	   SHRegGetUSValue(_T("SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment"),_T("TEMP"),NULL,(LPVOID)buf,&bufLen,TRUE,NULL,0) &&
 	   !GetEnvironmentVariable(_T("TEMP"),(LPTSTR)buf,sizeof(buf)) &&
 	   !GetEnvironmentVariable(_T("TMP"),(LPTSTR)buf,sizeof(buf)))
@@ -154,6 +147,24 @@ BOOL CAdvancedPage::OnInitDialog()
 	m_cbEncryption.SetCurSel((t=QueryDword(_T("EncryptionLevel")))>=0?t:0);
 	m_cbCompression.SetCurSel((t=QueryDword(_T("CompressionLevel")))>=0?t:0);
 
+	if(!g_bPrivileged)
+	{
+		m_btImpersonate.EnableWindow(FALSE);
+		m_btNoDomain.EnableWindow(FALSE);
+		m_cbNoReverseDns.EnableWindow(FALSE);
+		m_btLockServerLocal.EnableWindow(FALSE);
+		m_btFakeUnix.EnableWindow(FALSE);
+		m_btEnableRename.EnableWindow(FALSE);
+		m_btAllowTrace.EnableWindow(FALSE);
+		m_sbLockPort.EnableWindow(FALSE);
+		m_edTempDir.EnableWindow(FALSE);
+		m_cbEncryption.EnableWindow(FALSE);
+		m_cbCompression.EnableWindow(FALSE);
+		GetDlgItem(IDC_PSERVERPORT)->EnableWindow(FALSE);
+		GetDlgItem(IDC_LOCKSERVER)->EnableWindow(FALSE);
+		GetDlgItem(IDC_LOCKSERVERPORT)->EnableWindow(FALSE);
+	}
+	
 	return TRUE;  
 }
 
@@ -196,59 +207,59 @@ BOOL CAdvancedPage::OnApply()
 
 	dwVal=m_btImpersonate.GetCheck()?1:0;
 
-	if(RegSetValueEx(m_hServerKey,_T("Impersonation"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
+	if(RegSetValueEx(g_hServerKey,_T("Impersonation"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
 		AfxMessageBox(_T("RegSetValueEx failed"),MB_ICONSTOP);
 
 	dwVal=m_btNoDomain.GetCheck()?1:0;
 
-	if(RegSetValueEx(m_hServerKey,_T("DontUseDomain"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
+	if(RegSetValueEx(g_hServerKey,_T("DontUseDomain"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
 		AfxMessageBox(_T("RegSetValueEx failed"),MB_ICONSTOP);
 
 	dwVal=m_cbNoReverseDns.GetCheck()?1:0;
 
-	if(RegSetValueEx(m_hServerKey,_T("NoReverseDns"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
+	if(RegSetValueEx(g_hServerKey,_T("NoReverseDns"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
 		AfxMessageBox(_T("RegSetValueEx failed"),MB_ICONSTOP);
 
 	dwVal=m_btLockServerLocal.GetCheck()?1:0;
 
-	if(RegSetValueEx(m_hServerKey,_T("LockServerLocal"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
+	if(RegSetValueEx(g_hServerKey,_T("LockServerLocal"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
 		AfxMessageBox(_T("RegSetValueEx failed"),MB_ICONSTOP);
 
 	dwVal=m_btFakeUnix.GetCheck()?1:0;
 
-	if(RegSetValueEx(m_hServerKey,_T("FakeUnixCvs"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
+	if(RegSetValueEx(g_hServerKey,_T("FakeUnixCvs"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
 		AfxMessageBox(_T("RegSetValueEx failed"),MB_ICONSTOP);
 
 	dwVal=m_btEnableRename.GetCheck()?1:0;
 
-	if(RegSetValueEx(m_hServerKey,_T("EnableRename"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
+	if(RegSetValueEx(g_hServerKey,_T("EnableRename"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
 		AfxMessageBox(_T("RegSetValueEx failed"),MB_ICONSTOP);
 
 	dwVal=m_btAllowTrace.GetCheck()?1:0;
 
-	if(RegSetValueEx(m_hServerKey,_T("AllowTrace"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
+	if(RegSetValueEx(g_hServerKey,_T("AllowTrace"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
 		AfxMessageBox(_T("RegSetValueEx failed"),MB_ICONSTOP);
 
 	dwVal = GetDlgItemInt(IDC_PSERVERPORT,NULL,FALSE);
-	if(RegSetValueEx(m_hServerKey,_T("PServerPort"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
+	if(RegSetValueEx(g_hServerKey,_T("PServerPort"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
 		AfxMessageBox(_T("RegSetValueEx failed"),MB_ICONSTOP);
 
 	m_edLockServer.GetWindowText(fn,sizeof(fn)-8);
 	dwVal = GetDlgItemInt(IDC_LOCKSERVERPORT,NULL,FALSE);
 	_sntprintf(fn+_tcslen(fn),8,_T(":%d"),dwVal);
-	if(RegSetValueEx(m_hServerKey,_T("LockServer"),NULL,REG_SZ,(BYTE*)fn,(_tcslen(fn)+1)*sizeof(TCHAR)))
+	if(RegSetValueEx(g_hServerKey,_T("LockServer"),NULL,REG_SZ,(BYTE*)fn,(_tcslen(fn)+1)*sizeof(TCHAR)))
 		AfxMessageBox(_T("RegSetValueEx failed"),MB_ICONSTOP);
 
 	m_edTempDir.GetWindowText(fn,sizeof(fn));
-	if(RegSetValueEx(m_hServerKey,_T("TempDir"),NULL,REG_SZ,(BYTE*)fn,(_tcslen(fn)+1)*sizeof(TCHAR)))
+	if(RegSetValueEx(g_hServerKey,_T("TempDir"),NULL,REG_SZ,(BYTE*)fn,(_tcslen(fn)+1)*sizeof(TCHAR)))
 		AfxMessageBox(_T("RegSetValueEx failed"),MB_ICONSTOP);
 
 	dwVal = m_cbCompression.GetItemData(m_cbCompression.GetCurSel());
-	if(RegSetValueEx(m_hServerKey,_T("CompressionLevel"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
+	if(RegSetValueEx(g_hServerKey,_T("CompressionLevel"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
 		AfxMessageBox(_T("RegSetValueEx failed"),MB_ICONSTOP);
 
 	dwVal = m_cbEncryption.GetItemData(m_cbEncryption.GetCurSel());
-	if(RegSetValueEx(m_hServerKey,_T("EncryptionLevel"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
+	if(RegSetValueEx(g_hServerKey,_T("EncryptionLevel"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
 		AfxMessageBox(_T("RegSetValueEx failed"),MB_ICONSTOP);
 
 	return CTooltipPropertyPage::OnApply();
@@ -259,7 +270,7 @@ DWORD CAdvancedPage::QueryDword(LPCTSTR szKey)
 	BYTE buf[64];
 	DWORD bufLen=sizeof(buf);
 	DWORD dwType;
-	if(RegQueryValueEx(m_hServerKey,szKey,NULL,&dwType,buf,&bufLen))
+	if(RegQueryValueEx(g_hServerKey,szKey,NULL,&dwType,buf,&bufLen))
 		return -1;
 	if(dwType!=REG_DWORD)
 		return -1;

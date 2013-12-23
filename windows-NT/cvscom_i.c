@@ -6,7 +6,7 @@
 
 
  /* File created by MIDL compiler version 6.00.0361 */
-/* at Fri Nov 03 19:21:35 2006
+/* at Wed Jan 02 21:56:20 2008
  */
 /* Compiler settings for .\windows-NT\cvscom.idl:
     Oicf, W1, Zp8, env=Win32 (32b run)

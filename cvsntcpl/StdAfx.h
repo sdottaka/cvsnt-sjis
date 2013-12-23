@@ -36,4 +36,7 @@
 
 int CALLBACK BrowseValid(HWND hWnd, UINT uMsg, LPARAM lParam, LPARAM lpData);
 
+extern bool g_bPrivileged;
+extern HKEY g_hServerKey;
+
 #endif // !defined(AFX_STDAFX_H__F52337E9_30FF_11D2_8EED_00A0C94457BF__INCLUDED_)

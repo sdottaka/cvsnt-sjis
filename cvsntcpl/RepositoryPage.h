@@ -27,7 +27,6 @@ public:
 	CRepositoryPage();
 	~CRepositoryPage();
 
-	HKEY m_hServerKey;
 	CString m_szInstallPath;
 
 	bool GetRootList();

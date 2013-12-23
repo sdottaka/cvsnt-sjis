@@ -27,7 +27,6 @@ CRepositoryPage::CRepositoryPage() : CTooltipPropertyPage(CRepositoryPage::IDD)
 	//{{AFX_DATA_INIT(CRepositoryPage)
 		// NOTE: the ClassWizard will add member initialization here
 	//}}AFX_DATA_INIT
-	m_hServerKey = NULL;
 }
 
 CRepositoryPage::~CRepositoryPage()
@@ -66,12 +65,6 @@ BOOL CRepositoryPage::OnInitDialog()
 
 	CTooltipPropertyPage::OnInitDialog();
 	
-	if(!m_hServerKey && RegCreateKeyEx(HKEY_LOCAL_MACHINE,_T("Software\\CVS\\Pserver"),NULL,_T(""),REG_OPTION_NON_VOLATILE,KEY_ALL_ACCESS,NULL,&m_hServerKey,NULL))
-	{ 
-		fprintf(stderr,"Couldn't create HKLM\\Software\\CVS\\Pserver key, error %d\n",GetLastError());
-		return -1;
-	}
-
 #ifdef JP_STRING
 	m_listRoot.InsertColumn(0,_T("ñºèÃ"),LVCFMT_LEFT,130);
 	m_listRoot.InsertColumn(1,_T("ÉãÅ[Ég"),LVCFMT_LEFT,130);
@@ -86,12 +79,20 @@ BOOL CRepositoryPage::OnInitDialog()
 	OnLvnItemchangedRootlist(NULL,NULL);
 
 	bufLen=sizeof(buf);
-	if(RegQueryValueEx(m_hServerKey,_T("InstallPath"),NULL,&dwType,(BYTE*)buf,&bufLen))
+	if(RegQueryValueEx(g_hServerKey,_T("InstallPath"),NULL,&dwType,(BYTE*)buf,&bufLen))
 	{
 		// Not set
 		*buf='\0';
 	}
 	m_szInstallPath=buf;
+
+	if (!g_bPrivileged)
+	{
+		m_btDelete.EnableWindow(FALSE);
+		m_btAdd.EnableWindow(FALSE);
+		m_btEdit.EnableWindow(FALSE);
+		m_listRoot.EnableWindow(FALSE);
+	}
 
 	return TRUE;
 }
@@ -123,7 +124,7 @@ bool CRepositoryPage::GetRootList()
 	bool bModified = false;
 
 	bufLen=sizeof(buf);
-	if(!RegQueryValueEx(m_hServerKey,_T("RepositoryPrefix"),NULL,&dwType,(BYTE*)buf,&bufLen))
+	if(!RegQueryValueEx(g_hServerKey,_T("RepositoryPrefix"),NULL,&dwType,(BYTE*)buf,&bufLen))
 	{
 		TCHAR *p = buf;
 		while((p=_tcschr(p,'\\'))!=NULL)
@@ -141,7 +142,7 @@ bool CRepositoryPage::GetRootList()
 	{
 		tmp.Format(_T("Repository%d"),n);
 		bufLen=sizeof(buf);
-		if(RegQueryValueEx(m_hServerKey,tmp,NULL,&dwType,(BYTE*)buf,&bufLen))
+		if(RegQueryValueEx(g_hServerKey,tmp,NULL,&dwType,(BYTE*)buf,&bufLen))
 			continue;
 		if(dwType!=REG_SZ)
 			continue;
@@ -152,7 +153,7 @@ bool CRepositoryPage::GetRootList()
 
 		tmp.Format(_T("Repository%dName"),n);
 		bufLen=sizeof(buf2);
-		if(RegQueryValueEx(m_hServerKey,tmp,NULL,&dwType,(BYTE*)buf2,&bufLen))
+		if(RegQueryValueEx(g_hServerKey,tmp,NULL,&dwType,(BYTE*)buf2,&bufLen))
 		{
 			_tcscpy(buf2,buf);
 			if(prefix.size() && !_tcsnicmp(prefix.c_str(),buf,prefix.size()))
@@ -213,7 +214,7 @@ void CRepositoryPage::RebuildRootList()
 	for(n=0; n<MAX_REPOSITORIES; n++)
 	{
 		_sntprintf(tmp,sizeof(tmp),_T("Repository%d"),n);
-		RegDeleteValue(m_hServerKey,tmp);
+		RegDeleteValue(g_hServerKey,tmp);
 	}
 
 	for(n=0,j=0; n<m_Roots.size(); n++)
@@ -223,14 +224,14 @@ void CRepositoryPage::RebuildRootList()
 		if(m_Roots[n].valid)
 		{
 			_sntprintf(tmp,sizeof(tmp),_T("Repository%d"),j);
-			RegSetValueEx(m_hServerKey,tmp,NULL,REG_SZ,(BYTE*)path.c_str(),(path.length()+1)*sizeof(TCHAR));
+			RegSetValueEx(g_hServerKey,tmp,NULL,REG_SZ,(BYTE*)path.c_str(),(path.length()+1)*sizeof(TCHAR));
 			_sntprintf(tmp,sizeof(tmp),_T("Repository%dName"),j);
-			RegSetValueEx(m_hServerKey,tmp,NULL,REG_SZ,(BYTE*)desc.c_str(),(desc.length()+1)*sizeof(TCHAR));
+			RegSetValueEx(g_hServerKey,tmp,NULL,REG_SZ,(BYTE*)desc.c_str(),(desc.length()+1)*sizeof(TCHAR));
 			j++;
 		}
 	}
 
-	RegDeleteValue(m_hServerKey,_T("RepositoryPrefix"));
+	RegDeleteValue(g_hServerKey,_T("RepositoryPrefix"));
 }
 
 void CRepositoryPage::OnAddroot() 
