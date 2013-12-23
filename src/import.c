@@ -88,6 +88,7 @@ import (argc, argv)
     struct logfile_info *li;
 	int vargc;
 	char *vtag, **vargv;
+	char *vendortagmsg;
 
     if (argc == -1)
 	usage (import_usage);
@@ -367,12 +368,14 @@ import (argc, argv)
 		vtag = argv[1];
 		vargc = argc-2;
 		vargv = argv+2;
+		vendortagmsg = vtag;
 	}
 	else
 	{
 		vtag = NULL;
 		vargc=argc-1;
 		vargv=argv+1;
+		vendortagmsg = "vendor-tag";
 	}
     err = import_descend (message, vtag, vargc, vargv);
 	xfree(current_date);
@@ -401,12 +404,12 @@ import (argc, argv)
 		cvs_output_tagged ("text", CVSroot_cmdline);
 	    }
 	    cvs_output_tagged ("text", " checkout -j");
-	    buf2 = xmalloc (strlen (argv[1]) + 20);
-	    sprintf (buf2, "%s:yesterday", argv[1]);
+		buf2 = xmalloc (strlen (vendortagmsg) + 20);
+	    sprintf (buf2, "%s:yesterday", vendortagmsg);
 	    cvs_output_tagged ("mergetag1", buf2);
 	    xfree (buf2);
 	    cvs_output_tagged ("text", " -j");
-	    cvs_output_tagged ("mergetag2", argv[1]);
+	    cvs_output_tagged ("mergetag2", vendortagmsg);
 	    cvs_output_tagged ("text", " ");
 	    cvs_output_tagged ("repository", argv[0]);
 	    cvs_output_tagged ("newline", NULL);
@@ -425,7 +428,7 @@ import (argc, argv)
 			"Use the following command to help the merge:\n\n");
 	fprintf (logfp, "\t%s checkout ", program_name);
 	fprintf (logfp, "-j%s:yesterday -j%s %s\n\n",
-			argv[1], argv[1], argv[0]);
+			vendortagmsg, vendortagmsg, argv[0]);
     }
     else 
     {	
@@ -755,6 +758,12 @@ static int update_rcs_file(char *message, char *vfile, char *vtag, int targc, ch
 	    freevers_ts (&vers);
 	    return (retval);
 	}
+    }
+
+    if (vers->srcfile && vers->srcfile->branch == NULL && vbranch == NULL){
+	error(0, 0, "'%s' is already imported. You should not use '-n' on a second import.", vfile);
+	freevers_ts (&vers);
+	return (0);
     }
 
     /* We may have failed to parse the RCS file; check just in case */

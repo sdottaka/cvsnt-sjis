@@ -166,7 +166,7 @@ static int guess_encoding(const char *buf, size_t len, encoding_type2 *type, con
 int is_valid_encoding(const char *enc)
 {
 	iconv_t ic;
-	if((ic = iconv_open(enc,locale_charset()))<0)
+	if((ic = iconv_open(enc,locale_charset())) == (iconv_t)(-1))
 		return 0;
 	iconv_close(ic);
 	return 1;

@@ -67,7 +67,7 @@ Name: Commandline; Description: コマンドラインクライアント; Types: custom typica
 Name: Server; Description: サーバー コンポーネント; Types: custom full typical; MinVersion: 0,4.00.1381sp6; Check: isadmin
 Name: Server\LsaHelper; Description: Setuid LSA ヘルパー; Types: custom full typical; MinVersion: 0,5.0.2195; Check: isadmin; Flags: restart
 Name: Agent; Description: CVSNT パスワード エージェント; Types: custom full typical
-Name: win95; Description: Windows 95 サポート; Types: custom full; MinVersion: 4.0.950,0
+Name: win95; Description: Windows 95 サポート; Types: custom full
 Name: RCS; Description: RCS エミュレーション コンポーネント; Types: custom full typical
 Name: ExtWrapper; Description: 非cvsnt クライアント用 ext: プロトコルラッパー; Types: custom full typical
 Name: Protocols; Description: プロトコル; Types: custom typical full
@@ -269,5 +269,5 @@ procedure RegisterCvs;
 var mypath : string;
 begin
   mypath := ExpandConstant('{app}');
-  RegisterTypeLibrary(mypath + '\cvs.exe');
+  RegisterTypeLibrary(False, mypath + '\cvs.exe');
 end;
