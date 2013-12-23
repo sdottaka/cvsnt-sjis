@@ -1736,7 +1736,7 @@ static mode_t GetUnixFileModeNtEA(LPCTSTR strPath, HANDLE hFile)
 		if(hFile != INVALID_HANDLE_VALUE)
 		{
 			IO_STATUS_BLOCK io = {0};
-			BYTE buffer[256];
+			BYTE buffer[256] = {0};
 			NTSTATUS status;
 			FILE_GET_EA_INFORMATION *list;
 			FILE_FULL_EA_INFORMATION *pea;
