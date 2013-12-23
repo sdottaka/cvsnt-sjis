@@ -1,0 +1,285 @@
+#!/bin/sh
+
+# $Debian: config,v 1.1 2001/04/20 16:00:54 epg Exp $
+
+# Config script for CVS using debconf
+. /usr/share/debconf/confmodule
+db_version 2.0 || [ $? -lt 30 ]
+
+# Get the repositories list.
+get_repositories ()
+{
+OK=0
+while [ $OK -eq 0 ]; do
+	db_input medium cvsnt/repositories ||:
+	db_go ||:
+	db_get cvsnt/repositories
+	REPOS="$RET"
+	BAD=""
+	IFS=':'
+	for i in $RET; do
+		if [ ! -d "$i" ]; then
+			if [ ! -z "$BAD" ]; then
+				BAD="$BAD:$i"
+				BADDESC="$BADDESC, $i"
+			else
+				BAD="$i"
+				BADDESC="$i"
+			fi
+		fi
+	done
+	IFS=' 	\
+'
+	if [ ! -z "$BAD" ]; then
+		IGNORE=0
+		db_subst cvsnt/badrepositories badreps "$BADDESC"
+		db_input medium cvsnt/badrepositories || if [ $? -eq 30 ]; then
+			IGNORE=1
+		fi
+		db_go ||:
+		db_get cvsnt/badrepositories
+		if [ "$RET" = "reenter" -a $IGNORE -eq 0 ]; then
+			db_fset cvsnt/repositories isdefault true
+			OK=0
+			continue
+		else
+			OK=1
+		fi
+	else
+		OK=1
+	fi
+done
+	IFS=' 	\
+'
+}
+
+# Get history rotation information.
+get_history ()
+{
+	db_get cvsnt/repositories
+	REPOS="$RET"
+	db_input low cvsnt/rotatehistory ||:
+	db_go ||:
+	db_get cvsnt/rotatehistory
+	ROTHIST="$RET"
+	if [ x"$ROTHIST" = x"yes" -o x"$ROTHIST" = x"individual" ]; then
+		db_input low cvsnt/rotatekeep_nondefault ||:
+		db_go ||:
+	else
+		db_set cvsnt/rotatekeep_nondefault no
+		db_fset cvsnt/rotatekeep_nondefault isdefault true
+	fi
+	db_get cvsnt/rotatekeep_nondefault
+	ROTKEEP="$RET"
+	if [ x"$ROTHIST" = x"individual" -o x"$ROTHIST" = x"yes" -a x"$ROTKEEP" = x"individual" ]; then
+		db_beginblock
+		IFS=':'
+		for i in $REPOS; do
+			IFS=' 	\
+'
+			RNAME="`echo "$i" | sed -e 's:/:_:g'`"
+			DO_RK=1
+			if [ x"$ROTHIST" = x"individual" ]; then
+				db_register cvsnt/rotate_individual "cvsnt/rotate/$RNAME"
+				db_subst "cvsnt/rotate/$RNAME" repos "$i"
+				db_input medium "cvsnt/rotate/$RNAME" ||:
+			fi
+		done
+		db_endblock
+		db_go ||:
+		db_beginblock
+		IFS=':'
+		for i in $REPOS; do
+			IFS=' 	\
+'
+			RNAME="`echo "$i" | sed -e 's:/:_:g'`"
+			DO_RK=1
+			if [ x"$ROTHIST" = x"individual" ]; then
+				db_get "cvsnt/rotate/$RNAME"
+				if [ x"$RET" = x"false" ]; then
+					DO_RK=0
+				fi
+			fi
+			if [ "$ROTKEEP" = "individual" -a $DO_RK -eq 1 ]; then
+				db_register cvsnt/rotatekeep_individual "cvsnt/rotatekeep/$RNAME"
+				db_subst "cvsnt/rotatekeep/$RNAME" repos "$i"
+				db_input medium "cvsnt/rotatekeep/$RNAME" ||:
+			fi
+		done
+		db_endblock
+		db_go ||:
+	fi
+}
+
+# Set up the pserver.
+setup_pserver ()
+{
+	db_input medium cvsnt/pserver ||:
+	db_go ||:
+	db_get cvsnt/pserver
+	if [ x"$RET" = x"true" ]; then
+		db_input low cvsnt/pserver_repos ||:
+		db_go ||:
+		db_get cvsnt/pserver_repos
+		if [ x"$RET" = x"some" ]; then
+			db_beginblock
+			db_get cvsnt/repositories
+			REPOS="$RET"
+			IFS=':'
+			for i in $REPOS; do
+				IFS=' 	\
+'
+				RNAME="`echo "$i" | sed -e 's:/:_:g'`"
+				db_register cvsnt/pserver_repos_individual "cvsnt/pserver/$RNAME"
+				db_subst "cvsnt/pserver/$RNAME" repos "$i"
+				db_input medium "cvsnt/pserver/$RNAME" ||:
+			done
+			db_endblock
+			db_go ||:
+		fi
+		db_input low cvsnt/pserver_setspawnlimit ||:
+		db_go ||:
+		db_get cvsnt/pserver_setspawnlimit
+		if [ "$RET" = "true" ]; then
+			db_input low cvsnt/pserver_spawnlimit ||:
+			db_go ||:
+		fi
+	fi
+}
+
+# Import old settings from cvs.conf.
+import_cvsconf ()
+{
+	if [ -f /etc/cvsnt/cvs.conf ]; then
+	  . /etc/cvsnt/cvs.conf
+	fi
+	if [ -f /etc/cvsnt/cvs.conf.import ]; then
+	  . /etc/cvsnt/cvs.conf.import
+	fi
+	db_set cvsnt/repositories "$CVS_REPOS"
+	if [ x"$CVS_ROTATE" = x"no" ]; then
+		db_set cvsnt/rotatehistory no
+	else
+		if [ x"$CVS_ROTDIRS" != x"$CVS_REPOS" ]; then
+			db_set cvsnt/rotatehistory individual
+			IFS=':'
+			for i in $CVS_REPOS; do
+				IFS=' 	\
+'
+				RNAME="`echo "$i" | sed -e 's:/:_:g'`"
+				db_register cvsnt/rotate_individual "cvsnt/rotate/$RNAME"
+				db_subst "cvsnt/rotate/$RNAME" repos "$i"
+				db_set "cvsnt/rotate/$RNAME" false
+			done
+			IFS=':'
+			for i in $CVS_ROTDIRS; do
+				IFS=' 	\
+'
+				RNAME="`echo "$i" | sed -e 's:/:_:g'`"
+				db_set "cvsnt/rotate/$RNAME" true
+			done
+		else
+			db_set cvsnt/rotatehistory yes
+		fi
+		if [ x"$CVS_ROTATE" = x"yes" ]; then
+			db_set cvsnt/rotatekeep_nondefault no
+		else
+			db_set cvsnt/rotatekeep_nondefault individual
+			# Advanced syntax
+			OLDIFS="$IFS"
+			IFS=": 	"
+			SAME=1
+			set -- $CVS_ROTATE
+			LAST="$1"
+			DIRS="$CVS_ROTDIRS"
+			for i in $CVS_ROTATE; do
+				if [ x"$i" != x"$LAST" -a x"$i" != x"" ]; then
+					SAME=0
+				fi
+			done
+			if [ $SAME -eq 1 ]; then
+				if [ x"$LAST" != x"n" ]; then
+					db_set cvsnt/rotatekeep_nondefault yes
+					db_set cvsnt/rotatekeep "$LAST"
+				else
+					db_set cvsnt/rotatekeep_nondefault no
+				fi
+			else
+				for i in $CVS_ROTATE; do
+					IFS="$OLDIFS"
+					DIR="`echo $DIRS | sed 's/\([^:]*\):.*/\1/'`"
+					DIRS="`echo $DIRS | sed 's/[^:]*:\(.*\)/\1/'`"
+					RNAME="`echo "$DIR" | sed -e 's:/:_:g'`"
+					db_register cvsnt/rotatekeep_individual "cvsnt/rotatekeep/$RNAME"
+					db_subst "cvsnt/rotatekeep/$RNAME" repos "$DIR"
+					case "$i" in
+						n)
+						db_set "cvsnt/rotate/$RNAME" false
+						;;
+						
+						[0-9]*)
+						db_set "cvsnt/rotatekeep/$RNAME" $i
+						;;
+					esac
+				done
+			fi
+		fi
+	fi
+	if [ x"$CVS_ENAB_PSERV" = x"yes" ]; then
+		db_set cvsnt/pserver true
+		if [ x"$CVS_PSERV_REPOS" != x"$CVS_REPOS" ]; then
+			db_set cvsnt/pserver_repos some
+			IFS=':'
+			for i in $CVS_REPOS; do
+				IFS=' 	\
+'
+				RNAME="`echo "$i" | sed -e 's:/:_:g'`"
+				db_register cvsnt/pserver_repos_individual "cvsnt/pserver/$RNAME"
+				db_subst "cvsnt/pserver/$RNAME" repos "$i"
+				db_set "cvsnt/pserver/$RNAME" false
+			done
+			IFS=':'
+			for i in $CVS_PSERV_REPOS; do
+				IFS=' 	\
+'
+				RNAME="`echo "$i" | sed -e 's:/:_:g'`"
+				db_set "cvsnt/pserver/$RNAME" true
+			done
+		else
+			db_set cvsnt/pserver_repos all
+		fi
+		if [ $CVSCONF_VERSION -ge 2 ]; then
+			if [ x"$CVS_PSERV_RESPAWN" != x"off" -a
+				x"$CVS_PSERV_RESPAWN" != x"off-def" ]; then
+				db_set cvsnt/pserver_setspawnlimit true
+				db_set cvsnt/pserver_spawnlimit "$CVS_PSERV_RESPAWN"
+			else
+				db_set cvsnt/pserver_setspawnlimit false
+			fi
+		else
+			db_set cvsnt/pserver_setspawnlimit false
+		fi
+	else
+		db_set cvsnt/pserver false
+	fi
+	if [ -f /etc/cvsnt/cvs.conf.import ]; then
+		rm -f /etc/cvsnt/cvs.conf.import
+	fi
+}
+
+## Main program
+
+# Check if we need to import the old /etc/cvs.conf
+if [ -f /etc/cvsnt/cvs.conf -o -f /etc/cvsnt/cvs.conf.import ]; then
+	db_get cvsnt/read_cvsconf
+	if [ x"$RET" = x"false" ]; then
+		import_cvsconf
+		db_set cvsnt/read_cvsconf true
+	fi
+fi
+
+get_repositories
+get_history
+setup_pserver
+
+# End of file.

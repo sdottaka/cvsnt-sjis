@@ -1,0 +1,13 @@
+#!/bin/bash
+
+# $Debian: postrm,v 1.1 2001/04/20 16:00:54 epg Exp $
+
+if [ "$1" = "remove" -a -x /usr/sbin/update-inetd ]; then
+	update-inetd --remove "^cvspserver"
+fi
+if [ "$1" = "purge" ]; then
+	. /usr/share/debconf/confmodule
+	db_purge
+	rm -f /etc/cvsnt/cvs.conf
+fi
+#DEBHELPER#

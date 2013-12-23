@@ -1,0 +1,8 @@
+                                                                -*- outline -*-
+* cvsconfig
+This whole thing is really broken.  It's a nasty sh script using
+debconf in ways it's not supposed to be used.  This needs to be
+fixed up *soon* so that a decent version of cvs can go into
+woody.
+
+Fixing this would take care of most of the lintian problems.

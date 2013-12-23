@@ -1,0 +1,14 @@
+Section: misc
+Priority: optional
+Standards-Version: 3.5.10
+
+Package: cvsnt
+Version: 2.0.13
+Maintainer: Tony Hoyle <tmh@nodomain.org>
+Depends: zlib1g
+Recommends: openssl
+Provides: cvs, rcs
+Architecture: all
+Description: meta-package for cvs
+ This is a meta-package for installing cvsnt on debian.  It provides the
+ cvs and rcs packages.

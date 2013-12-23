@@ -1,0 +1,276 @@
+First, read the README file.  If you're still happy...
+
+First you need to obtain and install the CVS executables.  If you got
+a distribution which contains executables, consult the installation
+instructions for that distribution.  If you got source code, do not
+panic.  On many platforms building CVS from source code is a
+straightforward process requiring no programming knowledge.  See the
+section BUILDING FROM SOURCE CODE at the end of this file, which
+includes a list of platforms which have been tested.
+
+-------------------------------------------------------------------------------
+
+1) Take a look at the cvsnt documentation, if desired.  The up to date
+   documentation is in the cvsnt wiki at http://www.cvsnt.org
+
+   See what CVS can do for you, and if it fits your environment (or can
+   possibly be made to fit your environment).  If things look good,
+   continue on.  Alternately, just give CVS a try first then figure out
+   what it is good for.
+
+2) Set the CVSROOT environment variable to where you want to put your
+   source repository.  See the "Setting up the repository" section of
+   the Cederqvist manual for details, but the quick summary is just to
+   pick some directory.  We'll use /src/master as an example.  For
+   users of a POSIX shell (sh/bash/ksh) on unix, the following
+   commands can be placed in user's ~/.profile, ~/.bash_profile file;
+   or in the site-wide /etc/profile:
+
+       CVSROOT=/src/master; export CVSROOT
+
+   For C shell users on unix place the following commands in the
+   user's ~/.cshrc, ~/.login, or /etc/chsrc file:
+
+       setenv CVSROOT /src/master
+
+   For Windows users, supposing the repository will be in
+   d:\src\master, place the following line in c:\autoexec.bat.  On
+   Windows 95, autoexec.bat might not already exist.  In that case,
+   just create a new file containing the following line.
+
+       set CVSROOT=:local:d:\src\master
+
+   If these environment variables are not already set in your current
+   shell, set them now by typing the above line at the command prompt
+   (or source the login script you just edited).
+   The instructions for the remaining steps assume that you have set
+   the CVSROOT environment variable.
+
+3) Create the master source repository.  Again, the details are in
+   the "Setting up the repository" section of cvs.texinfo; the
+   one-line summary is:
+
+       $ cvs init
+
+   In this and subsequent examples we use "$" to indicate the command
+   prompt; do not type the "$".
+
+4) It might be a good idea to jump right in and put some sources or
+   documents directly under CVS control.  From within the top-level
+   directory of your source tree, run the following commands:
+
+       $ cvs import -m "test distribution" ccvs CVS_DIST CVS-TEST
+
+   (Those last three items are, respectively, a repository location, a
+   "vendor tag", and a "release tag".  You don't need to understand
+   them yet, but read the section "Starting new projects" in the
+   Cederqvist manual for details).
+
+5) Having done step 4, one should be able to checkout a fresh copy of the
+   sources you just imported and hack away at the sources with the
+   following command:
+
+      $ cd
+      $ cvs checkout ccvs
+
+   This will make the directory "ccvs" in your current directory and
+   populate it with the appropriate files and directories.
+
+6) You may wish to customize the various administrative files, in particular
+   modules.  See the Cederqvist manual for details.
+
+7) Read the NEWS file to see what's new.
+
+8) Hack away.
+
+-------------------------------------------------------------------------------
+
+BUILDING FROM SOURCE CODE
+
+Tested platforms
+
+CVS has been tested on the following platforms.  The most recent
+version of CVS reported to have been tested is indicated, but more
+recent versions of CVS probably will work too.  Please send updates to
+this list to cvsnt@cvsnt.org. "tested" means, at a minimum, that cvsnt
+compiles and appears to work on simple (manual) testing.  
+
+i386 family:
+	Solaris 8
+	Linux (kernel 2.4.x)
+	Windows NT 4.0 
+	Windows 2000
+	Windows XP
+
+Note that Windows 95/98/Me are not officially supported, although the
+client may occasionally work.
+
+-------------------------------------------------------------------------------
+
+Building from source code under Unix:
+
+Note that GNU tools are considered a basic requirement for compilation
+to succeed.  Compilation with manufacturers tools may work, but probably
+not out-of-the-box.
+
+1)  Run "configure":
+
+	$ ./configure
+
+    You can specify an alternate destination to override the default with
+    the --prefix option:
+
+	$ ./configure --prefix=/usr/local/gnu
+
+    or some path that is more appropriate for your site.  The default prefix
+    value is "/usr/local", with binaries in sub-directory "bin", manual
+    pages in sub-directory "man", and libraries in sub-directory "lib".
+
+    A normal build of CVS will create an executable which supports
+    local, server, or client CVS (if you don't know the difference,
+    it is described in the Repository chapter of doc/cvs.texinfo).  If
+    you do not intend to use client or server CVS, you may want to
+    prevent these features from being included in the executable you
+    build. You can do this with the --disable-client and
+    --disable-server options:
+
+	$ ./configure --disable-client --disable-server
+
+    Typically this can reduce the size of the executable by around 30%.
+
+    Unlike previous versions of CVS, you do not need to install RCS
+    or GNU diff.  
+
+    NOTE: The configure program will cache the results of the previous
+    configure execution.  If you need to re-run configure from scratch, you
+    may need to run "make distclean" first to remove the cached
+    configuration information.
+
+    If you are using gcc and are planning to modify CVS, you may want to
+    configure with -Wall; see the file HACKING for details.
+
+    If you have Kerberos 4 installed, you can specify the location of
+    the header files and libraries using the --with-krb4=DIR option.
+    DIR should be a directory with subdirectories include and lib
+    holding the Kerberos 4 header files and libraries, respectively.
+    The default value is /usr/kerberos.
+
+    If you want to enable support for encryption over Kerberos, use
+    the --enable-encryption option.  This option is disabled by
+    default.
+
+    If you want to disable automatic dependency tracking in the makefiles,
+    use the '--disable-dependency-tracking' option:
+
+	$ ./configure --disable-dependency-tracking
+
+    This avoids problems on some platforms.  See the note at the end of this
+    file on BSD.
+
+    Try './configure --help' for further information on its usage.
+
+    NOTE ON CVS's USE OF NDBM:
+
+	By default, CVS uses some built-in ndbm emulation code to allow
+	CVS to work in a heterogeneous environment.  However, if you have
+	a very large modules database, this may not work well.  You will
+	need to edit src/options.h to turn off the MY_NDBM #define and
+	re-run configure.  If you do this, the following comments apply.
+	If not, you may safely skip these comments.
+
+	If you configure CVS to use the real ndbm(3) libraries and
+	you do not have them installed in a "normal" place, you will
+	probably want to get the GNU version of ndbm (gdbm) and install
+	that before running the CVS configure script.  Be aware that the
+	GDBM 1.5 release does NOT install the <ndbm.h> header file included
+	with the release automatically.  You may have to install it by hand.
+
+	If you configure CVS to use the ndbm(3) libraries, you cannot
+	compile CVS with GNU cc (gcc) on Sun-4 SPARC systems.  However, gcc
+	2.0 may have fixed this limitation if -fpcc-struct-return is
+	defined.  When using gcc on other systems to compile CVS, you *may*
+	need to specify the -fpcc-struct-return option to gcc (you will
+	*know* you have to if "cvs checkout" core dumps in some ndbm
+	function).  You can do this as follows:
+
+	    $ CC='gcc -fpcc-struct-return' ./configure
+
+	for sh, bash, and ksh users and:
+
+	    % setenv CC 'gcc -fpcc-struct-return'
+	    % ./configure
+
+	for csh and tcsh users.
+
+    END OF NOTE FOR NDBM GUNK.
+
+2)  Edit src/options.h.  The defaults should be reasonable, and in fact
+    if you are lazy you can safely skip this step.
+
+3)  Try to build it:
+
+	$ make
+
+    This will (hopefully) make the needed CVS binaries within the
+    "src" directory.  If something fails for your system, and you want
+    to submit a bug report, you may wish to include your
+    "config.status" file, your host type, operating system and
+    compiler information, make output, and anything else you think
+    will be helpful.
+
+4)  Install the binaries:
+
+	$ make install
+
+    Depending on your installation's configuration, you may need to be
+    root to do this.
+
+-------------------------------------------------------------------------------
+
+Detailed information about your interaction with "configure":
+
+The "configure" script and its interaction with its options and the
+environment is described here.  For more detailed documentation about
+"configure", please refer to the GNU Autoconf documentation.
+
+Supported options are:
+
+	--srcdir=DIR		Useful for compiling on many different
+				machines sharing one source tree.
+	--prefix=DIR		The root of where to install the
+				various pieces of CVS (/usr/local).
+	--exec_prefix=DIR	If you want executables in a
+				host-dependent place and shared
+				things in a host-independent place.
+
+The following environment variables override configure's default
+behaviour:
+
+	CC			If not set, tries to use gcc first,
+				then cc.  Also tries to use "-g -O"
+				as options, backing down to -g
+				alone if that doesn't work.
+	INSTALL			If not set, tries to use "install", then
+				"./install-sh" as a final choice.
+	RANLIB			If not set, tries to determine if "ranlib"
+				is available, choosing "echo" if it doesn't
+				appear to be.
+	YACC			If not set, tries to determine if "bison"
+				is available, choosing "yacc" if it doesn't
+				appear to be.
+
+-------------------------------------------------------------------------------
+
+Building from source code under Windows NT/95/98/2000:
+
+You may find interesting information in windows-NT/README.
+
+1) Using Microsoft Visual C++ .NET open the project `cvsnt.vcproj',
+   in the top directory of the CVS distribution.  If you have an older
+   version of Visual C++, other steps may be required.  See the wiki for
+   details.
+2) Choose "Build cvs.exe" from the "Project" menu.
+3) MSVC will place the executable file cvs.exe in WinRel, or whatever
+   your target directory is.
+
+-------------------------------------------------------------------------------

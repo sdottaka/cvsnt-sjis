@@ -1,0 +1,104 @@
+/* ntlm.h	header file for libntlm                               -*- c -*-
+ *
+ * This file is part of libntlm.
+ *
+ * Libntlm is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * Libntlm is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with libntlm; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
+ */
+
+#ifndef _NTLM_H
+#define _NTLM_H
+
+#ifdef __cplusplus
+extern "C" {
+#if 0 /* keep Emacsens's auto-indent happy */
+}
+#endif
+#endif
+
+typedef unsigned short uint16;
+typedef unsigned int uint32;
+typedef unsigned char uint8;
+
+#define NTLM_VERSION "2.0.13"
+
+/* 
+ * These structures are byte-order dependant, and should not
+ * be manipulated except by the use of the routines provided
+ */
+
+typedef struct
+{
+  uint16 len;
+  uint16 maxlen;
+  uint32 offset;
+}tSmbStrHeader;
+
+typedef struct
+{
+  char ident[8];
+  uint32 msgType;
+  uint32 flags;
+  tSmbStrHeader user;
+  tSmbStrHeader domain;
+  uint8 buffer[1024];
+  uint32 bufIndex;
+}tSmbNtlmAuthRequest;
+
+typedef struct
+{
+  char ident[8];
+  uint32 msgType;
+  tSmbStrHeader uDomain;
+  uint32 flags;
+  uint8 challengeData[8];
+  uint8 reserved[8];
+  tSmbStrHeader emptyString;
+  uint8 buffer[1024];
+  uint32 bufIndex;
+}tSmbNtlmAuthChallenge;
+
+
+typedef struct
+{
+  char ident[8];
+  uint32 msgType;
+  tSmbStrHeader lmResponse;
+  tSmbStrHeader ntResponse;
+  tSmbStrHeader uDomain;
+  tSmbStrHeader uUser;
+  tSmbStrHeader uWks;
+  tSmbStrHeader sessionKey;
+  uint32 flags;
+  uint8 buffer[1024];
+  uint32 bufIndex;
+}tSmbNtlmAuthResponse;
+
+/* public: */
+
+#define SmbLength(ptr) (((ptr)->buffer - (uint8*)(ptr)) + (ptr)->bufIndex)
+
+extern void dumpSmbNtlmAuthRequest(FILE *fp, tSmbNtlmAuthRequest *request);
+extern void dumpSmbNtlmAuthChallenge(FILE *fp, tSmbNtlmAuthChallenge *challenge);
+extern void dumpSmbNtlmAuthResponse(FILE *fp, tSmbNtlmAuthResponse *response);
+
+extern void buildSmbNtlmAuthRequest(tSmbNtlmAuthRequest *request, char *user, char *domain);
+extern void buildSmbNtlmAuthResponse(tSmbNtlmAuthChallenge *challenge, tSmbNtlmAuthResponse *response, char *user, char *password);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

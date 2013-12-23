@@ -1,0 +1,10 @@
+Document: cvsnt-doc
+Title: The CVS manual
+Author: Various
+Abstract: This manual describes the functions of the Concurrent Versions
+ System (CVSNT version).
+Section: Apps/Programming
+
+Format: HTML
+Index: /usr/share/doc/cvsnt/html-info/cvs_toc.html
+Files: /usr/share/doc/cvsnt/html-info/*.html

@@ -1,0 +1,52 @@
+.\"                                      Hey, EMACS: -*- nroff -*-
+.\"
+.\" $Date: 2003/02/07 17:45:38 $
+.\"
+.\" First parameter, NAME, should be all caps
+.\" Second parameter, SECTION, should be 1-8, maybe w/ subsection
+.\" other parameters are allowed: see man(7), man(1)
+.TH CVS-MAKEREPOS 8 "Thu Mar 23 12:49:36 GMT 2000"
+.\" Please adjust this date whenever revising the manpage.
+.\"
+.\" Some roff macros, for reference:
+.\" .nh        disable hyphenation
+.\" .hy        enable hyphenation
+.\" .ad l      left justify
+.\" .ad b      justify to both left and right margins
+.\" .nf        disable filling
+.\" .fi        enable filling
+.\" .br        insert line break
+.\" .sp <n>    insert n+1 empty lines
+.\" for manpage-specific macros, see man(7)
+.SH NAME
+cvs-makerepos \- script to create non-existing configured CVS repositories
+.SH SYNOPSIS
+.B cvs-makerepos
+.RI [ options ]
+.SH DESCRIPTION
+This manual page documents briefly the
+.B cvs-makerepos
+command.
+
+.PP
+.\" TeX users may be more comfortable with the \fB<whatever>\fP and
+.\" \fI<whatever>\fP escape sequences to invode bold face and italics, 
+.\" respectively.
+\fBcvs-makerepos\fP is a script which will create CVS repositories in
+the locations configured using the Debian configuration scripts with
+some fairly standard permissions.
+.br
+The standard permissions given are 2775 root.src. You may wish to change
+these if you do not wish all members of the local group src to have access
+to these repositories.
+.SH OPTIONS
+.TP
+.B \-d
+Retrieve list of repositories directly using debconf, rather than from
+/etc/cvs-cron.conf or /etc/cvs.conf.
+.SH SEE ALSO
+.BR cvs (1),
+.BR cvsconfig (8).
+.SH AUTHOR
+This manual page was written by Tom Lees <tom@debian.org>,
+for the Debian GNU/Linux system.

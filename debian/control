@@ -1,0 +1,30 @@
+Source: cvsnt
+Section: devel
+Priority: optional
+Maintainer: Tony Hoyle <tmh@nothing-on.tv>
+Build-Depends: debhelper, zlib1g-dev, texi2html, groff, texinfo, bison
+Standards-Version: 3.5.3.0
+
+Package: cvsnt
+Architecture: any
+Depends: ${shlibs:Depends}, debconf
+Recommends: netbase (>=2.08-1)
+Replaces: cvsnt-doc (<< 1.11-2)
+Conflicts: cvs-doc, cvs
+Provides: cvsnt-doc, cvs-doc, cvs
+Description: Concurrent Versions System
+ CVS is a version control system, which allows you to keep old versions
+ of files (usually source code), keep a log of who, when, and why
+ changes occurred, etc., like RCS or SCCS.  Unlike the simpler systems,
+ CVS does not just operate on one file at a time or one directory at
+ a time, but operates on hierarchical collections of directories
+ consisting of version controlled files.
+ .
+ CVS helps to manage releases and to control the concurrent editing of
+ source files among multiple authors.  CVS allows triggers to
+ enable/log/control various operations and works well over a wide area
+ network.
+ .
+ CVSNT is an enhanced version, originally ported to Windows NT, then
+ ported back to Unix!
+

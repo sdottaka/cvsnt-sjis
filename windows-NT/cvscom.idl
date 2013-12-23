@@ -1,0 +1,103 @@
+[
+	uuid(2BDF7A65-0BFE-4b1a-9205-9AB900C7D0DA),
+	version(1.0),
+	helpstring("CVSNT 2.x Type Library")
+]
+library CVSNT
+{
+	importlib("stdole2.tlb");
+
+	[uuid(3B6FA33A-4755-42bd-935A-61101C80D74D)]
+	enum ChangeType
+	{
+		ctUNKNOWN = 1,			/* no old-style analog existed	 */
+		ctCONFLICT,				/* C (conflict) list		 */
+		ctNEEDS_MERGE,			/* G (needs merging) list	 */
+		ctMODIFIED,				/* M (needs checked in) list 	 */
+		ctCHECKOUT,				/* O (needs checkout) list	 */
+		ctRESURRECT,			/* E resurrect dead revision */
+		ctADDED,				/* A (added file) list		 */
+		ctREMOVED,				/* R (removed file) list	 */
+		ctREMOVE_ENTRY,			/* W (removed entry) list	 */
+		ctUPTODATE,				/* File is up-to-date		 */
+		ctPATCH,				/* P Like C, but can patch	 */
+	};
+
+	[uuid(11704CFC-36D8-43a5-AF9B-46788A9515FB)]
+	struct ChangeInfoStruct 
+	{
+		BSTR filename;
+		BSTR rev_new;
+		BSTR rev_old;
+		enum ChangeType type;
+		BSTR tag;
+	};
+
+	[
+		uuid(F64835E1-A9EC-40ff-9C5D-EBD834E3E7BB),
+		version(1.0),
+		helpstring("CVSNT 2.x Info callbacks")
+	]
+	interface ICvsInfo : IUnknown
+	{
+		short init(
+			[in] BSTR repository,
+			[in] BSTR username,
+			[in] BSTR prefix,
+			[in] BSTR sessionid,
+			[in] BSTR hostname
+		);
+
+		short pretag(
+			[in] BSTR tag,
+			[in] BSTR action,
+			[in] BSTR repository,
+			[in] SAFEARRAY(BSTR) pretag_list
+		);
+
+		short verifymsg(
+			[in] BSTR filename
+		);
+		
+		short loginfo(
+			[in] BSTR repository,
+			[in] BSTR hostname,
+			[in] BSTR directory,
+			[in] BSTR message,
+			[in] BSTR status,
+			[in] SAFEARRAY(struct ChangeInfoStruct) file_list
+		);
+
+		short history(
+			[in] BSTR repository,
+			[in] BSTR history_line
+		);
+		
+		short notify(
+			[in] BSTR short_repository, 
+			[in] BSTR file,
+			[in] BSTR type,
+			[in] BSTR repository,
+			[in] BSTR who
+		);
+
+		short precommit(
+			[in] BSTR repository,
+			[in] SAFEARRAY(BSTR) precommit_list
+		);
+		
+		short postcommit(
+			[in] BSTR repository
+		);
+	}
+
+	[
+		uuid(A4B097E6-F5B7-4416-9BCD-58004593C4D3),
+		version(1.0),
+		helpstring("CVSNT 2.x Info callbacks (v2)")
+	]
+	interface ICvsInfo2 : ICvsInfo
+	{
+		short close();
+	}
+}

@@ -1,0 +1,17 @@
+#!/bin/sh
+
+# $Debian: postinst,v 1.2 2001/06/24 21:37:30 epg Exp $
+
+set -e
+
+. /usr/share/debconf/confmodule
+
+if [ "$1" = "configure" ]; then
+	/usr/sbin/cvsconfig -s
+fi
+
+db_get cvs/badrepositories
+if [ "$RET" = "create" ]; then
+	/usr/sbin/cvs-makerepos
+fi
+#DEBHELPER#

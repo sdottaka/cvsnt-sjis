@@ -1,0 +1,9 @@
+Document: cvsnt-doc-client
+Title: CVS client-server protocol description
+Author: Various
+Abstract: This document describes the client-server CVS protocol.
+Section: Apps/Programming
+
+Format: HTML
+Index: /usr/share/doc/cvsnt/html-cvsclient/cvsclient_toc.html
+Files: /usr/share/doc/cvsnt/html-cvsclient/*.html

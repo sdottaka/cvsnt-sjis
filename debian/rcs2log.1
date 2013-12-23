@@ -1,0 +1,99 @@
+.\" $Debian: rcs2log.1,v 1.1 2001/06/14 07:24:39 epg Exp $
+.\"
+.TH RCS2LOG 1 "March 2001" "Debian Project" "Generates changelog entries"
+
+.SH NAME
+rcs2log \- generates a changelog from RCS files
+
+.SH SYNOPSIS
+.B rcs2log
+[OPTION] ... [FILE ...]
+
+.SH DESCRIPTION
+.B rcslog 
+generates a change log from RCS files, which can possibly be located
+in a CVS repository, and outputs the new change log to standard
+output.  If no FILE is specified, 
+.B rcs2log
+will use the files registered under the working directory.  The change
+log prefix can be later copied to the existing ChangeLog file.
+
+.SS OPTIONS
+
+.TP 2
+\fB\-c\fP CHANGELOG
+Output a change log prefix to CHANGELOG (default ChangeLog).
+
+.TP 2
+\fB\-h\fP HOSTNAME  
+Use HOSTNAME in change log entries (default current host).
+
+.TP 2
+\fB\-i\fP INDENT
+Indent change log lines by INDENT spaces (default 8).
+
+.TP 2
+\fB\-l\fP LENGTH
+Try to limit log lines to LENGTH characters (default 79).
+
+.TP
+.BI -R  
+If no FILEs are given and RCS is used, recurse through working directory.
+
+.TP
+.BI -r 
+OPTION  
+Pass OPTION to subsidiary log command.
+
+.TP 2
+\fB\-t\fP TABWIDTH  
+Tab stops are every TABWIDTH characters (default 8).
+
+.TP 2
+\fB\-u\fP "LOGIN\\tFULLNAME\\tMAILADDR"  
+Assume LOGIN has FULLNAME and MAILADDR.
+
+.TP
+.BI -v  
+Append RCS revision to file names in log lines.
+
+.TP
+.BI --help  
+Output help.
+
+.TP
+.BI --version  
+Output version number.
+
+.SH AUTHOR
+.B rcs2log
+was written by Paul Eggert <eggert@twinsun.com>.
+
+.SH COPYRIGHT
+.B rcs2log
+is free; anyone may redistribute copies of 
+.B rcslog
+to anyone under the terms stated in the GNU General Public License as
+published by the Free Software Foundation; either version 2, or (at
+your option) any later version.
+
+.SH BUGS
+There is a mailing list, bug-gnu-emacs@gnu.org on the internet, for
+reporting bugs in rcs2log.  Please, if you find any bug, report it (if
+you really are good-willing, a patch is appreciated).
+
+Please note that this program is distributed in the hope that it will
+be useful, but WITHOUT ANY WARRANTY; without even the implied warranty
+of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+General Public License for more details.  In other terms, if
+.B rcs2log
+breaks, you get to keep both pieces.
+
+.SH SEE ALSO
+cvs(1),
+cvsconfig(1)
+
+.SH NOTE
+This manual page was written by Andrea Glorioso <sama@aglorioso.com>
+for the Debian GNU/Linux distribution because the original program
+did not have a manual page.  

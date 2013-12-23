@@ -1,0 +1,42 @@
+#
+# Repository definitions (0..n)
+#
+#Repository0=/usr/local/cvs
+#Repository1=/usr/local/cvs-other
+
+#
+# Repository prefix
+#
+#RepositoryPrefix=/usr
+
+#
+# Encryption  0=Don't force encryption,
+#	      1=Request authentication,
+#	      2=Request encryption,
+#	      3=Require authentication,
+#	      4=Require encryption
+#
+#EncryptionLevel=0
+
+#
+# Compression 0=Don't force compression
+#	      1=Request compression
+#	      2=Require compression
+#
+#CompressionLevel=0
+
+#
+# CertificateFile  PEM certificate for use with sserver
+# PrivateKeyFile   PEM certificate for use with sserver
+#
+#CertificateFile=/etc/ssh/cvsnt.pem
+#PrivateKeyFile=/etc/ssh/cvsnt.pem
+
+#
+# NoReverseDns	   Disable Reverse lookups by the server to help broken
+#		   DNS setups.
+#		   This causes LockServer to report bare IP addresses.
+#		   It is recommended that the DNS is fixed rather thani
+#		   using this option.
+#
+#NoReverseDns=0

@@ -1,0 +1,40 @@
+.\" $Debian: cvsconfig.1,v 1.3 2001/11/19 18:16:09 epg Exp $
+
+.TH CVSCONFIG 8 
+.\" NAME should be all caps, SECTION should be 1-8, maybe w/ subsection
+.\" other parms are allowed: see man(7), man(1)
+.SH NAME
+cvs \- The GNU Concurrent Versions System
+.SH SYNOPSIS
+.B cvsconfig \-r | \-s | \-x
+.SH "DESCRIPTION"
+This manual page documents briefly the
+.BR cvsconfig
+command.
+This manual page was written for the Debian GNU/Linux distribution.
+.PP
+.B cvsconfig
+is a program that will configure the Debian CVS setup to enable/disable
+the "pserver" access method, and also configure allowed repositories for this
+method. It also allows the history files in these repositories to be rotated.
+.SH OPTIONS
+.TP
+.B \-s
+Implement the currently configured setup by setting up /etc/inetd.conf
+etc. properly.
+.TP
+.B \-r
+Generate an old-style configuration file in /etc/cvs.conf using the
+current settings. This may be of use if you wish to downgrade CVS.
+.TP
+.B \-x
+Export the current configuration settings into an existing old-style
+configuration file in /etc/cvs.conf. Use
+.B \-x \-u
+to also upgrade to the newest configuration file format known. This
+will ensure that all parameters are exported.
+.SH "FILES"
+.B /etc/cvs.conf
+.SH AUTHOR
+This manual page was written by Tom Lees <tom@debian.org>,
+for the Debian GNU/Linux system.

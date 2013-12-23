@@ -1,0 +1,18 @@
+if [ ! -f release ] ; then
+  echo release file missing!
+  exit -1
+fi
+RELEASE=`cat release`
+if [ -d cvsnt-$RELEASE ] ; then
+  echo Cleaning up...
+  rm -rf cvsnt-$RELEASE
+fi
+cvs -d /usr/local/cvs co -d cvsnt-$RELEASE cvsnt
+( cd cvsnt-$RELEASE; autoconf2.50; automake-1.6 )
+tar czf cvsnt-$RELEASE.tar.gz cvsnt-$RELEASE
+scp *$RELEASE*.gz *$RELEASE*exe *$RELEASE*.zip release tmh@sisko.nodomain.org:/var/www/cvsnt.org
+ncftpput -u tmhoyle homepages.nildram.co.uk www *$RELEASE*.gz *$RELEASE*exe *$RELEASE*.zip release
+if [ -d cvsnt-$RELEASE ] ; then
+  echo Cleaning up...
+  rm -rf cvsnt-$RELEASE
+fi

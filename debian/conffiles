@@ -1,0 +1,3 @@
+/etc/cron.weekly/cvsnt
+/etc/cvsnt/cron.conf
+/etc/cvsnt/pserver.conf
