@@ -1791,7 +1791,7 @@ update_entries (data_arg, ent_list, short_pathname, filename)
 			else
 			{
 #ifdef SJIS
-			    if (current_parsed_root->text_encoding)
+			    if (current_parsed_root->text_encoding && !(binr&KFLAG_BINARY))
 			    {
 				char *pbuf;
 				size_t len;
