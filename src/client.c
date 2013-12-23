@@ -3048,7 +3048,7 @@ handle_m (args, len)
        stdout and stderr.  But I'm not sure).  */
     fflush (stderr);
 #ifdef SJIS
-	if (current_parsed_root->message_encoding
+	if (current_parsed_root->message_encoding && (strcmp(command_name, "log") == 0 || strcmp(command_name, "rlog") == 0)
 		&& (strcmp(current_parsed_root->message_encoding, "EUC-JP") == 0
 			|| strcmp(current_parsed_root->message_encoding, "euc-jp") == 0))
 	{ 

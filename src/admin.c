@@ -443,7 +443,37 @@ admin (argc, argv)
 	    send_arg (admin_data.kflag);
 
 	for (i = 0; i < admin_data.ac; ++i)
+#ifdef SJIS
+	{
+		if (strncmp(admin_data.av[i], "-m", 2) == 0)
+		{
+			if (current_parsed_root->message_encoding
+				&& (strcmp(current_parsed_root->message_encoding, "EUC-JP") == 0
+					|| strcmp(current_parsed_root->message_encoding, "euc-jp") == 0))
+			{
+				char *buf;
+				extern char * k_to_euc PROTO ((char *));
+				if (trace)
+					(void) fprintf (stderr, "kanji convert\n");
+				buf = xmalloc(strlen(admin_data.av[i]) * 2 + 1);
+				strcpy(buf, admin_data.av[i]);
+				buf = k_to_euc(buf);
+				send_arg (buf);
+				xfree(buf);
+			}
+			else
+			{
+				send_arg (admin_data.av[i]);
+			}
+		}
+		else
+		{
+			send_arg (admin_data.av[i]);
+		}
+	}
+#else
 	    send_arg (admin_data.av[i]);
+#endif
 
 	send_arg("--");
 

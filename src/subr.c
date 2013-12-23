@@ -707,6 +707,18 @@ make_message_rcslegal (message)
 	dst = xstrdup ("*** empty log message ***");
     }
 
+#ifdef SJIS
+	if (!server_active && dst && current_parsed_root->message_encoding
+		&& (strcmp(current_parsed_root->message_encoding, "EUC-JP") == 0
+			|| strcmp(current_parsed_root->message_encoding, "euc-jp") == 0))
+	{
+		extern char * k_to_euc PROTO ((char *));
+		if (trace)
+			(void) fprintf (stderr, "kanji convert\n");
+		dst = k_to_euc(dst);
+	}
+#endif
+
     return dst;
 }
 

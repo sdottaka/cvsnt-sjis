@@ -1834,7 +1834,7 @@ log_version (log_data, revlist, rcs, ver, trunk)
 	/* FIXME: Technically, the log message could contain a null
            byte.  */
 #ifdef SJIS
-	if (!current_parsed_root->isremote && current_parsed_root->message_encoding
+	if (!server_active && current_parsed_root->message_encoding
 		&& (strcmp(current_parsed_root->message_encoding, "EUC-JP") == 0
 			|| strcmp(current_parsed_root->message_encoding, "euc-jp") == 0))
 	{

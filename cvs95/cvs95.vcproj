@@ -709,45 +709,123 @@
 			</File>
 			<File
 				RelativePath="..\ack139\codetoeuc.c">
+				<FileConfiguration
+					Name="Release|Win32">
+					<Tool
+						Name="VCCLCompilerTool"
+						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
+				</FileConfiguration>
 			</File>
 			<File
 				RelativePath="..\ack139\codetojis.c">
+				<FileConfiguration
+					Name="Release|Win32">
+					<Tool
+						Name="VCCLCompilerTool"
+						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
+				</FileConfiguration>
 			</File>
 			<File
 				RelativePath="..\ack139\codetosjis.c">
+				<FileConfiguration
+					Name="Release|Win32">
+					<Tool
+						Name="VCCLCompilerTool"
+						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
+				</FileConfiguration>
 			</File>
 			<File
 				RelativePath="..\ack139\codetozen.c">
+				<FileConfiguration
+					Name="Release|Win32">
+					<Tool
+						Name="VCCLCompilerTool"
+						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
+				</FileConfiguration>
 			</File>
 			<File
 				RelativePath="..\ack139\euctocode.c">
+				<FileConfiguration
+					Name="Release|Win32">
+					<Tool
+						Name="VCCLCompilerTool"
+						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
+				</FileConfiguration>
 			</File>
 			<File
 				RelativePath="..\ack139\fileio.c">
+				<FileConfiguration
+					Name="Release|Win32">
+					<Tool
+						Name="VCCLCompilerTool"
+						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
+				</FileConfiguration>
 			</File>
 			<File
 				RelativePath="..\ack139\kanjicheck.c">
+				<FileConfiguration
+					Name="Release|Win32">
+					<Tool
+						Name="VCCLCompilerTool"
+						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
+				</FileConfiguration>
 			</File>
 			<File
 				RelativePath="..\ack139\kanjicode.h">
 			</File>
 			<File
 				RelativePath="..\ack139\kanjisub.c">
+				<FileConfiguration
+					Name="Release|Win32">
+					<Tool
+						Name="VCCLCompilerTool"
+						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
+				</FileConfiguration>
 			</File>
 			<File
 				RelativePath="..\ack139\kanjixcheck.c">
+				<FileConfiguration
+					Name="Release|Win32">
+					<Tool
+						Name="VCCLCompilerTool"
+						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
+				</FileConfiguration>
 			</File>
 			<File
 				RelativePath="..\ack139\kmain.c">
+				<FileConfiguration
+					Name="Release|Win32">
+					<Tool
+						Name="VCCLCompilerTool"
+						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
+				</FileConfiguration>
 			</File>
 			<File
 				RelativePath="..\ack139\lcode.c">
+				<FileConfiguration
+					Name="Release|Win32">
+					<Tool
+						Name="VCCLCompilerTool"
+						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
+				</FileConfiguration>
 			</File>
 			<File
 				RelativePath="..\ack139\sjistocode.c">
+				<FileConfiguration
+					Name="Release|Win32">
+					<Tool
+						Name="VCCLCompilerTool"
+						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
+				</FileConfiguration>
 			</File>
 			<File
 				RelativePath="..\ack139\string.c">
+				<FileConfiguration
+					Name="Release|Win32">
+					<Tool
+						Name="VCCLCompilerTool"
+						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
+				</FileConfiguration>
 			</File>
 		</Filter>
 	</Files>
