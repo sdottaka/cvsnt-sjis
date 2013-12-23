@@ -891,6 +891,7 @@ static int logfile_write (const char *repository, const char *filter, const char
 			off_t len;
 			fseek(logfp,0,SEEK_END);
 			len=ftell(logfp);
+			status = xmalloc(len+1);
 			rewind (logfp);
 			len = fread(status,1,len,logfp);
 			if(len<0)
@@ -905,7 +906,7 @@ static int logfile_write (const char *repository, const char *filter, const char
 			ret = 0;
 		}
 		else
-			ret = cb->loginfo(cb,fn_root(repository),hostname,cp=xgetwd(),message,status,loginfo_count,loginfo_array);
+			ret = cb->loginfo(cb,fn_root(repository),hostname,cp=xgetwd_mapped(),message,status,loginfo_count,loginfo_array);
 		xfree(status);
 		xfree(loginfo_array);
 		xfree (cp);
@@ -925,7 +926,7 @@ static int logfile_write (const char *repository, const char *filter, const char
 			char *tmp=xmalloc(strlen(repository)+strlen(hostname)*4);
 			(void) fprintf (pipefp, "Update of %s\n", shell_escape(tmp,fn_root(repository)));
 			(void) fprintf (pipefp, "In directory %s:", shell_escape(tmp,hostname));
-			cp = xgetwd ();
+			cp = xgetwd_mapped ();
 			if (cp == NULL)
 			fprintf (pipefp, "<cannot get working directory: %s>\n\n",
 				strerror (errno));

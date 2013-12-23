@@ -17,10 +17,10 @@
  */
 
 #include "cvs.h"
+#include <getline.h>
 
-static int find_dirs PROTO((char *dir, List * list, int checkadm,
-			    List *entries));
-static int find_rcs PROTO((char *dir, List * list));
+static int find_dirs(char *dir, List * list, int checkadm, List *entries, const char *regex);
+static int find_rcs(char *dir, List * list, const char *regex);
 static int add_subdir_proc PROTO((Node *, void *));
 static int register_subdir_proc PROTO((Node *, void *));
 
@@ -55,10 +55,14 @@ add_entries_proc (node, closure)
    a fatal error.  On success, return non-NULL (even if it is an empty
    list).  */
 
-List *Find_Names (char *repository, int which, int aflag, List **optentries)
+List *Find_Names (char *repository, int which, int aflag, List **optentries, const char *virtual_repository)
 {
     List *entries;
     List *files;
+	const char *regex = NULL;
+
+	if(server_active || !current_parsed_root->isremote)
+		regex = lookup_regex(virtual_repository);
 
     /* make a list for the files */
     files = filelist = getlist ();
@@ -84,7 +88,7 @@ List *Find_Names (char *repository, int which, int aflag, List **optentries)
     if ((which & W_REPOS) && repository && !isreadable (CVSADM_ENTSTAT))
     {
 		/* search the repository */
-		if (find_rcs (repository, files) != 0)
+		if (find_rcs (repository, files, regex) != 0)
 		{
 			error (0, errno, "cannot open directory %s", repository);
 			goto error_exit;
@@ -96,19 +100,32 @@ List *Find_Names (char *repository, int which, int aflag, List **optentries)
 			char *dir;
 			dir = xmalloc (strlen (repository) + sizeof (CVSATTIC) + 10);
 			(void) sprintf (dir, "%s/%s", repository, CVSATTIC);
-			if (find_rcs (dir, files) != 0
+			if (find_rcs (dir, files, regex) != 0
 			&& !existence_error (errno))
 			/* For now keep this a fatal error, seems less useful
 			for access control than the case above.  */
 			error (1, errno, "cannot open directory %s", dir);
 			xfree (dir);
 		}
+
+		if(find_virtual_rcs (virtual_repository, files) != 0)
+		{
+			error(1, errno, "find_virtual_rcs failed");
+		}
+
+		if(find_rename_rcs(virtual_repository, files) != 0)
+		{
+			error(1,errno, "find_renames failed");
+		}
     }
+
+	xfree(regex);
 
     /* sort the list into alphabetical order and return it */
     sortlist (files, fsortcmp);
     return (files);
  error_exit:
+	xfree(regex);
     dellist (&files);
     return NULL;
 }
@@ -158,15 +175,16 @@ register_subdir_proc (p, closure)
 /*
  * create a list of directories to traverse from the current directory
  */
-List *
-Find_Directories (repository, which, entries)
-    char *repository;
-    int which;
-    List *entries;
+List *Find_Directories (char *repository, int which, List *entries, const char *virtual_repository)
 {
     List *dirlist;
 
-    /* make a list for the directories */
+	const char *regex = NULL;
+
+	if((server_active || !current_parsed_root->isremote) && virtual_repository)
+		regex = lookup_regex(virtual_repository);
+
+	/* make a list for the directories */
     dirlist = getlist ();
 
     /* find the local ones */
@@ -207,7 +225,7 @@ Find_Directories (repository, which, entries)
 	       a sanity.sh test case (which would operate by manually
 	       hacking on the CVS/Entries file).  */
 
-	    if (find_dirs (".", dirlist, 1, tmpentries) != 0)
+	    if (find_dirs (".", dirlist, 1, tmpentries, regex) != 0)
 		error (1, errno, "cannot open current directory");
 	    if (tmpentries != NULL)
 	    {
@@ -222,23 +240,27 @@ Find_Directories (repository, which, entries)
 	if (entries == NULL && tmpentries != NULL)
 	    Entries_Close (tmpentries);
     }
-
     /* look for sub-dirs in the repository */
     if ((which & W_REPOS) && repository)
     {
-	/* search the repository */
-	if (find_dirs (repository, dirlist, 0, entries) != 0)
-	{
-	    error (1, errno, "cannot open directory %s", repository);
-	}
+		/* search the repository */
+		if (find_dirs (repository, dirlist, 0, entries, regex) != 0)
+		{
+			error (1, errno, "cannot open directory %s", repository);
+		}
 
-	/* We don't need to look in the attic because directories
-	   never go in the attic.  In the future, there hopefully will
-	   be a better mechanism for detecting whether a directory in
-	   the repository is alive or dead; it may or may not involve
-	   moving directories to the attic.  */
+		/* look for virtual directories */
+		if (find_virtual_dirs (virtual_repository, dirlist) != 0)
+		{
+			error (1, errno, "cannot open virtual directory %s", repository);
+		}
+		if(find_rename_dirs(virtual_repository, dirlist) != 0)
+		{
+			error(1,errno, "find_renames failed");
+		}
     }
 
+	xfree(regex);
     /* sort the list into alphabetical order and return it */
     sortlist (dirlist, fsortcmp);
     return (dirlist);
@@ -251,12 +273,13 @@ Find_Directories (repository, which, entries)
  * In the error case LIST is left in some reasonable state (unchanged, or
  * containing the files which were found before the error occurred).
  */
-static int find_rcs (char *dir, List *list)
+static int find_rcs (char *dir, List *list, const char *regex)
 {
     Node *p;
     struct dirent *dp;
     DIR *dirp;
-	
+
+
 	/* set up to read the dir */
     if ((dirp = CVS_OPENDIR (dir)) == NULL)
 	return (1);
@@ -267,15 +290,27 @@ static int find_rcs (char *dir, List *list)
     {
 		if (CVS_FNMATCH (RCSPAT, dp->d_name, 0) == 0) 
 		{
-			char *comma;
+			char *comma, *q;
 
 			comma = strrchr (dp->d_name, ',');	/* strip the ,v */
 			*comma = '\0';
-			p = getnode ();
-			p->type = FILES;
-			p->key = xstrdup (dp->d_name);
-			if (addnode (list, p) != 0)
-			freenode (p);
+
+			if(!fncmp(dp->d_name,RCSREPOVERSION))
+				continue;
+
+			q = map_fixed_rename(dir,dp->d_name);
+
+			if(q && *q && (!regex || regex_filename_match(regex, q)))
+			{
+				p = getnode ();
+				p->type = FILES;
+				p->key = xstrdup (q);
+				if(!findnode(list,p->key))
+				{
+					if(addnode (list, p) != 0)
+						freenode (p);
+				}
+			}
 		}
 		errno = 0;
     }
@@ -297,7 +332,7 @@ static int find_rcs (char *dir, List *list)
  * files on the list are ignored.  Returns 0 for success or 1 on
  * error, in which case errno is set to indicate the error.
  */
-static int find_dirs (char *dir, List *list, int checkadm, List *entries)
+static int find_dirs (char *dir, List *list, int checkadm, List *entries, const char *regex)
 {
     Node *p;
     char *tmp = NULL;
@@ -312,7 +347,7 @@ static int find_dirs (char *dir, List *list, int checkadm, List *entries)
     if (isabsolute (dir)
 	&& fnncmp (dir, current_parsed_root->directory, strlen (current_parsed_root->directory)) == 0
 #ifdef SJIS
-	&& (ISDIRSEP (dir[strlen (current_parsed_root->directory)]) && !_ismbstrail(dir, dir + strlen (current_parsed_root->directory)))
+	&& (ISDIRSEPMB (dir, dir + strlen (current_parsed_root->directory)))
 #else
 	&& ISDIRSEP (dir[strlen (current_parsed_root->directory)])
 #endif
@@ -331,7 +366,8 @@ static int find_dirs (char *dir, List *list, int checkadm, List *entries)
 	    fncmp (dp->d_name, "..") == 0 ||
 	    fncmp (dp->d_name, CVSATTIC) == 0 ||
 	    fncmp (dp->d_name, CVSLCK) == 0 ||
-	    fncmp (dp->d_name, CVSREP) == 0)
+	    fncmp (dp->d_name, CVSREP) == 0 ||
+		fncmp (dp->d_name, CVSDUMMY) == 0)
 	    goto do_it_again;
 
 	/* findnode() is going to be significantly faster than stat()
@@ -344,12 +380,6 @@ static int find_dirs (char *dir, List *list, int checkadm, List *entries)
 	    && fncmp (dp->d_name, CVSNULLREPOS) == 0)
 	    goto do_it_again;
 
-#ifdef DT_DIR
-	if (dp->d_type != DT_DIR) 
-	{
-	    if (dp->d_type != DT_UNKNOWN && dp->d_type != DT_LNK)
-		goto do_it_again;
-#endif
 	    /* don't bother stating ,v files */
 	    if (CVS_FNMATCH (RCSPAT, dp->d_name, 0) == 0)
 		goto do_it_again;
@@ -361,28 +391,14 @@ static int find_dirs (char *dir, List *list, int checkadm, List *entries)
 	    if (!isdir (tmp))
 		goto do_it_again;
 
-#ifdef DT_DIR
-	}
-#endif
-
 	/* check for administration directories (if needed) */
 	if (checkadm)
 	{
 	    /* blow off symbolic links to dirs in local dir */
-#ifdef DT_DIR
-	    if (dp->d_type != DT_DIR)
-	    {
-		/* we're either unknown or a symlink at this point */
-		if (dp->d_type == DT_LNK)
-		    goto do_it_again;
-#endif
 		/* Note that we only get here if we already set tmp
 		   above.  */
 		if (islink (tmp))
 		    goto do_it_again;
-#ifdef DT_DIR
-	    }
-#endif
 
 	    /* check for new style */
 	    expand_string (&tmp,
@@ -392,6 +408,15 @@ static int find_dirs (char *dir, List *list, int checkadm, List *entries)
 	    (void) sprintf (tmp, "%s/%s/%s", dir, dp->d_name, CVSADM);
 	    if (!isdir (tmp))
 		goto do_it_again;
+	}
+
+	/* If there's a regex, test against the name with '/' on the end to signify a directory */
+	if(regex)
+	{
+		strcpy(tmp,dp->d_name);
+		strcat(tmp,"/");
+		if(!regex_filename_match(regex,tmp))
+			goto do_it_again;
 	}
 
 	/* put it in the list */
@@ -416,3 +441,4 @@ static int find_dirs (char *dir, List *list, int checkadm, List *entries)
 	xfree (tmp);
     return (0);
 }
+

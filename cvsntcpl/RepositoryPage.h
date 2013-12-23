@@ -7,38 +7,44 @@
 // RepositoryPage.h : header file
 //
 
+#include "TooltipPropertyPage.h"
 /////////////////////////////////////////////////////////////////////////////
 // CRepositoryPage dialog
 
-class CRepositoryPage : public CPropertyPage
+class CRepositoryPage : public CTooltipPropertyPage
 {
 	DECLARE_DYNCREATE(CRepositoryPage)
 
 // Construction
 public:
+	struct RootStruct
+	{
+		std::wstring root;
+		std::wstring name;
+		bool valid;
+	};
+
 	CRepositoryPage();
 	~CRepositoryPage();
 
 	HKEY m_hServerKey;
 	CString m_szInstallPath;
 
-	void GetRootList();
+	bool GetRootList();
 	void DrawRootList();
 	void RebuildRootList();
+	int GetListSelection(CListCtrl& list);
 
-	vector<CString> m_Roots;
+	std::vector<RootStruct> m_Roots;
 
 // Dialog Data
 	//{{AFX_DATA(CRepositoryPage)
 	enum { IDD = IDD_PAGE3 };
-	CButton	m_btChangePrefix;
-	CEdit	m_edPrefix;
-	CButton	m_btRepoPrefix;
 	CButton	m_btDelete;
 	CButton	m_btAdd;
-	CListBox	m_listRoot;
+	CButton m_btEdit;
+	CListCtrl m_listRoot;
 	//}}AFX_DATA
-
 
 // Overrides
 	// ClassWizard generate virtual function overrides
@@ -54,15 +60,15 @@ protected:
 	// Generated message map functions
 	//{{AFX_MSG(CRepositoryPage)
 	virtual BOOL OnInitDialog();
-	afx_msg void OnSelchangeRootlist();
-	afx_msg void OnSelcancelRootlist();
 	afx_msg void OnAddroot();
 	afx_msg void OnDeleteroot();
-	afx_msg void OnRepositoryprefix();
-	afx_msg void OnChangeprefix();
+	afx_msg void OnEditroot();
 	//}}AFX_MSG
 	DECLARE_MESSAGE_MAP()
 
+public:
+	afx_msg void OnNMDblclkRootlist(NMHDR *pNMHDR, LRESULT *pResult);
+	afx_msg void OnLvnItemchangedRootlist(NMHDR *pNMHDR, LRESULT *pResult);
 };
 
 //{{AFX_INSERT_LOCATION}}

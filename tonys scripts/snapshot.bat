@@ -21,4 +21,4 @@ wzzip cvsnt_release_snapshot_pdb.zip pdb
 rmdir /s /q cvsnt
 rmdir /s /q bin
 rmdir /s /q pdb
-pscp -i d:\tony.ppk *.zip tmh@sisko.nodomain.org:/var/www/cvsnt.org
+pscp -i d:\tony.ppk *.zip tmh@paris.nodomain.org:/var/www/cvsnt.org

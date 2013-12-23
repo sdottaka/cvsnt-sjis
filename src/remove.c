@@ -24,7 +24,7 @@ static int remove_force_fileproc PROTO ((void *callerdat,
 static int remove_fileproc PROTO ((void *callerdat, struct file_info *finfo));
 static Dtype remove_dirproc PROTO ((void *callerdat, char *dir,
 				    char *repos, char *update_dir,
-				    List *entries));
+				    List *entries, const char *virtual_repository, Dtype hint));
 
 static int force;
 static int local;
@@ -87,7 +87,7 @@ cvsremove (argc, argv)
 	    if (!noexec)
 	    {
 		start_recursion (remove_force_fileproc, (FILESDONEPROC) NULL,
-				 (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL,
+				 (PREDIRENTPROC) NULL, (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL,
 				 (void *) NULL, argc, argv, local, W_LOCAL,
 				 0, 0, (char *) NULL, 0, NULL);
 	    }
@@ -109,7 +109,7 @@ cvsremove (argc, argv)
 
     /* start the recursion processor */
     err = start_recursion (remove_fileproc, (FILESDONEPROC) NULL,
-                           remove_dirproc, (DIRLEAVEPROC) NULL, NULL,
+                           (PREDIRENTPROC) NULL, remove_dirproc, (DIRLEAVEPROC) NULL, NULL,
 			   argc, argv,
                            local, W_LOCAL, 0, 1, (char *) NULL, 1,
 			   verify_create);
@@ -176,7 +176,7 @@ remove_fileproc (callerdat, finfo)
 	   in doing the following checks.  */
     }
 
-    vers = Version_TS (finfo, NULL, NULL, NULL, 0, 0);
+    vers = Version_TS (finfo, NULL, NULL, NULL, 0, 0, 0);
 
     if (vers->ts_user != NULL)
     {
@@ -242,7 +242,7 @@ cannot remove file `%s' which has a sticky tag of `%s'",
 	(void) strcpy (fname, "-");
 	(void) strcat (fname, vers->vn_user);
 	Register (finfo->entries, finfo->file, fname, vers->ts_rcs, vers->options,
-		  vers->tag, vers->date, vers->ts_conflict, NULL, NULL);
+		  vers->tag, vers->date, vers->ts_conflict, NULL, NULL, vers->tt_rcs);
 	if (!quiet)
 	    error (0, 0, "scheduling `%s' for removal", fn_root(finfo->fullname));
 	removed_files++;
@@ -262,14 +262,11 @@ cannot remove file `%s' which has a sticky tag of `%s'",
  * Print a warm fuzzy message
  */
 /* ARGSUSED */
-static Dtype
-remove_dirproc (callerdat, dir, repos, update_dir, entries)
-    void *callerdat;
-    char *dir;
-    char *repos;
-    char *update_dir;
-    List *entries;
+static Dtype remove_dirproc (void *callerdat, char *dir, char *repos, char *update_dir, List *entries, const char *virtual_repository, Dtype hint)
 {
+	if(hint!=R_PROCESS)
+		return hint;
+
     if (!quiet)
 	error (0, 0, "Removing %s", update_dir);
     return (R_PROCESS);

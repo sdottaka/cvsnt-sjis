@@ -2,6 +2,7 @@
  *  Author : Atsuo ISHIMOTO <ishimoto@axissoft.co.jp>, June 2000
  */
 #ifdef SJIS
+#include <string.h>
 #include <mbstring.h>
 
 char sjis_getlastchar(char *s)

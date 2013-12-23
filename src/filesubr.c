@@ -17,7 +17,6 @@
    definitions under operating systems (like, say, Windows NT) with different
    file system semantics.  */
 
-#include <assert.h>
 #include "cvs.h"
 #include <zlib.h>
 
@@ -31,8 +30,11 @@ int copy_file (const char *from, const char *to, int force_overwrite, int must_e
     struct stat sb;
     struct utimbuf t;
     int fdin, fdout;
+#ifdef UTIME_EXPECTS_WRITABLE
+    int change_it_back = 0;
+#endif
 
-	TRACE(1,"copy(%s,%s)",from,to);
+	TRACE(1,"copy(%s,%s)",PATCH_NULL(from),PATCH_NULL(to));
     if (noexec)
 		return 0;
 
@@ -50,10 +52,10 @@ int copy_file (const char *from, const char *to, int force_overwrite, int must_e
     {
 #if defined(HAVE_MKNOD) && defined(HAVE_ST_RDEV)
 	if (stat (from, &sb) < 0)
-	    error (1, errno, "cannot stat %s", from);
+	    error (1, errno, "cannot stat %s", fn_root(from));
 	mknod (to, sb.st_mode, sb.st_rdev);
 #else
-	error (1, 0, "cannot copy device files on this system (%s)", from);
+	error (1, 0, "cannot copy device files on this system (%s)", fn_root(from));
 #endif
     }
     else
@@ -62,14 +64,14 @@ int copy_file (const char *from, const char *to, int force_overwrite, int must_e
 	if ((fdin = open (from, O_RDONLY)) < 0)
 	{
 		if(must_exist)
-			error (1, errno, "cannot open %s for copying", from);
+			error (1, errno, "cannot open %s for copying", fn_root(from));
 		else
 			return -1;
 	}
 	if (fstat (fdin, &sb) < 0)
 	{
 		if(must_exist)
-			error (1, errno, "cannot fstat %s", from);
+			error (1, errno, "cannot fstat %s", fn_root(from));
 		else
 		{
 			close(fdin);
@@ -80,7 +82,7 @@ int copy_file (const char *from, const char *to, int force_overwrite, int must_e
 	    error (1, errno, "unable to remove %s", to);
 
 	if ((fdout = creat (to, (int) sb.st_mode & 07777)) < 0)
-	    error (1, errno, "cannot create %s for copying", to);
+	    error (1, errno, "cannot create %s for copying", fn_root(to));
 	if (sb.st_size > 0)
 	{
 	    char buf[BUFSIZ];
@@ -95,33 +97,44 @@ int copy_file (const char *from, const char *to, int force_overwrite, int must_e
 		    if (errno == EINTR)
 			continue;
 #endif
-		    error (1, errno, "cannot read file %s for copying", from);
+		    error (1, errno, "cannot read file %s for copying", fn_root(from));
 		}
 		else if (n == 0) 
 		    break;
 		
 		if (write(fdout, buf, n) != n) {
-		    error (1, errno, "cannot write file %s for copying", to);
+		    error (1, errno, "cannot write file %s for copying", fn_root(to));
 		}
 	    }
 
 #ifdef HAVE_FSYNC
 	    if (fsync (fdout)) 
-		error (1, errno, "cannot fsync file %s after copying", to);
+		error (1, errno, "cannot fsync file %s after copying", fn_root(to));
 #endif
 	}
 
 	if (close (fdin) < 0) 
-	    error (0, errno, "cannot close %s", from);
+	    error (0, errno, "cannot close %s", fn_root(from));
 	if (close (fdout) < 0)
-	    error (1, errno, "cannot close %s", to);
+	    error (1, errno, "cannot close %s", fn_root(to));
     }
 
+#ifdef UTIME_EXPECTS_WRITABLE
+	if (!iswritable (to))
+	{
+		xchmod (to, 1);
+		change_it_back = 1;
+	}
+#endif  /* UTIME_EXPECTS_WRITABLE  */
     /* now, set the times for the copied file to match those of the original */
     memset ((char *) &t, 0, sizeof (t));
     t.actime = sb.st_atime;
     t.modtime = sb.st_mtime;
     (void) utime (to, &t);
+#ifdef UTIME_EXPECTS_WRITABLE
+	if (change_it_back)
+		xchmod (to, 0);
+#endif  /*  UTIME_EXPECTS_WRITABLE  */
 	return 0;
 }
 
@@ -135,16 +148,16 @@ int copy_and_zip_file (const char *from, const char *to, int force_overwrite, in
     int fdin, fdout;
     z_stream zstr = {0};
     int zstatus;
-    char buf[BUFSIZ];
-    char zbuf[BUFSIZ*2];
-    int n;
+    char buf[BUFSIZ*10];
+    char zbuf[BUFSIZ*20];
+    int n,zlen;
+#ifdef UTIME_EXPECTS_WRITABLE
+    int change_it_back = 0;
+#endif
 
-	TRACE(1,"copy_and_zip(%s,%s)",from,to);
+	TRACE(1,"copy_and_zip(%s,%s)",PATCH_NULL(from),PATCH_NULL(to));
     if (noexec)
 		return 0;
-
-    if(atof(zlibVersion())<1.2)
-      error(1,0,"Zlib 1.2 or better required for gzip compression");
 
     /* If the file to be copied is a link or a device, then just create
        the new link or device appropriately. */
@@ -163,7 +176,7 @@ int copy_and_zip_file (const char *from, const char *to, int force_overwrite, in
 	    error (1, errno, "cannot stat %s", from);
 	mknod (to, sb.st_mode, sb.st_rdev);
 #else
-	error (1, 0, "cannot copy device files on this system (%s)", from);
+	error (1, 0, "cannot copy device files on this system (%s)", fn_root(from));
 #endif
     }
     else
@@ -172,14 +185,14 @@ int copy_and_zip_file (const char *from, const char *to, int force_overwrite, in
 	if ((fdin = open (from, O_RDONLY)) < 0)
 	{
 		if(must_exist)
-			error (1, errno, "cannot open %s for copying", from);
+			error (1, errno, "cannot open %s for copying", fn_root(from));
 		else
 			return -1;
 	}
 	if (fstat (fdin, &sb) < 0)
 	{
 		if(must_exist)
-			error (1, errno, "cannot fstat %s", from);
+			error (1, errno, "cannot fstat %s", fn_root(from));
 		else
 		{
 			close(fdin);
@@ -187,10 +200,10 @@ int copy_and_zip_file (const char *from, const char *to, int force_overwrite, in
 		}
 	}
 	if (force_overwrite && unlink_file (to) && !existence_error (errno))
-	    error (1, errno, "unable to remove %s", to);
+	    error (1, errno, "unable to remove %s", fn_root(to));
 
 	if ((fdout = creat (to, (int) sb.st_mode & 07777)) < 0)
-	    error (1, errno, "cannot create %s for copying", to);
+	    error (1, errno, "cannot create %s for copying", fn_root(to));
 
 	zstatus = deflateInit2 (&zstr, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 31, 8, Z_DEFAULT_STRATEGY);
 	if(zstatus != Z_OK)
@@ -207,32 +220,37 @@ int copy_and_zip_file (const char *from, const char *to, int force_overwrite, in
 		    if (errno == EINTR)
 			continue;
 #endif
-		    error (1, errno, "cannot read file %s for copying", from);
+		    error (1, errno, "cannot read file %s for copying", fn_root(from));
 		}
 		else if (n == 0) 
 		    break;
 
+		zlen = deflateBound(&zstr,n);
+		if(zlen>sizeof(zbuf))
+			error(1,0,"compression error: zlen=%d (> %d)",zlen,sizeof(zbuf));
 		zstr.next_in = buf;
 		zstr.avail_in = n;	
 		zstr.next_out = zbuf;
-		zstr.avail_out = sizeof(zbuf);
-		zstatus = deflate (&zstr, 0);
+		zstr.avail_out = zlen;
+		zstatus = deflate (&zstr, Z_SYNC_FLUSH);
 		if(zstatus != Z_OK)	
 		  error(1,0, "compression error (Z_SYNC_FLUSH): (%d)%s", zstatus,zstr.msg);
 		
-		n = sizeof(zbuf)-zstr.avail_out;	
+		n = zlen-zstr.avail_out;	
 		if (n && write(fdout, zbuf, n) != n) {
-		    error (1, errno, "cannot write file %s for copying", to);
+		    error (1, errno, "cannot write file %s for copying", fn_root(to));
 		}
 	    }
 
 #ifdef HAVE_FSYNC
 	    if (fsync (fdout)) 
-		error (1, errno, "cannot fsync file %s after copying", to);
+		error (1, errno, "cannot fsync file %s after copying", fn_root(to));
 #endif
 	
 	}
 
+	zstr.next_in = buf;
+	zstr.avail_in = 0;
 	zstr.next_out = zbuf;
 	zstr.avail_out = sizeof(zbuf);
 	zstatus = deflate (&zstr, Z_FINISH);
@@ -240,7 +258,7 @@ int copy_and_zip_file (const char *from, const char *to, int force_overwrite, in
 	      error(1,0, "compression error (Z_FINISH): (%d)%s", zstatus,zstr.msg);
 	n = sizeof(zbuf)-zstr.avail_out;	
 	if (n && write(fdout, zbuf, n) != n) {
-	   error (1, errno, "cannot write file %s for copying", to);
+	   error (1, errno, "cannot write file %s for copying", fn_root(to));
 	}
 	
 	zstr.next_in = buf;
@@ -252,16 +270,27 @@ int copy_and_zip_file (const char *from, const char *to, int force_overwrite, in
 	  error(1,0, "compression error: %s", zstr.msg);
 
 	if (close (fdin) < 0) 
-	    error (0, errno, "cannot close %s", from);
+	    error (0, errno, "cannot close %s", fn_root(from));
 	if (close (fdout) < 0)
-	    error (1, errno, "cannot close %s", to);
+	    error (1, errno, "cannot close %s", fn_root(to));
     }
 
+#ifdef UTIME_EXPECTS_WRITABLE
+	if (!iswritable (to))
+	{
+		xchmod (to, 1);
+		change_it_back = 1;
+	}
+#endif  /* UTIME_EXPECTS_WRITABLE  */
     /* now, set the times for the copied file to match those of the original */
     memset ((char *) &t, 0, sizeof (t));
     t.actime = sb.st_atime;
     t.modtime = sb.st_mtime;
     (void) utime (to, &t);
+#ifdef UTIME_EXPECTS_WRITABLE
+	if (change_it_back)
+		xchmod (to, 0);
+#endif  /*  UTIME_EXPECTS_WRITABLE  */
 	return 0;
 }
 
@@ -275,17 +304,17 @@ int copy_and_unzip_file (const char *from, const char *to, int force_overwrite, 
     int fdin, fdout;
     z_stream zstr = {0};
     int zstatus;
-    char buf[BUFSIZ];
-    char zbuf[BUFSIZ*10];
+    char buf[BUFSIZ*10];
+    char zbuf[BUFSIZ*20];
     int n;
+#ifdef UTIME_EXPECTS_WRITABLE
+    int change_it_back = 0;
+#endif
 
-	TRACE(1,"copy_and_unzip(%s,%s)",from,to);
+	TRACE(1,"copy_and_unzip(%s,%s)",PATCH_NULL(from),PATCH_NULL(to));
     if (noexec)
 		return 0;
 
-    if(atof(zlibVersion())<1.2)
-      error(1,0,"Zlib 1.2 or better required for gzip compression");
-    
     /* If the file to be copied is a link or a device, then just create
        the new link or device appropriately. */
     if (islink (from))
@@ -300,10 +329,10 @@ int copy_and_unzip_file (const char *from, const char *to, int force_overwrite, 
     {
 #if defined(HAVE_MKNOD) && defined(HAVE_ST_RDEV)
 	if (stat (from, &sb) < 0)
-	    error (1, errno, "cannot stat %s", from);
+	    error (1, errno, "cannot stat %s", fn_root(from));
 	mknod (to, sb.st_mode, sb.st_rdev);
 #else
-	error (1, 0, "cannot copy device files on this system (%s)", from);
+	error (1, 0, "cannot copy device files on this system (%s)", fn_root(from));
 #endif
     }
     else
@@ -312,14 +341,14 @@ int copy_and_unzip_file (const char *from, const char *to, int force_overwrite, 
 	if ((fdin = open (from, O_RDONLY)) < 0)
 	{
 		if(must_exist)
-			error (1, errno, "cannot open %s for copying", from);
+			error (1, errno, "cannot open %s for copying", fn_root(from));
 		else
 			return -1;
 	}
 	if (fstat (fdin, &sb) < 0)
 	{
 		if(must_exist)
-			error (1, errno, "cannot fstat %s", from);
+			error (1, errno, "cannot fstat %s", fn_root(from));
 		else
 		{
 			close(fdin);
@@ -347,30 +376,33 @@ int copy_and_unzip_file (const char *from, const char *to, int force_overwrite, 
 		    if (errno == EINTR)
 			continue;
 #endif
-		    error (1, errno, "cannot read file %s for copying", from);
+		    error (1, errno, "cannot read file %s for copying", fn_root(from));
 		}
 		else if (n == 0) 
 		    break;
 
 		zstr.next_in = buf;
 		zstr.avail_in = n;	
-		zstr.next_out = zbuf;
-		zstr.avail_out = sizeof(zbuf);
-		zstatus = inflate (&zstr, 0);
-		if(zstatus != Z_OK && zstatus != Z_STREAM_END)	
-		  error(1,0, "expansion error (inflate): (%d)%s", zstatus,zstr.msg);
-		
-		n = sizeof(zbuf)-zstr.avail_out;	
-		if (n && write(fdout, zbuf, n) != n) {
-		    error (1, errno, "cannot write file %s for copying", to);
+		while(zstr.avail_in)
+		{
+			zstr.next_out = zbuf;
+			zstr.avail_out = sizeof(zbuf);
+			zstatus = inflate (&zstr, 0);
+			if(zstatus != Z_OK && zstatus != Z_STREAM_END)	
+			error(1,0, "expansion error (inflate): (%d)%s", zstatus,zstr.msg);
+			
+			n = sizeof(zbuf)-zstr.avail_out;	
+			if (n && write(fdout, zbuf, n) != n) {
+				error (1, errno, "cannot write file %s for copying", to);
+			}
 		}
 		if(zstatus == Z_STREAM_END)
 			break;
-	    }
+		}
 
 #ifdef HAVE_FSYNC
 	    if (fsync (fdout)) 
-		error (1, errno, "cannot fsync file %s after copying", to);
+		error (1, errno, "cannot fsync file %s after copying", fn_root(to));
 #endif
 	
 	}
@@ -382,7 +414,7 @@ int copy_and_unzip_file (const char *from, const char *to, int force_overwrite, 
 	      error(1,0, "expansion error (Z_FINISH): (%d)%s", zstatus,zstr.msg);
 	n = sizeof(zbuf)-zstr.avail_out;	
 	if (n && write(fdout, zbuf, n) != n) {
-	   error (1, errno, "cannot write file %s for copying", to);
+	   error (1, errno, "cannot write file %s for copying", fn_root(to));
 	}
 	
 	zstr.next_in = buf;
@@ -394,16 +426,27 @@ int copy_and_unzip_file (const char *from, const char *to, int force_overwrite, 
 	  error(1,0, "expansion error: %s", zstr.msg);
 
 	if (close (fdin) < 0) 
-	    error (0, errno, "cannot close %s", from);
+	    error (0, errno, "cannot close %s", fn_root(from));
 	if (close (fdout) < 0)
-	    error (1, errno, "cannot close %s", to);
+	    error (1, errno, "cannot close %s", fn_root(to));
     }
 
+#ifdef UTIME_EXPECTS_WRITABLE
+	if (!iswritable (to))
+	{
+		xchmod (to, 1);
+		change_it_back = 1;
+	}
+#endif  /* UTIME_EXPECTS_WRITABLE  */
     /* now, set the times for the copied file to match those of the original */
     memset ((char *) &t, 0, sizeof (t));
     t.actime = sb.st_atime;
     t.modtime = sb.st_mtime;
     (void) utime (to, &t);
+#ifdef UTIME_EXPECTS_WRITABLE
+	if (change_it_back)
+		xchmod (to, 0);
+#endif  /*  UTIME_EXPECTS_WRITABLE  */
 	return 0;
 }
 
@@ -582,7 +625,7 @@ make_directory (name)
     struct stat sb;
 
     if (stat (name, &sb) == 0 && (!S_ISDIR (sb.st_mode)))
-	    error (0, 0, "%s already exists but is not a directory", name);
+	    error (0, 0, "%s already exists but is not a directory", fn_root(name));
     if (!noexec && mkdir (name, 0777) < 0)
 	error (1, errno, "cannot make directory %s", name);
 }
@@ -610,7 +653,7 @@ make_directories (name)
 	return;
     if (! existence_error (errno))
     {
-	error (0, errno, "cannot make path to %s", name);
+	error (0, errno, "cannot make path to %s", fn_root(name));
 	return;
     }
     if ((cp = strrchr (name, '/')) == NULL)
@@ -636,7 +679,7 @@ mkdir_if_needed (name)
     {
 	if (!(errno == EEXIST
 	      || (errno == EACCES && isdir (name))))
-	    error (1, errno, "cannot make directory %s", name);
+	    error (1, errno, "cannot make directory %s", fn_root(name));
 	return 1;
     }
     return 0;
@@ -660,7 +703,7 @@ xchmod (fname, writable)
     if (stat (fname, &sb) < 0)
     {
 	if (!noexec)
-	    error (0, errno, "cannot stat %s", fname);
+	    error (0, errno, "cannot stat %s", fn_root(fname));
 	return;
     }
     oumask = umask (0);
@@ -677,12 +720,12 @@ xchmod (fname, writable)
 	mode = sb.st_mode & ~(S_IWRITE | S_IWGRP | S_IWOTH) & ~oumask;
     }
 
-	TRACE(1,"chmod(%s,%o)",fname,mode);
+	TRACE(1,"chmod(%s,%o)",PATCH_NULL(fname),mode);
     if (noexec)
 		return;
 
     if (chmod (fname, mode) < 0)
-	error (0, errno, "cannot change mode of file %s", fname);
+	error (0, errno, "cannot change mode of file %s", fn_root(fname));
 }
 
 /*
@@ -693,12 +736,12 @@ rename_file (from, to)
     const char *from;
     const char *to;
 {
-	TRACE(1,"rename(%s,%s)",from,to);
+	TRACE(1,"rename(%s,%s)",PATCH_NULL(from),PATCH_NULL(to));
     if (noexec)
 		return;
 
     if (rename (from, to) < 0)
-	error (1, errno, "cannot rename file %s to %s", from, to);
+	error (1, errno, "cannot rename file %s to %s", fn_root(from), fn_root(to));
 }
 
 /*
@@ -708,7 +751,7 @@ int
 unlink_file (f)
     const char *f;
 {
-	TRACE(1,"unlink_file(%s)",f);
+	TRACE(1,"unlink_file(%s)",PATCH_NULL(f));
     if (noexec)
 		return (0);
 
@@ -726,7 +769,7 @@ unlink_file_dir (f)
 {
     struct stat sb;
 
-	TRACE(1,"unlink_file_dir(%s)",f);
+	TRACE(1,"unlink_file_dir(%s)",PATCH_NULL(f));
 
     if (noexec)
 		return (0);
@@ -885,9 +928,9 @@ xcmp (file1, file2)
     int ret;
 
     if (CVS_LSTAT (file1, &sb1) < 0)
-	error (1, errno, "cannot lstat %s", file1);
+	error (1, errno, "cannot lstat %s", fn_root(file1));
     if (CVS_LSTAT (file2, &sb2) < 0)
-	error (1, errno, "cannot lstat %s", file2);
+	error (1, errno, "cannot lstat %s", fn_root(file2));
 
     /* If FILE1 and FILE2 are not the same file type, they are unequal. */
     if ((sb1.st_mode & S_IFMT) != (sb2.st_mode & S_IFMT))
@@ -922,9 +965,9 @@ xcmp (file1, file2)
     }
 
     if ((fd1 = open (file1, O_RDONLY)) < 0)
-	error (1, errno, "cannot open file %s for comparing", file1);
+	error (1, errno, "cannot open file %s for comparing", fn_root(file1));
     if ((fd2 = open (file2, O_RDONLY)) < 0)
-	error (1, errno, "cannot open file %s for comparing", file2);
+	error (1, errno, "cannot open file %s for comparing", fn_root(file2));
 
     /* A generic file compare routine might compare st_dev & st_ino here 
        to see if the two files being compared are actually the same file.
@@ -949,11 +992,11 @@ xcmp (file1, file2)
 	{
 	    read1 = block_read (fd1, buf1, buf_size);
 	    if (read1 == (size_t)-1)
-		error (1, errno, "cannot read file %s for comparing", file1);
+		error (1, errno, "cannot read file %s for comparing", fn_root(file1));
 
 	    read2 = block_read (fd2, buf2, buf_size);
 	    if (read2 == (size_t)-1)
-		error (1, errno, "cannot read file %s for comparing", file2);
+		error (1, errno, "cannot read file %s for comparing", fn_root(file2));
 
 	    /* assert (read1 == read2); */
 
@@ -989,7 +1032,7 @@ cvs_temp_name ()
     if (fp == NULL)
 	error (1, errno, "Failed to create temporary file");
     if (fclose (fp) == EOF)
-	error (0, errno, "Failed to close temporary file %s", fn);
+	error (0, errno, "Failed to close temporary file %s", fn_root(fn));
     return fn;
 }
 
@@ -1057,9 +1100,9 @@ FILE *cvs_temp_file (filename)
 	 */
  	int save_errno = errno;
 	if (close (fd))
-	    error (0, errno, "Failed to close temporary file %s", fn);
+	    error (0, errno, "Failed to close temporary file %s", fn_root(fn));
 	if (CVS_UNLINK (fn))
-	    error (0, errno, "Failed to unlink temporary file %s", fn);
+	    error (0, errno, "Failed to unlink temporary file %s", fn_root(fn));
 	errno = save_errno;
     }
 
@@ -1189,9 +1232,7 @@ xreadlink (link)
 
 
 /* Return a pointer into PATH's last component.  */
-char *
-last_component (path)
-    char *path;
+const char *last_component (const char *path)
 {
     char *last = strrchr (path, '/');
     
@@ -1264,32 +1305,6 @@ expand_wild (argc, argv, pargc, pargv)
 }
 
 #ifdef SERVER_SUPPORT
-/* Case-insensitive string compare.  I know that some systems
-   have such a routine, but I'm not sure I see any reasons for
-   dealing with the hair of figuring out whether they do (I haven't
-   looked into whether this is a performance bottleneck; I would guess
-   not).  */
-int
-cvs_casecmp (str1, str2)
-    char *str1;
-    char *str2;
-{
-    char *p;
-    char *q;
-    int pqdiff;
-
-    p = str1;
-    q = str2;
-    while ((pqdiff = tolower (*p) - tolower (*q)) == 0)
-    {
-	if (*p == '\0')
-	    return 0;
-	++p;
-	++q;
-    }
-    return pqdiff;
-}
-
 /* Case-insensitive file open.  As you can see, this is an expensive
    call.  We don't regard it as our main strategy for dealing with
    case-insensitivity.  Returns errno code or 0 for success.  Puts the
@@ -1345,16 +1360,16 @@ fopen_case (name, mode, fp, pathp)
     errno = 0;
     while ((dp = CVS_READDIR (dirp)) != NULL)
     {
-	if (cvs_casecmp (dp->d_name, fname) == 0)
+	if (strcasecmp (dp->d_name, fname) == 0)
 	{
 	    if (found_name != NULL)
 		error (1, 0, "%s is ambiguous; could mean %s or %s",
-		       fname, dp->d_name, found_name);
+		       fn_root(fname), fn_root(dp->d_name), fn_root(found_name));
 	    found_name = xstrdup (dp->d_name);
 	}
     }
     if (errno != 0)
-	error (1, errno, "cannot read directory %s", dir);
+	error (1, errno, "cannot read directory %s", fn_root(dir));
     CVS_CLOSEDIR (dirp);
 
     if (found_name == NULL)
@@ -1391,3 +1406,10 @@ fopen_case (name, mode, fp, pathp)
     return retval;
 }
 #endif /* SERVER_SUPPORT */
+
+/* On case insensitive systems, find the real case */
+/* On case sensitive ones, just return */
+char *normalize_path(char *arg)
+{
+	return arg;
+}

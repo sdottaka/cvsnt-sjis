@@ -6,7 +6,6 @@
  * specified in the README file that comes with the CVS source distribution.
  */
 
-#include <assert.h>
 #include "cvs.h"
 #include "getline.h"
 
@@ -28,7 +27,7 @@ char *Name_Repository (const char *dir, const char *update_dir)
     char *tmp;
     char *cp;
 
-    TRACE(3,"Name_Repository(%s,%s)",dir,update_dir);
+    TRACE(3,"Name_Repository(%s,%s)",PATCH_NULL(dir),PATCH_NULL(update_dir));
     if (update_dir && *update_dir)
 		xupdate_dir = update_dir;
     else
@@ -37,10 +36,16 @@ char *Name_Repository (const char *dir, const char *update_dir)
     if (dir != NULL)
     {
 		tmp = xmalloc (strlen (dir) + sizeof (CVSADM_REP) + 10);
-		(void) sprintf (tmp, "%s/%s", dir, CVSADM_REP);
+		sprintf (tmp, "%s/%s", dir, CVSADM_VIRTREPOS);
+		if(!isfile(tmp))
+			sprintf(tmp, "%s/%s", dir, CVSADM_REP);
     }
     else
-		tmp = xstrdup (CVSADM_REP);
+	{
+		tmp = xstrdup (CVSADM_VIRTREPOS);
+		if(!isfile(tmp))
+			strcpy(tmp,CVSADM_REP);
+	}
 
     /*
      * The assumption here is that the repository is always contained in the
@@ -90,7 +95,7 @@ char *Name_Repository (const char *dir, const char *update_dir)
     {
 	/* FIXME: should be checking for end of file separately.  */
 	error (0, 0, "in directory %s:", xupdate_dir);
-	error (1, errno, "cannot read %s", CVSADM_REP);
+	error (1, errno, "cannot read %s", tmp);
     }
     if (fclose (fpin) < 0)
 	error (0, errno, "cannot close %s", tmp);
@@ -127,7 +132,9 @@ char *Name_Repository (const char *dir, const char *update_dir)
 	repos = newrepos;
     }
 
-    Sanitize_Repository_Name (repos);
+	if(!current_parsed_root->isremote) /* Don't normalize_path on a remote repository */
+		repos = normalize_path(repos);
+	Sanitize_Repository_Name (repos);
 
     return repos;
 }
@@ -148,9 +155,9 @@ const char *Short_Repository (const char *repository)
     {
 	const char *rep = repository + strlen (current_parsed_root->directory);
 #ifdef SJIS
-	return (isslashmb(repository, rep)) ? rep+1 : rep;
+	return (ISDIRSEPMB(repository, rep)) ? rep+1 : rep;
 #else
-	return (isslash(*rep)) ? rep+1 : rep;
+	return (ISDIRSEP(*rep)) ? rep+1 : rep;
 #endif
     }
     else

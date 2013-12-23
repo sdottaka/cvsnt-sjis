@@ -8,7 +8,6 @@
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.  */
 
-#include <assert.h>
 #include "cvs.h"
 #include "watch.h"
 #include "edit.h"
@@ -16,6 +15,7 @@
 #include "getline.h"
 #include "buffer.h"
 #include "library.h"
+#include "savecwd.h"
 
 #ifdef CVSGUI_PIPE
 #include "cvsgui_protocol.h"
@@ -37,12 +37,20 @@ int system_auth = 1;
 /* We need to check this */
 extern int root_allow_count;
 
+/* Do we chroot? */
+char *chroot_base = NULL;
+int chroot_done = 0;
+
+/* Force run as a user */
+char *runas_user = NULL;
+
 /* In the future, just in case this matters at some point */
+/* This is currently used to identify older cvsnt clients for Valid-RcsOptions support */
 int support_utf8 = 0;
 
 #ifdef SERVER_SUPPORT
 
-char *global_where;
+extern int server_io_socket;
 
 #ifdef _WIN32
 #include <fcntl.h>
@@ -71,6 +79,13 @@ char *global_where;
 #     include <shadow.h>
 #   endif
 
+#ifdef HAVE_PAM
+#ifdef HAVE_SECURITY_PAM_MISC_H
+#include <security/pam_misc.h>
+#endif
+#include <security/pam_appl.h>
+#endif
+
 # endif /* SERVER_SUPPORT */
 
 /* While processing requests, this buffer accumulates data to be sent to
@@ -97,6 +112,9 @@ static char *server_temp_dir;
    changes inserted by serve_max_dotdot.  */
 static char *orig_server_temp_dir;
 
+/* If Valid-RcsOptions is sent, this contains the list */
+static char *valid_rcsoptions;
+
 /* Nonzero if we should keep the temp directory around after we exit.  */
 static int dont_delete_temp;
 
@@ -119,7 +137,11 @@ int encryption_level = 0;
 /* 0=Any, 1=Request compr., 2=Require compr. */
 int compression_level = 0;
 
-static void server_write_entries(void);
+/* Make outputs look like Unix CVS */
+int fake_unix_cvs = 0;
+
+static void server_write_entries();
+static void server_write_renames();
 
 /* All server communication goes through buffer structures.  Most of
    the buffers are built on top of a file descriptor.  This structure
@@ -139,6 +161,8 @@ static int check_command_legal_p (char *cmd_name);
 
 static int server_main(void);
 
+static void do_chroot();
+
 static struct buffer *fd_buffer_initialize(int, int, void (*) (struct buffer *));
 static int fd_buffer_input(void *, char *, int, int, int *);
 static int fd_buffer_output(void *, const char *, int, int *);
@@ -156,7 +180,41 @@ static int client_protocol_buffer_shutdown(void *);
 static struct buffer *cvs_protocol_wrap_buffer_initialize (struct buffer *buf, char prefix);
 static void cvs_protocol_wrap_set_buffer(struct buffer *buf, struct buffer *wrap);
 
-static char *check_password (char *username, char *password, char *repository, user_handle_t *user_handle);
+static char *check_password (const char *username, const char *password, const char *repository, user_handle_t *user_handle);
+
+static int io_getc(int fd)
+{
+	char c;
+	if(read(fd,&c,1)<1)
+		return EOF;
+	return c;
+}
+
+int io_getline(int fd, char** buffer, int buffer_max)
+{
+	char *p;
+	int l,c;
+
+	*buffer=malloc(buffer_max);
+	if(!*buffer)
+		return -1;
+
+	l=0;
+	p=*buffer;
+	*p='\0';
+	while(l<buffer_max-1 && (c=io_getc(fd))!=EOF)
+	{
+		if(c=='\012')
+			break;
+		*(p++)=(char)c;
+		l++;
+	}
+	if(l==0 && c==EOF)
+		return -1; /* EOF */
+	*p='\0';
+	return l;
+	
+}
 
 /* Initialize a buffer built on a file descriptor.  FD is the file
    descriptor.  INPUT is nonzero if this is for input, zero if this is
@@ -187,7 +245,7 @@ static int fd_buffer_input (void *closure, char *data, int need, int size, int *
     int nbytes;
 
     if (! fd->blocking)
-	nbytes = read (fd->fd, data, size);
+	nbytes = read (fd->fd, data, need);
     else
     {
 	/* This case is not efficient.  Fortunately, I don't think it
@@ -343,7 +401,7 @@ static struct buffer *client_protocol_buffer_initialize (const struct protocol_i
 			   input ? NULL : client_protocol_buffer_output,
 			   input ? NULL : client_protocol_buffer_flush,
 			   client_protocol_buffer_block,
-			   client_protocol_buffer_shutdown,
+			   input ? NULL : client_protocol_buffer_shutdown, /* We only shutdown when buf_to_net is closed */
 			   memory,
 			   (void*)protocol);
 }
@@ -355,7 +413,10 @@ static int client_protocol_buffer_input (void *closure, char *data, int need, in
 	const struct protocol_interface *protocol = (const struct protocol_interface *)closure;
 	int nbytes;
 
-	nbytes = protocol->server_read_data(protocol, data, size);
+	if(protocol && protocol->server_read_data)
+		nbytes = protocol->server_read_data(protocol, data, size);
+	else
+		nbytes = read(server_io_socket, data, size);
 
     if (nbytes > 0)
     {
@@ -374,12 +435,6 @@ static int client_protocol_buffer_input (void *closure, char *data, int need, in
     }
 
     /* Some error occurred.  */
-#ifdef WIN32
-	// Win32 always returns einval for a blocking read...
-	// .. and for an error condition..  arrgh!
-	if(errno == EINVAL)
-		errno=EAGAIN;
-#endif
 
     if (blocking_error (errno))
     {
@@ -406,11 +461,15 @@ static int client_protocol_buffer_output (void *closure, const char *data, int h
     {
 	int nbytes;
 
-	nbytes = protocol->server_write_data (protocol, data, have);
+	if(protocol && protocol->server_write_data)
+		nbytes = protocol->server_write_data (protocol, data, have);
+	else
+		nbytes = write (server_io_socket?server_io_socket:STDOUT_FILENO, data, have);
 
 	if (nbytes <= 0)
 	{
 	    /* Some sort of error occurred.  */
+
 	    if (nbytes == 0)
 	        return EIO;
 
@@ -431,7 +490,7 @@ static int client_protocol_buffer_output (void *closure, const char *data, int h
 static int client_protocol_buffer_flush (void *closure)
 {
 	const struct protocol_interface *protocol = (const struct protocol_interface *)closure;
-	if(protocol->server_flush_data)
+	if(protocol && protocol->server_flush_data)
 		protocol->server_flush_data(protocol);
 
     return 0;
@@ -442,6 +501,8 @@ static int client_protocol_buffer_flush (void *closure)
 static int client_protocol_buffer_block (void *closure, int block)
 {
 	/* not sure what to do here... */
+    if (!block)
+	return 1;
     return 0;
 }
 
@@ -450,8 +511,18 @@ static int client_protocol_buffer_block (void *closure, int block)
 static int client_protocol_buffer_shutdown (void *closure)
 {
 	const struct protocol_interface *protocol = (const struct protocol_interface *)closure;
-	if(protocol->server_shutdown)
+	if(protocol && protocol->server_shutdown)
 		protocol->server_shutdown(protocol);
+	else if(server_io_socket)
+	{
+#ifdef _WIN32
+		shutdown(_get_osfhandle(server_io_socket),2);
+		closesocket(_get_osfhandle(server_io_socket));
+#else
+		shutdown(server_io_socket,2);
+		close(server_io_socket);
+#endif
+	}
     return 0;
 }
 
@@ -730,8 +801,6 @@ print_error (status)
     buf_flush (buf_to_net, 0);
 }
 
-static void serve_is_modified(char *);
-
 
 static int supported_response (char *name)
 {
@@ -801,19 +870,26 @@ serve_valid_responses (arg)
     }
 }
 
-static void
-serve_root (arg)
-    char *arg;
+static void serve_root (char *arg)
 {
     char *path;
+	const char *real_repository;
+	
+    if(protocol_encryption_enabled != PROTOCOL_ENCRYPTION && client_protocol && client_protocol->valid_elements&flagAlwaysEncrypted)
+    {
+		buf_flush(stderr_buf,1);
+		buf_flush(stdout_buf,1);
+		protocol_encryption_enabled = PROTOCOL_ENCRYPTION;
+    }
 
-    if ((!isabsolute (arg)) && (CVSroot_prefix == NULL))
+
+    if (!isabsolute (arg))
     {
 		error(1,0,"Root %s must be an absolute pathname", arg);
 		return;
     }
 
-    /* Sending "Root" twice is illegal.
+	/* Sending "Root" twice is illegal.
 
        The other way to handle a duplicate Root requests would be as a
        request to clear out all state and start over as if it was a
@@ -842,20 +918,24 @@ serve_root (arg)
 
     if (current_parsed_root != NULL)
 		free_cvsroot_t (current_parsed_root);
-    current_parsed_root = local_cvsroot (arg);
-
-	if (!client_protocol || !client_protocol->auth_repository )
-	{
-	    parse_config( current_parsed_root->directory );
-	}
 
 	/* For gserver, which doesn't pass a root as part of its protocol, check for a valid root here */
 	/* For other protocols (pserver, ntserver) this is harmless duplication */
 	/* We can be called with 'cvs server' one of two ways.  Either directly, from
 		a script or inetd, or from a wrapper which sets the allow-root directives. */
-	if((pserver_active || root_allow_count) && !root_allow_ok(current_parsed_root->unparsed_directory))
+	real_repository = arg;
+	if((pserver_active || root_allow_count) && !root_allow_ok(arg,&real_repository))
 	{
-		error(1,0,"%s: no such repository", current_parsed_root->unparsed_directory);
+		error(1,0,"%s: no such repository", arg);
+	}
+	
+	current_parsed_root = local_cvsroot(arg,real_repository);
+
+	do_chroot();
+
+	if (!client_protocol || !client_protocol->auth_repository )
+	{
+	    parse_config( current_parsed_root->directory );
 	}
 
     /* For pserver, this will already have happened, and the call will do
@@ -901,6 +981,8 @@ serve_root (arg)
     }
     xfree (path);
 
+	lock_register_client(CVS_Username,current_parsed_root->directory);
+
 #ifdef HAVE_PUTENV
 	cvs_putenv(CVSROOT_ENV, current_parsed_root->directory);
 #endif
@@ -909,7 +991,14 @@ serve_root (arg)
 	ign_setup();
 	wrap_setup();
 }
-
+
+static void serve_valid_rcsoptions(char *arg)
+{
+	if(valid_rcsoptions)
+		error(1,0,"Protocol error - Valid-RcsOptions sent more than once");
+	valid_rcsoptions = xstrdup(arg);
+}
+
 static int max_dotdot_limit = 0;
 
 /* Is this pathname OK to recurse into when we are running as the server?
@@ -944,34 +1033,15 @@ server_pathname_check (path)
     }
 }
 
-static int outside_root(char *);
-
 /* Is file or directory REPOS an absolute pathname within the
    current_parsed_root->directory?  If yes, return 0.  If not, abort. */
-static int
-outside_root (repos)
-    char *repos;
+static int outside_root (const char *repos)
 {
-    char *real_repos = NULL;
-    char *full_repos;
     size_t repos_len;
-    size_t root_len = strlen (current_parsed_root->directory);
+    size_t root_len = strlen (current_parsed_root->unparsed_directory);
     const char *cp;
 
-
-    if (CVSroot_prefix != NULL)
-    {
-      real_repos = xmalloc(strlen(CVSroot_prefix)
-                           + strlen(repos)
-                           + 1);
-        strcpy(real_repos, CVSroot_prefix);
-        strcat(real_repos, repos);
-      full_repos = real_repos;
-    }
-    else
-      full_repos = repos;
-
-    repos_len = strlen (full_repos);
+	repos_len = strlen(repos);
 
     /* I think isabsolute (repos) should always be true, and that
        any RELATIVE_REPOS stuff should only be in CVS/Repository
@@ -983,8 +1053,7 @@ outside_root (repos)
 		return 1;
     }
 
-    if (repos_len < root_len
-	|| pathncmp (full_repos, current_parsed_root->directory, root_len, &cp) != 0)
+    if (repos_len < root_len || pathncmp (repos, current_parsed_root->unparsed_directory, root_len, &cp) != 0)
     {
     not_within:
 
@@ -1000,18 +1069,12 @@ outside_root (repos)
 	    goto not_within;
     }
 
-    xfree(real_repos);
-
     return 0;
 }
 
-static int outside_dir(char *);
-
 /* Is file or directory FILE outside the current directory (that is, does
    it contain '/')?  If no, return 0.  If yes, abort. */
-static int
-outside_dir (file)
-    char *file;
+static int outside_dir (char *file)
 {
     if (strchr (file, '/') != NULL)
     {
@@ -1027,16 +1090,17 @@ outside_dir (file)
  * will use "..", so we never try to access something outside the temp
  * directory via "..".
  */
-static void
-serve_max_dotdot (arg)
-    char *arg;
+static void serve_max_dotdot (char *arg)
 {
     int lim = atoi (arg);
     int i;
     char *p;
 
-    if (lim < 0)
-	return;
+    if (lim < 0 || lim > 20)
+	{
+		error(1,0,"Invalid value for max_dotdot");
+		return;
+	}
     p = xmalloc (strlen (server_temp_dir) + 2 * lim + 10);
     if (p == NULL)
     {
@@ -1045,26 +1109,24 @@ serve_max_dotdot (arg)
     }
     strcpy (p, server_temp_dir);
     for (i = 0; i < lim; ++i)
-	strcat (p, "/d");
+		strcat (p, "/"CVSDUMMY);
     if (server_temp_dir != orig_server_temp_dir)
-	xfree (server_temp_dir);
+		xfree (server_temp_dir);
     server_temp_dir = p;
     max_dotdot_limit = lim;
 }
-
+
 static char *dir_name;
 
-static void
-dirswitch (dir, repos)
-    char *dir;
-    char *repos;
+static void dirswitch (char *dir, char *repos)
 {
     int status;
     FILE *f;
     size_t dir_len;
 	static char *dir_tmp = NULL;
 
-    server_write_entries ();
+    server_write_entries();
+	server_write_renames();
 
 	/* Check for bad directory name.
        FIXME: could/should unify these checks with server_pathname_check
@@ -1080,6 +1142,36 @@ dirswitch (dir, repos)
 		error(1,0,"protocol error: `%s' has too many ..", dir);
 		return;
     }
+
+	if(!strcmp(dir,".") && !strcmp(repos,current_parsed_root->unparsed_directory) && max_dotdot_limit > 0)
+	{
+		/* The client is in a subdirectory and has set us to the root.  To stop the server parsing
+		   outside the repository root and potentially leaking information to a hacker, we add
+		   CVSDUMMY onto the end of the repository */
+		char *r, *p;
+		int n;
+	    struct saved_cwd cwd;
+
+		save_cwd(&cwd);
+		if(CVS_CHDIR(server_temp_dir))
+			error(1,errno,"Couldn't change directory to %s",server_temp_dir);
+		for(n=0; n<max_dotdot_limit; n++)
+			CVS_CHDIR("..");
+		repos = Name_Repository(NULL,NULL);
+		restore_cwd(&cwd,NULL);
+		r = xmalloc(strlen(repos)+strlen(current_parsed_root->unparsed_directory)+(sizeof(CVSDUMMY)+2)*max_dotdot_limit+100);
+		sprintf(r,"%s/%s",current_parsed_root->unparsed_directory,relative_repos(repos));
+		xfree(repos);
+		p=r+strlen(r);
+		for(n=0; n<max_dotdot_limit; n++)
+		{
+			*(p++)='/';
+			strcpy(p,CVSDUMMY);
+			p+=sizeof(CVSDUMMY)-1;
+		}
+		*p='\0';
+		repos = r; /* We leak this, but it should only ever be once per session */
+	}
 
     dir_len = strlen (dir);
 
@@ -1132,7 +1224,7 @@ dirswitch (dir, repos)
 
     if ( CVS_CHDIR (dir_name) < 0)
     {
-		error(1,errno,"cannot change to %s", dir_name);
+		error(1,errno,"cannot change to %s", fn_root(dir_name));
 		return;
     }
     /*
@@ -1141,7 +1233,7 @@ dirswitch (dir, repos)
      */
     if ((CVS_MKDIR (CVSADM, 0777) < 0) && (errno != EEXIST))
     {
-		error(1,errno,"cannot mkdir %s/%s",dir_name,CVSADM);
+		error(1,errno,"cannot mkdir %s/%s",fn_root(dir_name),CVSADM);
 		return;
     }
 
@@ -1153,23 +1245,24 @@ dirswitch (dir, repos)
     f = CVS_FOPEN (CVSADM_REP, "w");
     if (f == NULL)
     {
-		error(1,errno,"cannot open %s/%s", dir_name, CVSADM_REP);
+		error(1,errno,"cannot open %s/%s", fn_root(dir_name), CVSADM_REP);
 		return;
     }
-    if (CVSroot_prefix != NULL) {
-	if (fprintf (f, "%s", CVSroot_prefix) < 0)
-	{
-		error(1,errno,"error writing %s/%s", dir_name, CVSADM_REP);
-	    return;
-	}
-    }
-	
-    if (fprintf (f, "%s", repos) < 0)
+
+    if (fprintf (f, "%s", current_parsed_root->directory) < 0)
     {
 		fclose (f);
-		error(1,errno,"error writing %s/%s", dir_name, CVSADM_REP);
+		error(1,errno,"error writing %s/%s", fn_root(dir_name), CVSADM_REP);
 		return;
     }
+
+    if (fprintf (f, "%s", repos + strlen(current_parsed_root->unparsed_directory)) < 0)
+    {
+		fclose (f);
+		error(1,errno,"error writing %s/%s", fn_root(dir_name), CVSADM_REP);
+		return;
+    }
+
     /* Non-remote CVS handles a module representing the entire tree
        (e.g., an entry like ``world -a .'') by putting /. at the end
        of the Repository file, so we do the same.  */
@@ -1181,19 +1274,19 @@ dirswitch (dir, repos)
         if (fprintf (f, "/.") < 0)
 	{
 	    fclose (f);
-		error(1,errno,"error writing %s/%s",dir_name, CVSADM_REP);
+		error(1,errno,"error writing %s/%s",fn_root(dir_name), CVSADM_REP);
 	    return;
 	}
     }
     if (fprintf (f, "\n") < 0)
     {
 		fclose (f);
-		error(1,errno,"error writing %s/%s",dir_name, CVSADM_REP);
+		error(1,errno,"error writing %s/%s",fn_root(dir_name), CVSADM_REP);
 		return;
     }
     if (fclose (f) == EOF)
     {
-		error(1,errno,"error closing %s/%s",dir_name, CVSADM_REP);
+		error(1,errno,"error closing %s/%s",fn_root(dir_name), CVSADM_REP);
 		return;
     }
     /* We open in append mode because we don't want to clobber an
@@ -1289,9 +1382,9 @@ serve_directory (arg)
     status = buf_read_line (buf_from_net, &repos, (int *) NULL);
     if (status == 0)
     {
-	if (!outside_root (repos))
-	    dirswitch (arg, repos);
-	xfree (repos);
+		if (!outside_root (repos))
+		    dirswitch (arg, repos);
+		xfree (repos);
     }
     else if (status == -2)
     {
@@ -1300,17 +1393,17 @@ serve_directory (arg)
     }
     else
     {
-	if (status == -1)
-	{
-		error(1,0,"end of file reading mode for %s", arg);
-	}
-	else
-	{
-		error(1,0,"error reading mode for %s", arg);
-	}
+		if (status == -1)
+		{
+			error(1,0,"end of file reading mode for %s", arg);
+		}
+		else
+		{
+			error(1,0,"error reading mode for %s", arg);
+		}
     }
 }
-
+
 static void
 serve_static_directory (arg)
     char *arg;
@@ -1330,9 +1423,7 @@ serve_static_directory (arg)
     }
 }
 
-static void
-serve_sticky (arg)
-    char *arg;
+static void serve_sticky (char *arg)
 {
     FILE *f;
 
@@ -1353,7 +1444,7 @@ serve_sticky (arg)
 		return;
     }
 }
-
+
 /*
  * Read SIZE bytes from buf_from_net, write them to FILE.
  *
@@ -1521,12 +1612,10 @@ static char *kopt;
 static int checkin_time_valid;
 static time_t checkin_time;
 
-static void serve_modified(char *);
-static int serve_is_binary(char *);
+static int serve_is_binary(char *arg);
+static void serve_is_modified(char *arg);
 
-static void
-serve_modified (arg)
-     char *arg;
+static void serve_modified (char *arg)
 {
     int size, status;
     char *size_text;
@@ -1613,7 +1702,7 @@ serve_modified (arg)
 	xfree (mode_text);
 	if (status)
 	{
-		error(1,0,"cannot change mode for %s", arg);
+		error(1,0,"cannot change mode for %s", fn_root(arg));
 	    return;
 	}
     }
@@ -1623,27 +1712,13 @@ serve_modified (arg)
        call in time_stamp_server.  But for conservatism I'm leaving the
        non-kopt case alone.  */
     if (kopt != NULL)
-	serve_is_modified (arg);
+		serve_is_modified (arg);
 }
 
 static void
 serve_enable_unchanged (arg)
      char *arg;
 {
-}
-
-static int directory_state(const char *version)
-{
-    Vers_TS *vers;
-    struct file_info finfo = {0};
-
-    finfo.file = dir_name+strlen(server_temp_dir)+1;
-    finfo.fullname = finfo.file;
-    finfo.repository = current_parsed_root->directory;
-
-    vers = Version_TS (&finfo, NULL, NULL, NULL, 0, 0);
-	/* Classify directory */
-	return 0;
 }
 
 struct an_entry {
@@ -1653,6 +1728,8 @@ struct an_entry {
 };
 
 static struct an_entry *entries;
+static rename_struct *server_renames;
+static const char *virtual_repository;
 
 static void serve_unchanged(char *);
 
@@ -1681,8 +1758,10 @@ serve_is_binary (arg)
 			char *timestamp=strchr(version,'/')+1;
 			char *kopts=strchr(timestamp,'/')+1;
 			char *end=strchr(kopts,'/');
+			kflag kopt;
 			if(end) *end='\0';
-			if(strchr(kopts,'b'))
+			kopt = RCS_get_kflags(kopts,0);
+			if(kopt.flags&KFLAG_BINARY)
 				binary = 1;
 			if(end) *end='/';
 			break;
@@ -1713,7 +1792,7 @@ serve_unchanged (arg)
 	    && strncmp (arg, name, cp - name) == 0)
 	{
 	    timefield = strchr (cp + 1, '/') + 1;
-	    if (*timefield != '=')
+	    if (*timefield != UNCHANGED_CHAR && *timefield!=MODIFIED_CHAR && *timefield!=DATE_CHAR)
 	    {
 		cp = timefield + strlen (timefield);
 		cp[1] = '\0';
@@ -1722,16 +1801,14 @@ serve_unchanged (arg)
 		    *cp = cp[-1];
 		    --cp;
 		}
-		*timefield = '=';
+		*timefield = UNCHANGED_CHAR;
 	    }
 	    break;
 	}
     }
 }
 
-static void
-serve_is_modified (arg)
-    char *arg;
+static void serve_is_modified(char *arg)
 {
     struct an_entry *p;
     char *name;
@@ -1743,7 +1820,7 @@ serve_is_modified (arg)
     if (outside_dir (arg))
 	return;
 
-    /* Rewrite entries file to have `M' in timestamp field.  */
+    /* Rewrite entries file to have `!' in timestamp field.  */
     found = 0;
     for (p = entries; p != NULL; p = p->next)
     {
@@ -1754,7 +1831,7 @@ serve_is_modified (arg)
 	    && strncmp (arg, name, cp - name) == 0)
 	{
 	    timefield = strchr (cp + 1, '/') + 1;
-	    if (!(timefield[0] == 'M' && timefield[1] == '/'))
+	    if (*timefield != UNCHANGED_CHAR && *timefield!=MODIFIED_CHAR && *timefield!=DATE_CHAR)
 	    {
 		cp = timefield + strlen (timefield);
 		cp[1] = '\0';
@@ -1763,7 +1840,7 @@ serve_is_modified (arg)
 		    *cp = cp[-1];
 		    --cp;
 		}
-		*timefield = 'M';
+		*timefield = MODIFIED_CHAR;
 	    }
 	    if (kopt != NULL)
 	    {
@@ -1860,11 +1937,7 @@ static void serve_entry_extra(char *arg)
 	p->entry_extra = xstrdup(arg);
 }
 
-static void serve_kopt(char *);
-
-static void
-serve_kopt (arg)
-     char *arg;
+static void serve_kopt (char *arg)
 {
     if (kopt != NULL)
     {
@@ -1892,11 +1965,7 @@ serve_kopt (arg)
     strcpy (kopt, arg);
 }
 
-static void serve_checkin_time(char *);
-
-static void
-serve_checkin_time (arg)
-     char *arg;
+static void serve_checkin_time (char *arg)
 {
     if (checkin_time_valid)
     {
@@ -1914,15 +1983,14 @@ serve_checkin_time (arg)
     checkin_time_valid = 1;
 }
 
-static void
-server_write_entries ()
+static void server_write_entries()
 {
     FILE *f,*fx;
     struct an_entry *p;
     struct an_entry *q;
 
     if (entries == NULL)
-	return;
+		return;
 
     f = fx = NULL;
     /* Note that we free all the entries regardless of errors.  */
@@ -1966,6 +2034,61 @@ server_write_entries ()
     {
 		error(1,errno,"cannot close %s", CVSADM_ENTEXT);
     }
+}
+
+static void server_write_renames()
+{
+    FILE *f;
+    rename_struct *p;
+    rename_struct *q;
+
+    if (server_renames)
+	{
+		f = CVS_FOPEN (CVSADM_RENAME, "w");
+		if (f == NULL)
+		{
+			error(1,errno,"cannot open %s", CVSADM_RENAME);
+		}
+
+		for (p = server_renames; p != NULL;)
+		{
+			if (fprintf (f, "%s\n", p->from) < 0)
+			{
+				error(1,errno,"cannot write to %s", CVSADM_RENAME);
+			}
+			if (fprintf (f, "%s\n", p->to) < 0)
+			{
+				error(1,errno,"cannot write to %s", CVSADM_RENAME);
+			}
+			xfree (p->from);
+			xfree (p->to);
+			q = p->next;
+			xfree (p);
+			p = q;
+		}
+		server_renames = NULL;
+		if (f != NULL && fclose (f) == EOF)
+		{
+			error(1,errno,"cannot close %s", CVSADM_RENAME);
+		}
+	}
+
+	if(virtual_repository)
+	{
+		f = CVS_FOPEN (CVSADM_VIRTREPOS, "w");
+		if (f == NULL)
+		{
+			error(1,errno,"cannot open %s", CVSADM_VIRTREPOS);
+		}
+
+		fprintf(f,"%s\n", virtual_repository);
+		xfree(virtual_repository);
+
+		if (f != NULL && fclose (f) == EOF)
+		{
+			error(1,errno,"cannot close %s", CVSADM_VIRTREPOS);
+		}
+	}
 }
 
 struct notify_note {
@@ -2117,19 +2240,23 @@ server_notify ()
 {
     struct notify_note *p;
     char *repos;
+	const char *mapped_repos;
 	int can_notify = check_command_legal_p("edit"); /* Readers can't notify */
 
 	while (notify_list != NULL)
     {
 		if ( CVS_CHDIR (notify_list->dir) < 0)
 		{
-			error (0, errno, "cannot change to %s", notify_list->dir);
+			error (0, errno, "cannot change to %s", fn_root(notify_list->dir));
 			return -1;
 		}
 		repos = Name_Repository (NULL, NULL);
+		mapped_repos = map_repository(repos);
+		xfree(repos);
+		repos = (char*)mapped_repos;
+
 		if (can_notify)
 		{
-
 			lock_dir_for_write (repos);
 
 			fileattr_startdir (repos);
@@ -2213,12 +2340,15 @@ serve_argument (arg)
     argument_vector[argument_count++] = p;
 }
 
-static void
-serve_argumentx (arg)
-     char *arg;
+static void serve_argumentx (char *arg)
 {
     char *p;
     
+	if(argument_count<=1)
+	{
+		error(1,0,"Argumentx protocol violation");
+	}
+
     p = argument_vector[argument_count - 1];
     p = xrealloc(p, strlen (p) + 1 + strlen (arg) + 1);
     if (p == NULL)
@@ -2257,7 +2387,6 @@ serve_global_option (arg)
 	    really_quiet = 1;
 	    break;
 	case 'l':
-	    logoff = 1;
 	    break;
 	case 't':
 	    trace++;
@@ -2305,11 +2434,6 @@ serve_questionable (arg)
 	buf_output0 (buf_to_net, arg);
 	buf_output (buf_to_net, "\n", 1);
     }
-}
-
-static void serve_case (char *arg)
-{
-    ign_case = 1;
 }
 
 static void serve_utf8 (char *arg)
@@ -2360,6 +2484,14 @@ static void compression_requested(char *flag)
 static void compression_required(char *flag)
 {
 	if(compression_level == 2)
+		*flag = 1;
+	else
+		*flag = 0;
+}
+
+static void server_can_rename(char *flag)
+{
+	if(can_rename)
 		*flag = 1;
 	else
 		*flag = 0;
@@ -2576,7 +2708,8 @@ do_cvs_command (cmd_name, command)
 {
     int errs;
 
-    server_write_entries ();
+    server_write_entries();
+	server_write_renames();
 
     /* Global `command_name' is probably "server" right now -- only
        serve_export() sets it to anything else.  So we will use local
@@ -2644,12 +2777,7 @@ void server_error_exit()
 /* This variable commented in server.h.  */
 char *server_dir = NULL;
 
-static void output_dir(char *, char *);
-
-static void
-output_dir (update_dir, repository)
-    char *update_dir;
-    char *repository;
+static void output_dir(const char *update_dir, const char *repository)
 {
     /* If we have a CVS root prefix set, don't transmit it back to the
        client. */
@@ -2667,10 +2795,63 @@ output_dir (update_dir, repository)
 	buf_output0(buf_to_net,"/\n");
 
 	buf_output0(buf_to_net,current_parsed_root->unparsed_directory);
-	buf_output0(buf_to_net,repository+strlen(current_parsed_root->directory));
+	if(strlen(repository)>strlen(current_parsed_root->directory))
+		buf_output0(buf_to_net,repository+strlen(current_parsed_root->directory));
 	buf_output0(buf_to_net,"/");
 }
-
+
+/* This feeds temporary renames back to the client */
+int send_rename_to_client(const char *oldfile, const char *newfile)
+{
+	if(supported_response("Rename"))
+	{
+		buf_output0(buf_to_net,"Rename ");
+		buf_output0(buf_to_net,oldfile);
+		buf_output0(buf_to_net,"\012");
+		buf_output0(buf_to_net,newfile);
+		buf_output0(buf_to_net,"\012");
+	}
+	else
+	{
+		error(0,0,"Client doesn't support rename response.");
+	}
+	return 0;
+}
+
+/* Cause the client to physically rename a file */
+int server_rename_file(const char *oldfile, const char *newfile)
+{
+	if(supported_response("Renamed"))
+	{
+		buf_output0(buf_to_net,"Renamed ./\012");
+		buf_output0(buf_to_net,oldfile);
+		buf_output0(buf_to_net,"\012");
+		buf_output0(buf_to_net,newfile);
+		buf_output0(buf_to_net,"\012");
+	}
+	return 0;
+}
+
+int client_can_rename()
+{
+	return supported_response("Renamed");
+}
+
+int reset_client_mapping(const char *update_dir, const char *repository)
+{
+	if(supported_response("Clear-rename"))
+	{
+		buf_output0(buf_to_net,"Clear-rename ");
+	    output_dir (update_dir, repository);
+	    buf_output0(buf_to_net,"\n");
+	}
+	else
+	{
+		error(0,0,"Client doesn't support clear-rename response.  How did we get here???");
+	}
+	return 0;
+}
+
 /*
  * Entries line that we are squirreling away to send to the client when
  * we are ready.
@@ -2691,19 +2872,20 @@ static char *scratched_file;
 static int kill_scratched_file;
 
 void server_register(char *name, char *version,  char *timestamp, char *options, char *tag,
-    char *date, char *conflict, char *merge_from_tag_1, char *merge_from_tag_2)
+    char *date, char *conflict, const char *merge_from_tag_1, const char *merge_from_tag_2, time_t rcs_timestamp)
 {
     int len;
+	char *temp_options;
 
     if (options == NULL)
 		options = "";
 
-	TRACE(1,"server_register(%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-			name, version, timestamp ? timestamp : "", options,
+	TRACE(1,"server_register(%s, %s, %s, %s, %s, %s, %s, %s, %d)",
+			PATCH_NULL(name), PATCH_NULL(version), timestamp ? timestamp : "", PATCH_NULL(options),
 			tag ? tag : "", date ? date : "",
 			conflict ? conflict : "", 
 			merge_from_tag_1 ? merge_from_tag_1 : "",
-			merge_from_tag_2 ? merge_from_tag_2 : "");
+			merge_from_tag_2 ? merge_from_tag_2 : "", rcs_timestamp);
 
     if (entries_line != NULL)
     {
@@ -2736,6 +2918,8 @@ void server_register(char *name, char *version,  char *timestamp, char *options,
 	len += strlen (tag);
     if (date)
 	len += strlen (date);
+	if (timestamp)
+	len += strlen (timestamp);
     
     entries_line = xmalloc (len);
 	entries_ex_line = xmalloc(len);
@@ -2743,7 +2927,14 @@ void server_register(char *name, char *version,  char *timestamp, char *options,
     if (conflict != NULL)
 		strcat (entries_line, "+=");
     strcat (entries_line, "/");
-    strcat (entries_line, options);
+	/* Filter out any unrecognised client options */
+	if(options[0])
+	{
+		temp_options = normalise_options(options,0,name);
+
+		if(temp_options)
+			strcat (entries_line, temp_options);
+	}
     strcat (entries_line, "/");
     if (tag != NULL)
     {
@@ -2758,6 +2949,15 @@ void server_register(char *name, char *version,  char *timestamp, char *options,
 	
 	/* Entries.Extra stuff */
 	sprintf (entries_ex_line, "/%s/%s/%s/", name, merge_from_tag_1 ? merge_from_tag_1 : "",merge_from_tag_2 ? merge_from_tag_2 : "");
+	if(rcs_timestamp!=(time_t)-1)
+	{
+#if defined(TIME_64BIT) && defined(_WIN32)
+		sprintf (entries_ex_line+strlen(entries_ex_line), "%I64d", rcs_timestamp);
+#else
+		sprintf (entries_ex_line+strlen(entries_ex_line), "%ld", rcs_timestamp);
+#endif
+	}
+	strcat(entries_ex_line,"/");
 }
 
 void
@@ -2909,25 +3109,24 @@ serve_chown (arg)
    do_cvs_command ("chown", chowner);
 }
 
-void
-serve_chacl (arg)
-   char *arg;
+void serve_chacl (char *arg)
 {
    do_cvs_command ("chacl", chacl);
 }
 
-void
-serve_lsacl (arg)
-   char *arg;
+void serve_lsacl (char *arg)
 {
    do_cvs_command ("lsacl", lsacl);
 }
 
-void
-serve_passwd (arg)
-   char *arg;
+void serve_passwd (char *arg)
 {
    do_cvs_command ("passwd", passwd);
+}
+
+void serve_info (char *arg)
+{
+   do_cvs_command ("info", info);
 }
 
 void
@@ -2990,16 +3189,12 @@ serve_add (arg)
     do_cvs_command ("add", add);
 }
 
-static void
-serve_remove (arg)
-    char *arg;
+static void serve_remove(char *arg)
 {
-    do_cvs_command ("remove", cvsremove);
+    do_cvs_command("remove", cvsremove);
 }
 
-static void
-serve_status (arg)
-    char *arg;
+static void serve_status (char *arg)
 {
     do_cvs_command ("status", cvsstatus);
 }
@@ -3116,14 +3311,87 @@ serve_editors (arg)
     do_cvs_command ("editors", editors);
 }
 
-static void serve_noop(char *);
+static void serve_rename(char *arg)
+{
+    rename_struct *p, *r;
+	int status;
 
-static void
-serve_noop (arg)
-    char *arg;
+    p = (rename_struct *) xmalloc (sizeof (rename_struct));
+    if (p == NULL)
+    {
+		error(1,ENOMEM,"Alloc failed");
+		return;
+    }
+    p->next = NULL;
+    p->from = xstrdup(arg);
+    if (p->from == NULL)
+    {
+		error(1,ENOMEM,"Alloc failed");
+		return;
+    }
+	if (isabsolute(p->from) || strstr(p->from,".."))
+	{
+		error(1,0,"Protocol error: Bad rename %s",p->from);
+		xfree(p);
+		return;
+	}
+
+    status = buf_read_line (buf_from_net, &p->to, (int *) NULL);
+    if (status == 0)
+    {
+		if (isabsolute(p->to) || strstr(p->to,".."))
+		{
+			error(1,0,"Protocol error: Bad rename %s",p->to);
+			xfree(p);
+			return;
+		}
+    }
+    else if (status == -2)
+    {
+		xfree(p);
+		error(1,ENOMEM,"Alloc failed");
+		return;
+    }
+    else
+    {
+		if (status == -1)
+		{
+			xfree(p);
+			error(1,0,"end of file reading rename for %s", arg);
+		}
+		else
+		{
+			xfree(p);
+			error(1,0,"error reading rename for %s", arg);
+		}
+    }
+	if(!server_renames)
+		server_renames = p;
+	else
+	{
+		r=server_renames;
+		while(r->next)
+			r=r->next;
+		r->next=p;
+	}
+}
+
+static void serve_virtual_repository(char *arg)
+{
+	virtual_repository = xstrdup(arg);
+	if (isabsolute(virtual_repository) || strstr(virtual_repository,".."))
+	{
+		error(1,0,"Protocol error: Bad virtual repository %s",virtual_repository);
+		xfree(virtual_repository);
+		return;
+	}
+}
+
+static void serve_noop (char *arg)
 {
 
-    server_write_entries ();
+    server_write_entries();
+	server_write_renames();
 	server_notify ();
 	buf_output0 (buf_to_net, "ok\012");
     buf_flush (buf_to_net, 1);
@@ -3212,7 +3480,7 @@ static void serve_read_generic(char *file)
 				if(buf[len-1]!='\n')
 					buf[len++]='\n';
 
-				snprintf(num,sizeof(num),"%d\n",len);
+				snprintf(num,sizeof(num),"%lu\n",(long)len);
 				buf_output0(buf_to_net, num);
 
 				buf_output(buf_to_net,buf, len);
@@ -3265,8 +3533,8 @@ serve_init (arg)
     }
 
     if (current_parsed_root != NULL)
-	free_cvsroot_t (current_parsed_root);
-    current_parsed_root = local_cvsroot (arg);
+		free_cvsroot_t (current_parsed_root);
+    current_parsed_root = local_cvsroot (arg,arg);
 
     do_cvs_command ("init", init);
 }
@@ -3326,7 +3594,7 @@ serve_co (arg)
 	if ( CVS_CHDIR (tempdir) < 0)
 	{
 	    buf_output0 (buf_to_net, "E Cannot change to directory ");
-	    buf_output0 (buf_to_net, tempdir);
+	    buf_output0 (buf_to_net, fn_root(tempdir));
 	    buf_append_char (buf_to_net, '\n');
 	    print_error (errno);
 	    xfree (tempdir);
@@ -3414,6 +3682,7 @@ void server_updated (
 {
     char *mode_string;
 
+	TRACE(3,"server_updated(%s,%04o,%s",PATCH_NULL(finfo->file),mode,PATCH_NULL((char*)checksum));
     if (noexec)
     {
 	/* Hmm, maybe if we did the same thing for entries_file, we
@@ -3524,7 +3793,7 @@ CVS server internal error: no mode in server_updated");
 	    node = findnode_fn (finfo->entries, finfo->file);
 	    entnode = (Entnode *)node->data;
 	    xfree (entnode->timestamp);
-	    entnode->timestamp = xstrdup ("=");
+	    entnode->timestamp = xstrdup (UNCHANGED_CHAR_S);
 	}
 	else if (updated == SERVER_MERGED)
 		buf_output0(buf_to_net,"Merged ");
@@ -3703,33 +3972,27 @@ server_clear_entstat (update_dir, repository)
     output_dir (update_dir, repository);
     buf_output0(buf_to_net,"\n");
 }
-
-void
-server_set_sticky (update_dir, repository, tag, date, nonbranch)
-    char *update_dir;
-    char *repository;
-    char *tag;
-    char *date;
-    int nonbranch;
+
+void server_set_sticky (const char *update_dir, const char *repository, const char *tag, const char *date, int nonbranch, const char *version)
 {
     static int set_sticky_supported = -1;
 
     assert (update_dir != NULL);
 
     if (set_sticky_supported == -1)
-	set_sticky_supported = supported_response ("Set-sticky");
+		set_sticky_supported = supported_response ("Set-sticky");
     if (!set_sticky_supported) return;
 
     if (noexec)
 		return;
 
-    if (tag == NULL && date == NULL)
+    if (tag == NULL && date == NULL && version==NULL)
     {
 		buf_output0(buf_to_net,"Clear-sticky ");
 		output_dir (update_dir, repository);
 		buf_output0(buf_to_net,"\n");
     }
-    else
+    else 
     {
 		buf_output0(buf_to_net,"Set-sticky ");
 		output_dir (update_dir, repository);
@@ -3741,11 +4004,21 @@ server_set_sticky (update_dir, repository, tag, date, nonbranch)
 			else
 				buf_output0(buf_to_net,"T");
 			buf_output0(buf_to_net,tag);
+			if(!nonbranch && version)
+			{
+				buf_output0(buf_to_net,":");
+				buf_output0(buf_to_net,version);
+			}
 		}
-		else
+		else if(date != NULL)
 		{
 			buf_output0(buf_to_net,"D");
 			buf_output0(buf_to_net,date);
+		}
+		else
+		{
+			buf_output0(buf_to_net,"T:");
+			buf_output0(buf_to_net,version);
 		}
 		buf_output0(buf_to_net,"\n");
     }
@@ -4057,7 +4330,7 @@ struct request requests[] =
   REQ_LINE("Notify", serve_notify, 0),
   REQ_LINE("NotifyUser", serve_notify_user, 0),
   REQ_LINE("Questionable", serve_questionable, 0),
-  REQ_LINE("Case", serve_case, RQ_ROOTLESS), 
+  REQ_LINE("Case", NULL, 0), /* Depreciated */ 
   REQ_LINE("Utf8", serve_utf8, RQ_ROOTLESS), 
   REQ_LINE("Argument", serve_argument, RQ_ESSENTIAL),
   REQ_LINE("Argumentx", serve_argumentx, RQ_ESSENTIAL),
@@ -4065,6 +4338,8 @@ struct request requests[] =
   REQ_LINE("Gzip-stream", serve_gzip_stream, RQ_ROOTLESS),
   REQ_LINE("wrapper-sendme-rcsOptions", serve_wrapper_sendme_rcs_options, RQ_ROOTLESS),
   REQ_LINE("Set", serve_set, RQ_ROOTLESS),
+  REQ_LINE("Rename", serve_rename, 0),
+  REQ_LINE("VirtualRepository", serve_virtual_repository, 0),
   REQ_LINE("expand-modules", serve_expand_modules, 0),
   REQ_LINE("ci", serve_ci, RQ_ESSENTIAL),
   REQ_LINE("co", serve_co, RQ_ESSENTIAL),
@@ -4073,10 +4348,9 @@ struct request requests[] =
   REQ_LINE("setperm", serve_chacl, 0),
   REQ_LINE("chacl", serve_chacl, 0),
   REQ_LINE("setacl", serve_chacl, 0),
-  REQ_LINE("listperm", serve_lsacl, 0),
   REQ_LINE("lsacl", serve_lsacl, 0),
-  REQ_LINE("setpass", serve_passwd, 0),
   REQ_LINE("passwd", serve_passwd, 0),
+  REQ_LINE("info", serve_info, 0),
   REQ_LINE("update", serve_update, RQ_ESSENTIAL),
   REQ_LINE("diff", serve_diff, 0),
   REQ_LINE("log", serve_log, 0),
@@ -4126,6 +4400,10 @@ struct request requests[] =
   REQ_LINE("Encryption-Required", encryption_required, RQ_SERVER_REQUEST),
   REQ_LINE("Compression-Requested", compression_requested, RQ_SERVER_REQUEST),
   REQ_LINE("Compression-Required", compression_required, RQ_SERVER_REQUEST),
+
+  REQ_LINE("Can-Rename", server_can_rename, RQ_SERVER_REQUEST),
+
+  REQ_LINE("Valid-RcsOptions", serve_valid_rcsoptions, 0),
 
   REQ_LINE(NULL,NULL,0)
 #undef REQ_LINE
@@ -4264,7 +4542,7 @@ server (int argc, char **argv)
 	char *p;
 	FILE *fp;
 
-	sprintf(buf,"%s-%d",log,getpid());
+	sprintf(buf,"%s-%d",log,(int)getpid());
 	p = buf + strlen(buf);
 
 	/* Open logfiles in binary mode so that they reflect
@@ -4353,13 +4631,13 @@ server (int argc, char **argv)
 	    else if (chmod (server_temp_dir, S_IRWXU) < 0)
 	    {
 			error(1,errno,"cannot change permissions on temporary directory %s",
-						server_temp_dir);
+						fn_root(server_temp_dir));
 	    }
 #endif
 	    else if (CVS_CHDIR (server_temp_dir) < 0)
 	    {
 			error(1,errno,"cannot change to temporary directory %s",
-						server_temp_dir);
+						fn_root(server_temp_dir));
 	    }
 	}
     }
@@ -4454,10 +4732,22 @@ error ENOMEM Virtual memory exhausted.\n");
 	             */
 	            continue;
 
+			/* No longer supported by the server */
+			if(!rq->func)
+				continue;
+
             if (!(rq->flags & RQ_ROOTLESS))
             {
 	            if (current_parsed_root == NULL)
                     error(1,0,"Protocol error: Root request missing");
+			}
+
+			/* By convention 'commands' start with lowercase, and 'flags' start with
+			   uppercase.  The extra check allows us to look for things like
+			   'version' and 'init */
+			/* valid-requests is an oddity */
+            if (!(rq->flags & RQ_ROOTLESS) || ((rq->name[0]>='a' && rq->name[0]<='z') && strcmp(rq->name,"valid-requests")))
+            {
 				if(encryption_level==4 && protocol_encryption_enabled!=PROTOCOL_ENCRYPTION)
 					error(1,0,"This server requires an encrypted connection");
 				if(encryption_level==3 && protocol_encryption_enabled==0)
@@ -4485,11 +4775,64 @@ error ENOMEM Virtual memory exhausted.\n");
 
 #if defined (SERVER_SUPPORT)
 
-static void switch_to_user(const char *, user_handle_t);
+static void switch_to_user(const char *, user_handle_t *);
 
 #ifndef _WIN32 // Win32 has a totally different authentication mechanism
 
-static void switch_to_user (const char *username, user_handle_t user_handle)
+static void do_chroot()
+{
+      char *d;
+
+      if(!chroot_done)
+      {
+        if(chroot_base && strlen(chroot_base))
+        {
+#ifdef SJIS
+          if(ISDIRSEPMB(chroot_base, chroot_base + strlen(chroot_base)-1))
+#else
+          if(ISDIRSEP(chroot_base[strlen(chroot_base)-1]))
+#endif
+            chroot_base[strlen(chroot_base)-1]='\0';
+
+          if(current_parsed_root)
+          {
+            if(fnncmp(current_parsed_root->directory,chroot_base,strlen(chroot_base)) || strlen(chroot_base)>strlen(current_parsed_root->directory))
+            {
+              printf("error 0 Repository is not within chroot\n");
+              fflush(stdout);
+              error_exit();
+            }
+
+            d = current_parsed_root->directory;
+            if(fncmp(current_parsed_root->directory,chroot_base))
+              current_parsed_root->directory = xstrdup(d+strlen(chroot_base));
+            else
+              current_parsed_root->directory = xstrdup("/");
+
+            xfree(d);
+          }
+
+          if(CVS_CHDIR(chroot_base)<0)
+          {
+              printf("error 0 Cannot change directory to chroot\n");
+              fflush(stdout);
+              error_exit();
+          }
+
+          if(chroot(chroot_base) < 0)
+          {
+              printf("error 0 chroot failed: %s\n", strerror (errno));
+              fflush(stdout);
+              error_exit();
+          }
+          chroot_done = 1;
+        }
+      }
+}
+
+
+
+static void switch_to_user (const char *username, user_handle_t *user_handle)
 {
     struct passwd *pw;
 
@@ -4525,6 +4868,8 @@ static void switch_to_user (const char *username, user_handle_t user_handle)
 	error_exit ();
     }
 #endif /* HAVE_INITGROUPS */
+
+	do_chroot();
 
 #ifdef SETXID_SUPPORT
     /* honor the setgid bit iff set*/
@@ -4600,7 +4945,9 @@ static void switch_to_user (const char *username, user_handle_t user_handle)
 
 #else
 
-static void switch_to_user (const char *username, user_handle_t user_handle)
+static void do_chroot() { }
+
+static void switch_to_user (const char *username, user_handle_t *user_handle)
 {
 	if(client_protocol->impersonate)
 	{
@@ -4614,13 +4961,17 @@ static void switch_to_user (const char *username, user_handle_t user_handle)
 	{
 		switch(win32switchtouser(username, user_handle))
 		{
-		case 2: // No such user
-			printf ("E Fatal error, aborting.\nerror 0 %s: no such user\n", username);
-			/* Don't worry about server_cleanup; server_active isn't set yet.  */
+		case 3: // Account disabled
+			printf ("E Fatal error, aborting.\nerror 0 %s: user account disabled\n", username);
 			error_exit ();
 			break;
-		case 1: // Impersonation failed
-			printf ("E Fatal error, aborting.\nerror 0 %s: Impersonation failed - configuration error.  Contact your System Administrator.\n", username);
+		case 2: // No such user or domain
+			printf ("E Fatal error, aborting.\nerror 0 %s: no such user\n", username);
+			error_exit ();
+			break;
+		case 1: // Not enough privileges
+			printf ("E Fatal error, aborting.\nerror 0 %s: Switch to user failed due to configuration error.  Contact your System Administrator.\n", username);
+			error_exit ();
 			break;
 		case 0: // Ok
 			break;
@@ -4629,7 +4980,7 @@ static void switch_to_user (const char *username, user_handle_t user_handle)
 #ifdef SERVER_SUPPORT
     /* Make sure our CVS_Username has been set. */
     if (CVS_Username == NULL)
-		CVS_Username = username;
+		CVS_Username = xstrdup(username);
 #endif
       
 #if HAVE_PUTENV
@@ -4664,7 +5015,7 @@ extern char *crypt(const char *, const char *);
  * kff todo: FIXME: last sentence is not true, it applies to caller.
  */
 static int
-check_repository_password (char *username, char *password, char *repository, char **host_user_ptr, user_handle_t *user_handle)
+check_repository_password (const char *username, const char *password, const char *repository, char **host_user_ptr, user_handle_t *user_handle)
 {
     int retval = 0;
     FILE *fp;
@@ -4776,7 +5127,7 @@ check_repository_password (char *username, char *password, char *repository, cha
 
         /* Of course, maybe there was no system user portion... */
 	if (host_user_tmp == NULL)
-            host_user_tmp = username;
+            host_user_tmp = (char*)username;
 
         /* Verify blank passwords directly, otherwise use crypt(). */
         if ((found_password == NULL)
@@ -4809,9 +5160,167 @@ check_repository_password (char *username, char *password, char *repository, cha
     return retval;
 }
 
+#ifdef HAVE_PAM
+struct cvs_pam_userdata
+{
+  char *username;
+  char *password;
+};
+
+int cvs_conv(int num_msg, const struct pam_message **msgm,
+            struct pam_response **response, void *appdata_ptr)
+{
+    int count=0;
+    struct pam_response *reply;
+    struct cvs_pam_userdata *udp = (struct cvs_pam_userdata *)appdata_ptr;
+
+    if (num_msg <= 0)
+       return PAM_CONV_ERR;
+
+    reply = (struct pam_response *) xmalloc(num_msg*sizeof(struct pam_response));
+    if (reply == NULL)
+       return PAM_CONV_ERR;
+
+    if (udp == NULL)
+    {
+       error(0,0,"PAM on this system is broken - appdata_ptr == NULL !");
+       return PAM_CONV_ERR;
+    }
+
+    memset(reply, '\0', sizeof(struct pam_response) * num_msg);
+
+    for (count=0; count < num_msg; ++count)
+    {
+       char *string=NULL;
+
+       switch (msgm[count]->msg_style)
+       {
+           case PAM_PROMPT_ECHO_ON:
+               string = xstrdup(udp->username);
+               break;
+           case PAM_PROMPT_ECHO_OFF:
+               string = xstrdup(udp->password);
+               break;
+         case PAM_TEXT_INFO:
+         case PAM_ERROR_MSG:
+             break;
+           default:
+             xfree(reply);
+             return PAM_CONV_ERR;
+       }
+
+       if (string) /* must add to reply array */
+       {
+           /* add string to list of responses */
+           reply[count].resp_retcode = 0;
+           reply[count].resp = string;
+           string = NULL;
+       }
+    }
+
+    *response = reply;
+    reply = NULL;
+
+    return PAM_SUCCESS;
+}
+
+static struct pam_conv conv = {
+    cvs_conv,
+    NULL
+};
+
+/* Modelled very closely on the example code in "The Linux-PAM
+   Application Developers' Guide" by Andrew G. Morgan. */
+/* Return a hosting username if password matches, else NULL. */
+static char *check_pam_password (const char *username, const char *password)
+{
+    pam_handle_t *pamh = NULL;
+    struct passwd *pw = NULL;
+    int retval;
+    char *host_user = NULL;
+    struct cvs_pam_userdata ud;
+
+    ud.username = (char*)username;
+    ud.password = (char*)password;
+
+    conv.appdata_ptr = &ud;
+
+    retval = pam_start("cvs", username, &conv, &pamh);
+
+    if (retval == PAM_SUCCESS)
+       retval = pam_authenticate(pamh, 0);    /* is user really user? */
+
+    if (retval == PAM_SUCCESS)
+       retval = pam_acct_mgmt(pamh, 0);       /* permitted access? */
+
+    /* This is where we have been authorized or not. */
+
+    switch(retval)
+    {
+       case PAM_SUCCESS:
+           host_user = xstrdup(username);
+           break;
+       case PAM_AUTH_ERR:
+       default:
+           host_user = NULL;
+           break;
+    }
+
+    /* now close PAM */
+    if (pam_end(pamh,retval) != PAM_SUCCESS)
+    {
+      pamh = NULL;
+      error(1, 0, "PAM failed to release authenticator\n");
+    }
+
+    return host_user;
+}
+
+#endif /* HAVE_PAM */
+
+static char *check_system_password(const char *username, const char *password, user_handle_t *user_handle)
+{
+    const char *found_passwd = NULL;
+    struct passwd *pw;
+    char *host_user = NULL;
+
+#ifdef HAVE_GETSPNAM
+    struct spwd *spw;
+
+    spw = getspnam (username);
+    if (spw != NULL)
+    {
+      found_passwd = spw->sp_pwdp;
+    }
+#endif /* HAVE_GETSPNAM */
+
+    if (found_passwd == NULL && (pw = getpwnam (username)) != NULL)
+    {
+        found_passwd = pw->pw_passwd;
+    }
+
+    if(found_passwd && *found_passwd)
+    {
+#ifdef _WIN32
+      host_user = win32_valid_user(username,password,NULL,user_handle)
+                         ? xstrdup(username) : NULL;
+#else
+      /* user exists and has a password */
+      host_user = ((! strcmp (found_passwd, crypt (password, found_passwd)))
+                      ? xstrdup (username) : NULL);
+#endif
+    }
+    else if (found_passwd && password && *password)
+    {
+      /* user exists and has no system password, but we got
+             one as parameter */
+      host_user = xstrdup (username);
+    }
+    return host_user;
+}
 
 /* Return a hosting username if password matches, else NULL. */
-static char *check_password (char *username, char *password, char *repository, user_handle_t *user_handle)
+static char *check_password (const char *username, const char *password, const char *repository, user_handle_t *user_handle)
 {
     int rc;
     char *host_user = NULL;
@@ -4841,69 +5350,11 @@ static char *check_password (char *username, char *password, char *repository, u
     }
     else if (rc == 0 && system_auth)
     {
-	/* No cvs password found, so try /etc/passwd. */
-
-	const char *found_passwd = NULL;
-	struct passwd *pw;
-#ifdef HAVE_GETSPNAM
-	struct spwd *spw;
-
-	spw = getspnam (username);
-	if (spw != NULL)
-	{
-	    found_passwd = spw->sp_pwdp;
-	}
-#endif
-
-	if (found_passwd == NULL && (pw = getpwnam (username)) != NULL)
-	{
-	    found_passwd = pw->pw_passwd;
-	}
-	
-	if (found_passwd == NULL)
-	{
-	    printf ("E Fatal error, aborting.\n\
-error 0 %s: no such user\n", username);
-
-	    /* I'm doing this manually rather than via error_exit ()
-	       because I'm not sure whether we want to call server_cleanup.
-	       Needs more investigation....  */
-
-#ifdef SYSTEM_CLEANUP
-	    /* Hook for OS-specific behavior, for example socket subsystems on
-	       NT and OS2 or dealing with windows and arguments on Mac.  */
-	    SYSTEM_CLEANUP ();
-#endif
-
-	    exit (EXIT_FAILURE);
-	}
-	
-	if (*found_passwd)
-        {
-#ifdef _WIN32
-          host_user = win32_valid_user(username,password,NULL,user_handle)
-                         ? xstrdup(username) : NULL;
+#ifdef HAVE_PAM
+	host_user = check_pam_password (username, password);
 #else
-	    /* user exists and has a password */
-	    host_user = ((! strcmp (found_passwd,
-                                    crypt (password, found_passwd)))
-                         ? xstrdup (username) : NULL);
+	host_user = check_system_password (username, password, user_handle);
 #endif
-            goto handle_return;
-        }
-	else if (password && *password)
-        {
-	    /* user exists and has no system password, but we got
-	       one as parameter */
-	    host_user = xstrdup (username);
-            goto handle_return;
-        }
-	else
-        {
-	    /* user exists but has no password at all */
-	    host_user = NULL;
-            goto handle_return;
-        }
     }
     else if (rc == 0)
     {
@@ -4942,7 +5393,7 @@ handle_return:
     {
         /* Set CVS_Username here, in allocated space. 
            It might or might not be the same as host_user. */
-        CVS_Username = username;
+        CVS_Username = xstrdup(username);
     }
 
     return host_user;
@@ -4957,57 +5408,45 @@ void server_authenticate_connection ()
 	user_handle_t user_handle = NULL;
 
     char *host_user;
-    char *real_repository = NULL;
+    const char *real_repository = NULL;
 
 	/* Make sure the protocol starts off on the right foot... */
-	if(io_getline(0, &tmp, PATH_MAX)<0)
+	if(io_getline(server_io_socket, &tmp, PATH_MAX)<0)
 	/* FIXME: what?  We could try writing error/eof, but chances
 	are the network connection is dead bidirectionally.  log it
 	somewhere?  */
 	;
+	/* We want errors to go over the server protocol channel, so create a fake
+		io buffer */
+	buf_from_net = client_protocol_buffer_initialize (NULL, 1, outbuf_memory_error);
+	buf_to_net = client_protocol_buffer_initialize (NULL, 0, outbuf_memory_error);
+
 	client_protocol = find_authentication_mechanism(tmp);
 
 	if(!client_protocol)
+	{
 		error (1, 0, "bad auth protocol start: %s", tmp);
+	}
 	xfree (tmp);
 	
 	/* If we're now in 'wrap' mode, setup a wrap buffer for the relevant I/O */
-	if(client_protocol->server_read_data)
-	{
-		buf_from_net = client_protocol_buffer_initialize (client_protocol, 1, outbuf_memory_error);
-	}
-	if(client_protocol->server_write_data)
-	{
-		buf_to_net = client_protocol_buffer_initialize (client_protocol, 0, outbuf_memory_error);
-	}
+	buf_from_net->closure=(void*)client_protocol;
+	buf_to_net->closure=(void*)client_protocol;
 
 	if(client_protocol->auth_repository)
 	{
 		/* If no repository is sent, we can't work out where the passwd, config, etc. file
 		   are until the first 'Root' command */
 
-		if (CVSroot_prefix != NULL)
+		if (!root_allow_ok (client_protocol->auth_repository,&real_repository))
 		{
-			real_repository = xmalloc (strlen(CVSroot_prefix)
-					  + strlen(client_protocol->auth_repository)
-									  + 1);
-			strcpy(real_repository, CVSroot_prefix);
-			strcat(real_repository, client_protocol->auth_repository);
-		}
-		else
-		{
-			real_repository = client_protocol->auth_repository;
-		}
+			printf ("error 0 %s: no such repository\n", client_protocol->auth_repository);
+			fflush(stdout);
 
-		if (!root_allow_ok (client_protocol->auth_repository))
-		{
-		printf ("error 0 %s: no such repository\n", client_protocol->auth_repository);
-		fflush(stdout);
-
-	#ifdef HAVE_SYSLOG_H
-		syslog (LOG_DAEMON | LOG_NOTICE, "login refused for %s", client_protocol->auth_repository);
-	#endif
-		goto i_hate_you;
+#ifdef HAVE_SYSLOG_H
+			syslog (LOG_DAEMON | LOG_NOTICE, "login refused for %s", client_protocol->auth_repository);
+#endif
+			goto i_hate_you;
 		}
 
 		/* OK, now parse the config file, so we can use it to control how
@@ -5020,10 +5459,6 @@ void server_authenticate_connection ()
 		/* We need the real cleartext before we hash it. */
 		host_user = check_password (client_protocol->auth_username, client_protocol->auth_password,
 									real_repository, &user_handle);
-		if (CVSroot_prefix != NULL)
-		{
-		   xfree (real_repository);
-		}
 	}
 	else
 	{
@@ -5034,23 +5469,26 @@ void server_authenticate_connection ()
     if (host_user == NULL)
     {
 #ifdef HAVE_SYSLOG_H
-	syslog (LOG_DAEMON | LOG_NOTICE, "login failure (for %s)", client_protocol->auth_repository);
+		syslog (LOG_DAEMON | LOG_NOTICE, "login failure (for %s)", client_protocol->auth_repository);
 #ifdef LOG_AUTHPRIV
         syslog (LOG_AUTHPRIV | LOG_NOTICE, "login failure by %s / %s (for %s)",
         	client_protocol->auth_username, client_protocol->auth_password, client_protocol->auth_repository);
 #endif
 #endif
     i_hate_you:
-	printf ("I HATE YOU\n");
-	fflush (stdout);
+		printf ("I HATE YOU\n");
+		fflush (stdout);
 	
 	/* Don't worry about server_cleanup, server_active isn't set
 	   yet.  */
-	error_exit ();
+		error_exit ();
     }
 
     /* Switch to run as this user. */
-	switch_to_user (host_user, user_handle);
+    if(runas_user)
+	switch_to_user (runas_user, &user_handle);
+    else
+	switch_to_user (host_user, &user_handle);
     xfree (host_user);
 
     printf ("I LOVE YOU\n");
@@ -5266,12 +5704,6 @@ void cvs_output_raw(const char *str, size_t len)
 		buf_output(buf_to_net,str,len?len:strlen(str));
 		buf_flush(buf_to_net,0);
 	}
-        else if(encrypted_channel)
-        {
-	    	client_protocol->server_write_data(client_protocol, str, len);
-		if(str[len-1]=='\n')
-			client_protocol->server_flush_data(client_protocol);
-        }
 	else
 #endif
 		write(1,str,len?len:strlen(str));
@@ -5280,8 +5712,7 @@ void cvs_output_raw(const char *str, size_t len)
 /* Output LEN bytes at STR.  If LEN is zero, then output up to (not including)
    the first '\0' byte.  */
 
-void
-cvs_output (const char *str, size_t len)
+void cvs_output (const char *str, size_t len)
 {
 	cvs_flusherr();
     if (len == 0)
@@ -5291,15 +5722,9 @@ cvs_output (const char *str, size_t len)
 #ifdef SERVER_SUPPORT
     if (server_active)
     {
-		buf_output (stdout_buf, str, len);
+		buf_output (stdout_buf?stdout_buf:buf_to_net, str, len);
 		if(str[len-1]=='\n')
-			buf_send_output(stdout_buf);
-    }
-    else if(encrypted_channel)
-    {
-	    	client_protocol->server_write_data(client_protocol, str, len);
-		if(str[len-1]=='\n')
-			client_protocol->server_flush_data(client_protocol);
+			buf_send_output(stdout_buf?stdout_buf:buf_to_net);
     }
     else
 #endif
@@ -5319,7 +5744,18 @@ cvs_output (const char *str, size_t len)
 	   assumption from the manpage I looked at, but if there was
 	   something fishy about it, my guess is that calling fflush
 	   would not produce a significant performance problem.  */
-
+#ifdef UTF8
+		wchar_t *buf = xmalloc(to_write*sizeof(wchar_t)),*wp;
+		MultiByteToWideChar(CP_UTF8,0,p,len,buf,len);
+		wp = buf;
+		while (to_write > 0)
+		{
+			fputwc(*wp, stdout);
+			wp++;
+			to_write--;
+		}
+		xfree(buf);
+#else
 	while (to_write > 0)
 	{
 	    written = fwrite (p, 1, to_write, stdout);
@@ -5328,6 +5764,7 @@ cvs_output (const char *str, size_t len)
 	    p += written;
 	    to_write -= written;
 	}
+#endif
 	fflush(stdout);
 #ifdef WIN95_PIPE_FIX
 	WIN95_cvs_flushout();
@@ -5440,16 +5877,11 @@ cvs_outerr (str, len)
 #ifdef SERVER_SUPPORT
     if (server_active)
     {
-		buf_output (stderr_buf, str, len);
+		buf_output (stderr_buf?stderr_buf:buf_to_net, str, len);
 		if(str[len-1]=='\n')
-			buf_send_output(stderr_buf);
+			buf_send_output(stderr_buf?stderr_buf:buf_to_net);
     }
-    else if(encrypted_channel)
-    {
-	    	client_protocol->server_write_data(client_protocol, str, len);
-		if(str[len-1]=='\n')
-			client_protocol->server_flush_data(client_protocol);
-    } else
+	else
 #endif
 #ifdef CVSGUI_PIPE
 	if(_cvsgui_writefd != 0)
@@ -5461,14 +5893,28 @@ cvs_outerr (str, len)
 	size_t to_write = len;
 	const char *p = str;
 
+#ifdef UTF8
+		wchar_t *buf = xmalloc(to_write*sizeof(wchar_t)),*wp;
+		MultiByteToWideChar(CP_UTF8,0,p,len,buf,len);
+		wp = buf;
+		while (to_write > 0)
+		{
+			fputwc(*wp, stderr);
+			wp++;
+			to_write--;
+		}
+		xfree(buf);
+#else
 	while (to_write > 0)
 	{
+
 	    written = fwrite (p, 1, to_write, stderr);
 	    if (written == 0)
 		break;
 	    p += written;
 	    to_write -= written;
 	}
+#endif /* UTF8 */
     }
 }
 
@@ -5486,7 +5932,8 @@ cvs_flusherr ()
 	 * on the server should only be writing to stdout anyhow
 	 */
 	/* Flush what we can to the network, but don't block.  */
-	buf_flush (stderr_buf, 0);
+	if(stderr_buf)
+		buf_flush (stderr_buf, 0);
     }
     else
 #endif
@@ -5507,7 +5954,8 @@ cvs_flushout ()
     if (server_active)
     {
 		/* Flush what we can to the network, but don't block.  */
-		buf_flush (stdout_buf, 0);
+		if(stdout_buf)
+			buf_flush (stdout_buf, 0);
     }
     else
 #endif
@@ -5525,10 +5973,7 @@ cvs_flushout ()
 
    Note that there is no way to output either \0 or \n as part of TEXT.  */
 
-void
-cvs_output_tagged (tag, text)
-    char *tag;
-    char *text;
+void cvs_output_tagged (const char *tag, const char *text)
 {
     if (text != NULL && strchr (text, '\n') != NULL)
 	/* Uh oh.  The protocol has no way to cope with this.  For now
@@ -5587,4 +6032,109 @@ int server_main(void)
 }
 
 #endif /* SERVER_SUPPORT */
+
+char *normalise_options(const char *options, int quiet, const char *file)
+{
+#ifdef SERVER_SUPPORT
+	char *o;
+	const kflag_t *p;
+	const char *v = valid_rcsoptions;
+	char *temp_options, *tmp;
+
+	if(!server_active)
+#endif
+		return xstrdup(options);
+#ifdef SERVER_SUPPORT
+
+	if(!options || !*options)
+		return NULL;
+
+	if(!v)
+	{
+		if(support_utf8) /* This is a hack, but basically any CVSNT client will send this,
+							so you can add things like unicode and -kL support */
+			v="butkvloL";
+		else
+			v="bkvlo";
+	}
+
+	if(options[0]=='-')
+		temp_options = xstrdup(options);
+	else
+	{
+		temp_options = xmalloc(strlen(options)+2);
+		strcpy(temp_options,"-k");
+		strcat(temp_options,options);
+	}
+	tmp=temp_options+2;
+	if(*tmp=='{' && !strchr(tmp,'}'))
+	{
+		/* Can't really process this, but it's better not to fall over... */
+		tmp++;
+	}
+	if(*tmp=='{' && !strchr(v,'{'))
+	{
+		error(0,0,"`%s' is marked with an expanded encoding {}.",file);
+		error(0,0,"Your client cannot understand this option");
+		error(0,0,"so the checked out file will not be an");
+		error(0,0,"accurate representation of the original");
+		error(0,0,"file.  Please contact the repository");
+		error(0,0,"administrator if you think that this is");
+		error(0,0,"in error");
+
+		strcpy(tmp,strchr(tmp,'}')+1);
+	}
+	else if(*tmp=='{')
+		tmp=strchr(tmp,'}')+1;
+	for(p=kflag_encoding;p->flag;p++)
+	{
+		if(p->type&KFLAG_LEGACY) 
+			continue;
+		o=strchr(tmp,p->flag);
+		if(o && !strchr(v,p->flag))
+		{
+			if(!quiet && p->type&KFLAG_ESSENTIAL)
+			{
+				error(0,0,"`%s' is marked with expansion option `%c'.",file,p->flag);
+				error(0,0,"Your client cannot understand this option");
+				error(0,0,"so the checked out file will not be an");
+				error(0,0,"accurate representation of the original");
+				error(0,0,"file.  Please contact the repository");
+				error(0,0,"administrator if you think that this is");
+				error(0,0,"in error");
+			}
+			if(p->alternate)
+				*o=p->alternate;
+			else
+				strcpy(o,o+1);
+		}
+	}
+	for(p=kflag_flags;p->flag;p++)
+	{
+		if(p->type&KFLAG_LEGACY) 
+			continue;
+		o=strchr(tmp,p->flag);
+		if(o && !strchr(v,p->flag))
+		{
+			if(!quiet && p->type&KFLAG_ESSENTIAL)
+			{
+				error(0,0,"`%s' is marked with expansion option `%c'.",file,p->flag);
+				error(0,0,"Your client cannot understand this option");
+				error(0,0,"so the checked out file will not be an");
+				error(0,0,"accurate representation of the original");
+				error(0,0,"file.  Please contact the repository");
+				error(0,0,"administrator if you think that this is");
+				error(0,0,"in error");
+			}
+			if(p->alternate)
+				*o=p->alternate;
+			else
+				strcpy(o,o+1);
+		}
+	}
+	if(strlen(temp_options)==2)
+		xfree(temp_options); /* None left */
+	return temp_options;
+#endif /* Server_support */
+}
 

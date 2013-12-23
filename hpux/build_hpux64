@@ -1,0 +1,14 @@
+#!/bin/sh
+
+export DESTDIR=${PWD}/tmp
+mkdir $DESTDIR
+export PATH=/usr/local/pa64/bin:/usr/local/pa64/hppa64-hp-hpux11.11/bin:${PATH}
+cd cvsnt
+./configure --prefix=/usr --libdir=/usr/local/pa64/lib --bindir=/usr/local/pa64/bin
+make clean
+make DESTDIR=${DESTDIR}
+make install DESTDIR=${DESTDIR}
+BUILD=`${DESTDIR}/usr/local/pa64/bin/cvs -v | grep "(CVSNT)" | sed 's/.*CVSNT) \([^ ]*\).*/\1/'`
+cd ..
+./make_package $BUILD 64
+rm -rf $DESTDIR

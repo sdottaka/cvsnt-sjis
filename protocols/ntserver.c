@@ -23,7 +23,6 @@
 static void ntserver_destroy(const struct protocol_interface *protocol);
 static int ntserver_connect(const struct protocol_interface *protocol, int verify_only);
 static int ntserver_disconnect(const struct protocol_interface *protocol);
-static int ntserver_auth_protocol_connect(const struct protocol_interface *protocol, const char *auth_string);
 static int ntserver_read_data(const struct protocol_interface *protocol, void *data, int length);
 static int ntserver_write_data(const struct protocol_interface *protocol, const void *data, int length);
 static int ntserver_flush_data(const struct protocol_interface *protocol);
@@ -50,12 +49,12 @@ struct protocol_interface ntserver_protocol_interface =
 	NULL, /* login */
 	NULL, /* logout */
 	NULL, /* start_encryption */
-	ntserver_auth_protocol_connect,
+	NULL, /* auth_protocol_connect */
 	ntserver_read_data,
 	ntserver_write_data,
 	ntserver_flush_data,
 	ntserver_shutdown,
-	ntserver_impersonate,
+	NULL, /* impersonate */
 	NULL, /* validate_keyword */
 	NULL /* get_keyword_help */
 };
@@ -104,31 +103,6 @@ int ntserver_disconnect(const struct protocol_interface *protocol)
 	return CVSPROTO_SUCCESS;
 }
 
-int ntserver_auth_protocol_connect(const struct protocol_interface *protocol, const char *auth_string)
-{
-	DWORD flags,ob,ib,mi;
-	char szUser[128];
-
-    if (!strcmp (auth_string, "BEGIN NTSERVER"))
-		ntserver_protocol_interface.verify_only = 0;
-	else
-		return CVSPROTO_NOTME;
-
-	/* If this isn't a named pipe, don't continue */
-	if(!GetNamedPipeInfo((HANDLE)_get_osfhandle(0),&flags,&ob,&ib,&mi))
-		return CVSPROTO_NOTME;
-
-	if(!GetNamedPipeHandleState((HANDLE)_get_osfhandle(0),NULL,NULL,NULL,NULL,szUser,sizeof(szUser)))
-		return CVSPROTO_NOTME;
-
-	ntserver_protocol_interface.auth_username = strdup(szUser);
-
-	/* Get the repository details for checking */
-    server_getline (protocol, &ntserver_protocol_interface.auth_repository, MAX_PATH);
-
-	return CVSPROTO_SUCCESS;
-}
-
 int ntserver_read_data(const struct protocol_interface *protocol, void *data, int length)
 {
 	DWORD dwRead = 0;
@@ -169,12 +143,5 @@ int handle_printf(char *fmt, ...)
 	va_end(va);
 
 	return ntserver_write_data(&ntserver_protocol_interface,temp,strlen(temp));
-}
-
-int ntserver_impersonate(const struct protocol_interface *protocol, const char *username, void *user_handle)
-{
-	if(ImpersonateNamedPipeClient((HANDLE)_get_osfhandle(0)))
-		return CVSPROTO_SUCCESS;
-	return CVSPROTO_FAIL;
 }
 

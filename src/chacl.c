@@ -26,15 +26,13 @@ static char *g_rtag;
 static char *g_user;
 static char *g_permptr;
 
-static Dtype
-chacl_dirproc (callerdat, dir, repos, update_dir, entries)
-    void *callerdat;
-    char *dir;
-    char *repos;
-    char *update_dir;
-    List *entries;
+static Dtype chacl_dirproc (void *callerdat, char *dir, char *repos, char *update_dir,  List *entries, const char *virtual_repository, Dtype hint)
 {
 	int err;
+
+	if(hint!=R_PROCESS)
+		return hint;
+
 	if (!verify_owner (repos))
 	{
 		error (0, 0, "'%s' does not own '%s'\n", CVS_Username, dir);
@@ -178,8 +176,8 @@ chacl (argc, argv)
       send_arg (argv[0]); /* Send the user name and permissions */
       argc--;
       argv++;
-      send_file_names (argc, argv, SEND_EXPAND_WILD | SEND_DIRECTORIES_ONLY);
       send_files (argc, argv, !recurse, 0, SEND_NO_CONTENTS | SEND_DIRECTORIES_ONLY);
+      send_file_names (argc, argv, SEND_EXPAND_WILD | SEND_DIRECTORIES_ONLY);
       send_to_server ("chacl\012", 0);
       return get_responses_and_close ();
    }
@@ -207,7 +205,7 @@ chacl (argc, argv)
    g_rtag = rtag;
    g_permptr = permptr;
    g_user = user;
-    err = start_recursion (NULL, NULL, chacl_dirproc, NULL, (void*)NULL,
+    err = start_recursion (NULL, NULL, (PREDIRENTPROC) NULL, chacl_dirproc, NULL, (void*)NULL,
 		argc, argv, !recurse, W_LOCAL, 0, 0, (char*)NULL, 1, NULL);
 
    xfree(rtag);

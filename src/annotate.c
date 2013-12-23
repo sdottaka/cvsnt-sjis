@@ -206,14 +206,20 @@ rannotate_proc (argc, argv, xwhere, mwhere, mfile, shorten, local, mname, msg)
 			xfree (path);
 		}
 
-		/* cd to the starting repository */
-		if ( CVS_CHDIR (repository) < 0)
 		{
-			error (0, errno, "cannot chdir to %s", repository);
+		char *mapped_repository = map_repository(repository);
+
+		/* cd to the starting repository */
+		if ( CVS_CHDIR (mapped_repository) < 0)
+		{
+			error (0, errno, "cannot chdir to %s", fn_root(repository));
 			xfree (repository);
+			xfree (mapped_repository);
 			return (1);
 		}
 		xfree (repository);
+		xfree (mapped_repository);
+		}
 		/* End section which is identical to patch_proc.  */
 
 		if (force_tag_match && tag != NULL)
@@ -236,7 +242,7 @@ rannotate_proc (argc, argv, xwhere, mwhere, mfile, shorten, local, mname, msg)
     }
 
     err = start_recursion (annotate_fileproc, (FILESDONEPROC) NULL,
-			   (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL, NULL,
+			   (PREDIRENTPROC) NULL, (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL, NULL,
 			   argc - 1, argv + 1, local, which, 0, 1,
 			   where, 1, verify_write);
     return err;
@@ -257,7 +263,7 @@ annotate_fileproc (callerdat, finfo)
     if (finfo->rcs->flags & PARTIAL)
         RCS_reparsercsfile (finfo->rcs);
 
-	vers = Version_TS (finfo, NULL, tag, date, force_tag_match, 0);
+	vers = Version_TS (finfo, NULL, tag, date, force_tag_match, 0, 0);
 	version=xstrdup(vers->vn_rcs);
     freevers_ts (&vers);
     if (version == NULL)

@@ -127,7 +127,7 @@ update_hardlink_info (file)
     {
 	/* file is a relative pathname; assume it's from the current
 	   working directory. */
-	char *dir = xgetwd();
+	char *dir = xgetwd_mapped();
 	path = xmalloc (strlen(dir) + strlen(file) + 2);
 	sprintf (path, "%s/%s", dir, file);
 	xfree (dir);
@@ -175,7 +175,7 @@ list_linked_files_on_disk (file)
 	path = xstrdup (file);
     else
     {
-	char *dir = xgetwd();
+	char *dir = xgetwd_mapped();
 	path = (char *) xmalloc (strlen(dir) + strlen(file) + 2);
 	sprintf (path, "%s/%s", dir, file);
 	xfree (dir);
@@ -268,7 +268,7 @@ find_checkedout_proc (node, data)
 {
     Node **uptodate = (Node **) data;
     Node *link;
-    char *dir = xgetwd();
+    char *dir = xgetwd_mapped();
     char *path;
     struct hardlink_info *hlinfo;
 

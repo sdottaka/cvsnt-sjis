@@ -12,11 +12,22 @@
 #include "cvs.h"
 #include "library.h"
 
+struct protocol_interface local_protocol =
+{
+	PROTOCOL_INTERFACE_VERSION,
+
+	"local",
+	"(internal)",
+	":local:/path",
+};
+
 #define ELEM_VALID(_elem) protocol->required_elements&_elem?"Required":protocol->valid_elements&_elem?"Optional":"No"
 
 static const char *const info_usage[] =
 {
-	"Usage: %s %s [protocol]\n",
+	"Usage: %s %s [-c|-s] [cvswrappers|cvsignore|<protocol>]\n",
+	"    -c      Describe client (default)\n",
+	"    -s      Describe server\n",
     "(Specify the --help global option for a list of other help options)\n",
     NULL
 };
@@ -27,18 +38,21 @@ int info(int argc, char **argv)
 	int context;
 	const char *proto;
 	const struct protocol_interface *protocol;
+	int use_server = 0;
 
     if (argc == -1)
 		usage (info_usage);
 
     optind = 0;
-    while ((c = getopt (argc, argv, "c")) != -1)
+    while ((c = getopt (argc, argv, "cs")) != -1)
     {
 		switch (c)
 		{
 		case 'c':
-			printf("Crashing...");
-			*(int*)0=0;
+			use_server = 0;
+			break;
+		case 's':
+			use_server = 1;
 			break;
 		case '?':
 		default:
@@ -55,25 +69,76 @@ int info(int argc, char **argv)
 		return 1;
 	}
 
+#ifdef CLIENT_SUPPORT
+	if(use_server && !current_parsed_root)
+	{
+              error (0, 0, "No CVSROOT specified!  Please use the `-d' option");
+              error (1, 0, "or set the %s environment variable.", CVSROOT_ENV);
+	}
+
+	if(use_server && current_parsed_root->isremote)
+	{
+		start_server(0);
+		ign_setup();
+		wrap_setup();
+	
+		if(!supported_request("info"))
+			error(1,0,"Server does not support %s",command_name);
+	
+		if(argc)
+			send_arg(argv[0]);
+		send_to_server("info\012", 0);
+
+		return get_responses_and_close();
+	}
+#endif
+	ign_setup();
+	wrap_setup();
+
 	if(argc==0)
 	{
-
-		printf("Available protocols:\n\n");
+		if(!server_active)
+			printf("Available protocols:\n\n");
+		else
+			printf("Available protocols on server:\n\n");
 		TRACE(1,"Interface version is %04x",PROTOCOL_INTERFACE_VERSION);
-
+		
+		if(!server_active)
+			printf("%-20.20s%s\n","local","(internal)");
 		context=0;
 		while((proto=enumerate_protocols(&context))!=NULL)
 		{
-			protocol=load_protocol(proto);
-			if(!protocol)
-				continue;
-			printf("%-20.20s%s\n",protocol->name,protocol->version);
-			unload_protocol(protocol);
+			if(!client_protocol || strcmp(proto,client_protocol->name))
+				protocol=load_protocol(proto);
+			else
+				protocol=client_protocol;
+			if(protocol && (!server_active || protocol->auth_protocol_connect))
+				printf("%-20.20s%s\n",protocol->name,protocol->version);
+			if(protocol!=client_protocol)
+				unload_protocol(protocol);
 		}
 	}
 	else
 	{
-		protocol = load_protocol(argv[0]);
+		if(!strcmp(argv[0],"cvswrappers"))
+		{
+		    wrap_display();
+		    return 0;
+		}
+		if(!strcmp(argv[0],"cvsignore"))
+		{
+		    ign_display();
+		    return 0;
+		}
+		if(!strcmp(argv[0],"local"))
+			protocol = &local_protocol;
+		else
+		{
+			if(!client_protocol || strcmp(argv[0],client_protocol->name))
+				protocol = load_protocol(argv[0]);
+			else
+				protocol = client_protocol;
+		}
 		if(!protocol)
 		{
 			error(1,0,"Couldn't load protocol '%s'",argv[0]);
@@ -89,7 +154,7 @@ int info(int argc, char **argv)
 		printf("%-20s%s\n","Client:",protocol->connect?"Yes":"No");
 		printf("%-20s%s\n","Server:",protocol->auth_protocol_connect?"Yes":"No");
 		printf("%-20s%s\n","Login:",protocol->login?"Yes":"No");
-		printf("%-20s%s\n","Encryption:",protocol->wrap?"Yes":"No");
+		printf("%-20s%s\n","Encryption:",protocol->valid_elements&flagAlwaysEncrypted?"Always":protocol->wrap?"Yes":"No");
 		printf("%-20s%s\n","Impersonation:",protocol->impersonate?"Native":"CVS Builtin");
 
 		printf("\nKeywords available:\n\n");
@@ -120,7 +185,8 @@ int info(int argc, char **argv)
 				p+=strlen(p)+1;
 			}
 		}
-		unload_protocol(protocol);
+		if(strcmp(argv[0],"local") && protocol!=client_protocol)
+			unload_protocol(protocol);
 	}
 
     return 0;

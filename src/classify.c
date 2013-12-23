@@ -25,8 +25,7 @@ Ctype Classify_File (struct file_info *finfo, char *tag, char *date,
     Ctype ret;
 
     /* get all kinds of good data about the file */
-    vers = Version_TS (finfo, options, tag, date,
-		       force_tag_match, 0);
+    vers = Version_TS (finfo, options, tag, date, force_tag_match, 0, 0);
 
 	if(force_time_mismatch)
 	{
@@ -49,8 +48,10 @@ Ctype Classify_File (struct file_info *finfo, char *tag, char *date,
 		   behavior.  "cvs update foo" gives this message, which
 		   is what I would expect.  */
 		if (!force_tag_match || !(vers->tag || vers->date))
+		{
 		    if (!really_quiet)
-			error (0, 0, "nothing known about %s", fn_root(finfo->fullname));
+				error (0, 0, "nothing known about %s", fn_root(finfo->fullname));
+		}
 		ret = T_UNKNOWN;
 	    }
 	    else
@@ -79,6 +80,11 @@ Ctype Classify_File (struct file_info *finfo, char *tag, char *date,
 		       program_name, fn_root(finfo->fullname));
 		ret = T_UNKNOWN;
 	    }
+	}
+	else if (vers->ts_user && !strcmp(vers->ts_user,"0") && !strcmp(finfo->file,RCSREPOVERSION))
+	{
+		/* It's a directory entry, but there isn't one in the repository */
+		ret = T_UNKNOWN;
 	}
 	else if (!pipeout && vers->ts_user && No_Difference (finfo, vers))
 	{
@@ -225,7 +231,6 @@ Ctype Classify_File (struct file_info *finfo, char *tag, char *date,
 	    }
 	    else if (strcmp (vers->ts_user, vers->ts_rcs) == 0)
 	    {
-
 		/*
 		 * The user file is still unmodified, so just remove it from
 		 * the entry list
@@ -278,6 +283,11 @@ Ctype Classify_File (struct file_info *finfo, char *tag, char *date,
 			error (0, 0, "warning: %s was lost", fn_root(finfo->fullname));
 		ret = T_CHECKOUT;
 	    }
+		else if (!vers->ts_rcs && !strcmp(vers->ts_user,"0") && !strcmp(finfo->file,RCSREPOVERSION))
+		{
+			/* This is a directory... The only important entry is the version*/
+			ret = T_UPTODATE;
+		}
 	    else if (strcmp (vers->ts_user, vers->ts_rcs) == 0)
 	    {
 
@@ -289,36 +299,28 @@ Ctype Classify_File (struct file_info *finfo, char *tag, char *date,
 		 */
 		/* TODO: decide whether we need to check file permissions
 		   for a mismatch, and return T_CONFLICT if so. */
+		char *opts = normalise_options(vers->options,1,fn_root(finfo->fullname));
 		if (vers->entdata->options &&
-		    strcmp (vers->entdata->options, vers->options) != 0)
+			strcmp (vers->entdata->options, opts?opts:"") != 0)
+		{
+			xfree(opts);
 		    ret = T_CHECKOUT;
+		}
 		else
 		{
+			xfree(opts);
 		    sticky_ck (finfo, aflag, vers);
 		    ret = T_UPTODATE;
 		}
 	    }       
-	    else if (vers->entdata->merge_from_tag_1[0] && !vers->entdata->merge_from_tag_2[0]) /* For an explicit two revision merge, don't record the mergepoint */
+	    else if (vers->entdata->merge_from_tag_1[0]) 
 		{
 			ret = T_MODIFIED;
 		}
 	    else if (No_Difference (finfo, vers))
 	    {
-
-		/*
-		 * they really are different; modified if we aren't
-		 * changing any sticky -k options, else needs merge
-		 */
-#ifdef XXX_FIXME_WHEN_RCSMERGE_IS_FIXED
-		if (strcmp (vers->entdata->options ?
-		       vers->entdata->options : "", vers->options) == 0)
-		    ret = T_MODIFIED;
-		else
-		    ret = T_NEEDS_MERGE;
-#else
 		ret = T_MODIFIED;
 		sticky_ck (finfo, aflag, vers);
-#endif
 	    }
 	    else if (strcmp (vers->entdata->options ?
 		       vers->entdata->options : "", vers->options) != 0)
@@ -408,7 +410,7 @@ sticky_ck (finfo, aflag, vers)
 	    ((entdate && !vers->date) || (!entdate && vers->date)))
 	{
 	    Register (finfo->entries, finfo->file, vers->vn_user, vers->ts_rcs,
-		      vers->options, vers->tag, vers->date, vers->ts_conflict, NULL, NULL);
+		      vers->options, vers->tag, vers->date, vers->ts_conflict, NULL, NULL, vers->tt_rcs);
 
 #ifdef SERVER_SUPPORT
 	    if (server_active)

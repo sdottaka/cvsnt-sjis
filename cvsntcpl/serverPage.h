@@ -8,10 +8,11 @@
 // serverPage.h : header file
 //
 
+#include "TooltipPropertyPage.h"
 /////////////////////////////////////////////////////////////////////////////
 // CserverPage dialog
 
-class CserverPage : public CPropertyPage
+class CserverPage : public CTooltipPropertyPage
 {
 	DECLARE_DYNCREATE(CserverPage)
 

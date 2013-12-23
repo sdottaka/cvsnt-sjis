@@ -115,6 +115,7 @@ am__include = @am__include@
 am__quote = @am__quote@
 cvs_config_dir = @cvs_config_dir@
 cvs_library_dir = @cvs_library_dir@
+cvs_target_name = @cvs_target_name@
 install_sh = @install_sh@
 
 man_MANS = cvs.1 cvs.5 

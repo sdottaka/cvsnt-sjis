@@ -13,6 +13,10 @@
 # include <io.h>
 #endif
 
+#ifdef SJIS
+#include <mbstring.h>
+#endif
+
 #include "unzip.h"
 
 #define CASESENSITIVITY (0)
@@ -120,7 +124,11 @@ int makedir (newdir)
     {
       char hold;
 
+#ifdef SJIS
+      while(*p && (*p != '\\' || _ismbstrail(buffer+1, p)) && *p != '/')
+#else
       while(*p && *p != '\\' && *p != '/')
+#endif
         p++;
       hold = *p;
       *p = 0;
@@ -264,7 +272,11 @@ int do_extract_currentfile(uf,popt_extract_without_path,popt_overwrite,password)
     p = filename_withoutpath = filename_inzip;
     while ((*p) != '\0')
     {
+#ifdef SJIS
+        if (((*p)=='/') || (((*p)=='\\') && !_ismbstrail(filename_inzip, p)) )
+#else
         if (((*p)=='/') || ((*p)=='\\'))
+#endif
             filename_withoutpath = p+1;
         p++;
     }

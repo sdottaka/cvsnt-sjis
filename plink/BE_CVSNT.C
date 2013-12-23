@@ -5,9 +5,7 @@
  * cvsnt - only need ssh
  */
 
-#include <windows.h>
-#include <stdio.h>
-#include "putty.h"
+#include "putty/putty.h"
 
 struct backend_list backends[] = {
     {PROT_SSH, "ssh", &ssh_backend},

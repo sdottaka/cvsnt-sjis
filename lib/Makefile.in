@@ -115,6 +115,7 @@ am__include = @am__include@
 am__quote = @am__quote@
 cvs_config_dir = @cvs_config_dir@
 cvs_library_dir = @cvs_library_dir@
+cvs_target_name = @cvs_target_name@
 install_sh = @install_sh@
 
 # For now we need to include $(top_srcdir)/src because some systems
@@ -129,7 +130,8 @@ install_sh = @install_sh@
 # be unecessary now.  Should look more deeply into this
 #
 # $(includeopt) is CVS specific and set by configure
-INCLUDES = -I$(top_srcdir)/src $(includeopt)
+AM_CPPFLAGS = -I$(top_srcdir)/src $(includeopt)
+AM_CFLAGS = -DCVS_CONFIG_DIR=\"$(cvs_config_dir)\" -DCVS_LIBRARY_DIR=\"$(cvs_library_dir)\"
 
 noinst_LIBRARIES = libcvs.a
 
@@ -145,23 +147,15 @@ noinst_LIBRARIES = libcvs.a
 # matching?)
 libcvs_a_SOURCES = \
 	argmatch.c \
-	ftruncate.c \
 	getdate.y \
-	getline.c \
-	getopt.c \
-	getopt1.c \
 	md5.c \
-	regex.c \
 	savecwd.c \
 	sighandle.c \
 	stripslash.c \
 	xgetwd.c \
 	yesno.c \
-	getline.h \
-	getopt.h \
 	fnmatch.h \
 	md5.h \
-	regex.h \
 	savecwd.h \
 	system.h \
 	wait.h \
@@ -184,9 +178,7 @@ LIBRARIES = $(noinst_LIBRARIES)
 
 libcvs_a_AR = $(AR) cru
 libcvs_a_DEPENDENCIES = @LIBOBJS@
-am_libcvs_a_OBJECTS = argmatch.$(OBJEXT) ftruncate.$(OBJEXT) \
-	getdate.$(OBJEXT) getline.$(OBJEXT) getopt.$(OBJEXT) \
-	getopt1.$(OBJEXT) md5.$(OBJEXT) regex.$(OBJEXT) \
+am_libcvs_a_OBJECTS = argmatch.$(OBJEXT) getdate.$(OBJEXT) md5.$(OBJEXT) \
 	savecwd.$(OBJEXT) sighandle.$(OBJEXT) stripslash.$(OBJEXT) \
 	xgetwd.$(OBJEXT) yesno.$(OBJEXT)
 libcvs_a_OBJECTS = $(am_libcvs_a_OBJECTS)
@@ -200,19 +192,19 @@ depcomp = $(SHELL) $(top_srcdir)/depcomp
 am__depfiles_maybe = depfiles
 @AMDEP_TRUE@DEP_FILES = $(DEPDIR)/daemon.Po $(DEPDIR)/dup2.Po \
 @AMDEP_TRUE@	$(DEPDIR)/fncase.Po $(DEPDIR)/fnmatch.Po \
-@AMDEP_TRUE@	$(DEPDIR)/getaddrinfo.Po $(DEPDIR)/getnameinfo.Po \
+@AMDEP_TRUE@	$(DEPDIR)/ftruncate.Po $(DEPDIR)/getaddrinfo.Po \
+@AMDEP_TRUE@	$(DEPDIR)/getdelim.Po $(DEPDIR)/getline.Po \
+@AMDEP_TRUE@	$(DEPDIR)/getnameinfo.Po $(DEPDIR)/getopt_long.Po \
 @AMDEP_TRUE@	$(DEPDIR)/hostname.Po $(DEPDIR)/inet_aton.Po \
 @AMDEP_TRUE@	$(DEPDIR)/memmove.Po $(DEPDIR)/mkdir.Po \
-@AMDEP_TRUE@	$(DEPDIR)/rename.Po $(DEPDIR)/strerror.Po \
-@AMDEP_TRUE@	$(DEPDIR)/strstr.Po $(DEPDIR)/strtoul.Po \
+@AMDEP_TRUE@	$(DEPDIR)/regcomp.Po $(DEPDIR)/rename.Po \
+@AMDEP_TRUE@	$(DEPDIR)/strerror.Po $(DEPDIR)/strstr.Po \
+@AMDEP_TRUE@	$(DEPDIR)/strtoul.Po $(DEPDIR)/timegm.Po \
 @AMDEP_TRUE@	$(DEPDIR)/valloc.Po $(DEPDIR)/waitpid.Po \
-@AMDEP_TRUE@	./$(DEPDIR)/argmatch.Po ./$(DEPDIR)/ftruncate.Po \
-@AMDEP_TRUE@	./$(DEPDIR)/getdate.Po ./$(DEPDIR)/getline.Po \
-@AMDEP_TRUE@	./$(DEPDIR)/getopt.Po ./$(DEPDIR)/getopt1.Po \
-@AMDEP_TRUE@	./$(DEPDIR)/md5.Po ./$(DEPDIR)/regex.Po \
-@AMDEP_TRUE@	./$(DEPDIR)/savecwd.Po ./$(DEPDIR)/sighandle.Po \
-@AMDEP_TRUE@	./$(DEPDIR)/stripslash.Po ./$(DEPDIR)/xgetwd.Po \
-@AMDEP_TRUE@	./$(DEPDIR)/yesno.Po
+@AMDEP_TRUE@	./$(DEPDIR)/argmatch.Po ./$(DEPDIR)/getdate.Po \
+@AMDEP_TRUE@	./$(DEPDIR)/md5.Po ./$(DEPDIR)/savecwd.Po \
+@AMDEP_TRUE@	./$(DEPDIR)/sighandle.Po ./$(DEPDIR)/stripslash.Po \
+@AMDEP_TRUE@	./$(DEPDIR)/xgetwd.Po ./$(DEPDIR)/yesno.Po
 COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
 	$(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
 LTCOMPILE = $(LIBTOOL) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) \
@@ -225,9 +217,10 @@ YACCCOMPILE = $(YACC) $(YFLAGS) $(AM_YFLAGS)
 LTYACCCOMPILE = $(LIBTOOL) --mode=compile $(YACC) $(YFLAGS) $(AM_YFLAGS)
 DIST_SOURCES = $(libcvs_a_SOURCES)
 DIST_COMMON = ChangeLog Makefile.am Makefile.in daemon.c dup2.c \
-	fncase.c fnmatch.c getaddrinfo.c getdate.c getnameinfo.c \
-	hostname.c inet_aton.c memmove.c mkdir.c rename.c strerror.c \
-	strstr.c strtoul.c valloc.c waitpid.c
+	fncase.c fnmatch.c ftruncate.c getaddrinfo.c getdate.c \
+	getdelim.c getline.c getnameinfo.c getopt_long.c hostname.c \
+	inet_aton.c memmove.c mkdir.c regcomp.c rename.c strerror.c \
+	strstr.c strtoul.c timegm.c valloc.c waitpid.c
 SOURCES = $(libcvs_a_SOURCES)
 
 all: all-am
@@ -257,26 +250,27 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@$(DEPDIR)/dup2.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@$(DEPDIR)/fncase.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@$(DEPDIR)/fnmatch.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@$(DEPDIR)/ftruncate.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@$(DEPDIR)/getaddrinfo.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@$(DEPDIR)/getdelim.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@$(DEPDIR)/getline.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@$(DEPDIR)/getnameinfo.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@$(DEPDIR)/getopt_long.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@$(DEPDIR)/hostname.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@$(DEPDIR)/inet_aton.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@$(DEPDIR)/memmove.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@$(DEPDIR)/mkdir.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@$(DEPDIR)/regcomp.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@$(DEPDIR)/rename.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@$(DEPDIR)/strerror.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@$(DEPDIR)/strstr.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@$(DEPDIR)/strtoul.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@$(DEPDIR)/timegm.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@$(DEPDIR)/valloc.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@$(DEPDIR)/waitpid.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/argmatch.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ftruncate.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/getdate.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/getline.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/getopt.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/getopt1.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/md5.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/regex.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/savecwd.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/sighandle.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/stripslash.Po@am__quote@

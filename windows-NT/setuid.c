@@ -58,19 +58,19 @@ typedef NTSTATUS (NTAPI *NtCreateToken_t)
 
 static NtCreateToken_t NtCreateToken=NULL;
 
-static bool LookupSid(LPCTSTR szMachine, LPCTSTR szUser, PSID* pUserSid, SID_NAME_USE* Use)
+static bool LookupSid(LPCWSTR szMachine, LPCWSTR szUser, PSID* pUserSid, SID_NAME_USE* Use)
 {
 	DWORD UserSidSize=0,DomainSize=0;
-	TCHAR *szDomain = NULL;
+	wchar_t *szDomain = NULL;
 
 	*Use=SidTypeInvalid;
 
-	LookupAccountName(szMachine,szUser,NULL,&UserSidSize,NULL,&DomainSize,NULL);
+	LookupAccountNameW(szMachine,szUser,NULL,&UserSidSize,NULL,&DomainSize,NULL);
 	if(!UserSidSize || !DomainSize)
 		return false;
 	*pUserSid=(PSID)malloc(UserSidSize);
-	szDomain=(TCHAR*)malloc(DomainSize);
-	if(!LookupAccountName(szMachine,szUser,*pUserSid,&UserSidSize,szDomain,&DomainSize,Use))
+	szDomain=(wchar_t*)malloc(DomainSize*sizeof(wchar_t));
+	if(!LookupAccountNameW(szMachine,szUser,*pUserSid,&UserSidSize,szDomain,&DomainSize,Use))
 	{
 		free(szDomain);
 		free(pUserSid);
@@ -123,7 +123,7 @@ static bool GetDacl(PACL* pAcl, PSID UserSid, PTOKEN_GROUPS Groups)
 		{
 			if (!AddAccessAllowedAce(*pAcl, ACL_REVISION, GENERIC_ALL, &sidAdministrators))
 			{
-				free(pAcl);
+				free(*pAcl);
 				return false;
 			}
 			break;
@@ -131,13 +131,13 @@ static bool GetDacl(PACL* pAcl, PSID UserSid, PTOKEN_GROUPS Groups)
     }
 	if (!AddAccessAllowedAce(*pAcl, ACL_REVISION, GENERIC_ALL, UserSid))
 	{
-		free(pAcl);
+		free(*pAcl);
 		return false;
 	}
 
 	if (!AddAccessAllowedAce(*pAcl, ACL_REVISION, GENERIC_ALL, &sidSystem))
 	{
-		free(pAcl);
+		free(*pAcl);
 		return false;
 	}
 	return true;
@@ -158,22 +158,10 @@ static bool GetAuthLuid(LUID* pLuid)
 	return true;
 }
 
-#ifndef _UNICODE
-int nt_setuid(LPCTSTR szMachine, LPCTSTR szUser)
-#else
-int nt_setuid(LPCTSTR wszMachine, LPCTSTR wszUser)
-#endif
+int nt_setuid(LPCWSTR wszMachine, LPCWSTR wszUser, HANDLE *phToken)
 {
 	int retval = -1;
 	PSID UserSid = NULL, pTmpSid;
-#ifndef _UNICODE
-	LPWSTR wszMachine=NULL,wszUser=NULL;
-#define tszMachine szMachine
-#define tszUser szUser
-#else
-#define tszMachine wszMachine
-#define tszUser wszUser
-#endif
 	LPGROUP_USERS_INFO_0 GlobalGroups = NULL;
 	LPGROUP_USERS_INFO_0 LocalGroups = NULL;
 	DWORD NumGlobalGroups=0,TotalGlobalGroups=0;
@@ -185,7 +173,7 @@ int nt_setuid(LPCTSTR wszMachine, LPCTSTR wszUser)
 	TOKEN_PRIMARY_GROUP _TokenPrimaryGroup = {0};
 	TOKEN_SOURCE _TokenSource = {0};
 	TOKEN_DEFAULT_DACL TokenDacl = {0};
-	TCHAR grName[128];
+	wchar_t grName[256];
 	int n,j,p,q;
 	SID_NAME_USE Use;
 	LSA_OBJECT_ATTRIBUTES lsa = { sizeof(LSA_OBJECT_ATTRIBUTES) };
@@ -197,7 +185,7 @@ int nt_setuid(LPCTSTR wszMachine, LPCTSTR wszUser)
 	HANDLE hToken = INVALID_HANDLE_VALUE;
 	HANDLE hPrimaryToken = INVALID_HANDLE_VALUE;
 	HANDLE hProcessToken = INVALID_HANDLE_VALUE;
-	int max_sid,identifier_sid;
+	DWORD err;
 	
 	SECURITY_QUALITY_OF_SERVICE sqos =
 		{ sizeof sqos, SecurityImpersonation, SECURITY_STATIC_TRACKING, FALSE };
@@ -214,27 +202,12 @@ int nt_setuid(LPCTSTR wszMachine, LPCTSTR wszUser)
 	if(!NtCreateToken)
 	   return -1;
 
-#ifdef _UNICODE
 	if(wszMachine)
 	{
-		lsaMachine.Length=_tcslen(wszMachine);
-		lsaMachine.MaximumLength=_tcslen(wszMachine);
-		lsaMachine.Buffer=(TCHAR*)wszMachine;
-#else
-	if(szMachine)
-	{
-		wszMachine=(LPWSTR)malloc(strlen(szMachine)*2+2);
-		MultiByteToWideChar(0,0,szMachine,-1,wszMachine,strlen(szMachine)+1);
-
-		lsaMachine.Length=strlen(szMachine)*2+2;
-		lsaMachine.MaximumLength=strlen(szMachine)*2+2;
-		lsaMachine.Buffer=wszMachine;
-#endif
+		lsaMachine.Length=wcslen(wszMachine)*sizeof(wchar_t);
+		lsaMachine.MaximumLength=lsaMachine.Length+sizeof(wchar_t);
+		lsaMachine.Buffer=(wchar_t*)wszMachine;
 	}
-#ifndef _UNICODE
-	wszUser=(LPWSTR)malloc(strlen(szUser)*2+2);
-	MultiByteToWideChar(0,0,szUser,-1,wszUser,strlen(szUser)+1);
-#endif
 
 	if(!LookupPrivilegeValue(NULL,SE_CREATE_TOKEN_NAME,&TempLuid))
 	{
@@ -264,19 +237,20 @@ int nt_setuid(LPCTSTR wszMachine, LPCTSTR wszUser)
 		goto nt_setuid_out;
 	}
 
-	if(LsaOpenPolicy(wszMachine?&lsaMachine:NULL,&lsa,POLICY_LOOKUP_NAMES,&hLsa)!=ERROR_SUCCESS)
+	if((err=LsaOpenPolicy(wszMachine?&lsaMachine:NULL,&lsa,POLICY_EXECUTE,&hLsa))!=ERROR_SUCCESS)
 	{
+		err=LsaNtStatusToWinError(err);
 		goto nt_setuid_out;
 	}
 
 	/* From Q185246 - username = domain name */
-	wsprintf(grName,_T("%s\\%s"),tszUser,tszUser); // Used for domain/user clashes
+	wsprintfW(grName,L"%s\\%s",wszUser,wszUser); // Used for domain/user clashes
 
 	/* Search on the specified PDC, then on the local domain, for the user.
 	   This allows for trusted domains to work */
-	if((!LookupSid(tszMachine,tszUser,&UserSid,&Use) || Use!=SidTypeUser) &&
-	   (!LookupSid(tszMachine,grName,&UserSid,&Use) || Use!=SidTypeUser) &&
-	   (!LookupSid(NULL,tszUser,&UserSid,&Use) || Use!=SidTypeUser) &&
+	if((!LookupSid(wszMachine,wszUser,&UserSid,&Use) || Use!=SidTypeUser) &&
+	   (!LookupSid(wszMachine,grName,&UserSid,&Use) || Use!=SidTypeUser) &&
+	   (!LookupSid(NULL,wszUser,&UserSid,&Use) || Use!=SidTypeUser) &&
 	   (!LookupSid(NULL,grName,&UserSid,&Use) || Use!=SidTypeUser))
 	{
 		goto nt_setuid_out;
@@ -295,12 +269,7 @@ int nt_setuid(LPCTSTR wszMachine, LPCTSTR wszUser)
 
 	for(n=0,j=0; n<(int)NumGlobalGroups; n++)
 	{
-#ifndef _UNICODE
-		WideCharToMultiByte(0,0,GlobalGroups[n].grui0_name,-1,grName,sizeof(grName),NULL,NULL);
-#else
-		_tcsncpy(grName,GlobalGroups[n].grui0_name,sizeof(grName));
-#endif
-		if(LookupSid(tszMachine,grName,&pTmpSid,&Use))
+		if(LookupSid(wszMachine,GlobalGroups[n].grui0_name,&pTmpSid,&Use))
 		{
 			pTokenGroups->Groups[j].Attributes=SE_GROUP_ENABLED|SE_GROUP_ENABLED_BY_DEFAULT;
 			pTokenGroups->Groups[j].Sid=pTmpSid;
@@ -309,20 +278,13 @@ int nt_setuid(LPCTSTR wszMachine, LPCTSTR wszUser)
 	}
 	for(n=0; n<(int)NumLocalGroups; n++)
 	{
-#ifndef _UNICODE
-		WideCharToMultiByte(0,0,LocalGroups[n].grui0_name,-1,grName,sizeof(grName),NULL,NULL);
-#else
-		_tcsncpy(grName,LocalGroups[n].grui0_name,sizeof(grName));
-#endif
-		if(LookupSid(tszMachine,grName,&pTmpSid,&Use))
+		if(LookupSid(wszMachine,LocalGroups[n].grui0_name,&pTmpSid,&Use))
 		{
 			pTokenGroups->Groups[j].Attributes=SE_GROUP_ENABLED|SE_GROUP_ENABLED_BY_DEFAULT|SE_GROUP_MANDATORY;
 			pTokenGroups->Groups[j].Sid=pTmpSid;
 			j++;
 		}
 	}
-
-	max_sid=j;
 
 	if(!GetAuthLuid(&AuthLuid))
 	{
@@ -351,14 +313,11 @@ int nt_setuid(LPCTSTR wszMachine, LPCTSTR wszUser)
 		AllocateAndInitializeSid(&nt,3,SECURITY_LOGON_IDS_RID,AuthLuid.HighPart,AuthLuid.LowPart,0,0,0,0,0,&pUserSid);
 		pTokenGroups->Groups[j].Attributes=SE_GROUP_LOGON_ID|SE_GROUP_ENABLED|SE_GROUP_ENABLED_BY_DEFAULT|SE_GROUP_MANDATORY;
 		pTokenGroups->Groups[j].Sid=pUserSid;
-		identifier_sid = j;
 		j++;
 	}
 
-
-	pTokenGroups->GroupCount = j;
-
 	TokenPrivs=(PTOKEN_PRIVILEGES)calloc(1,sizeof(TOKEN_PRIVILEGES));
+	j=0; NumUserRights=0;
 	if(LsaEnumerateAccountRights(hLsa,UserSid,&lsaUserRights,&NumUserRights)==ERROR_SUCCESS)
 	{
 		TokenPrivs->PrivilegeCount=NumUserRights;
@@ -367,16 +326,12 @@ int nt_setuid(LPCTSTR wszMachine, LPCTSTR wszUser)
 		for(n=0,j=0; n<(int)NumUserRights; n++)
 		{
 			TokenPrivs->Privileges[j].Attributes=SE_PRIVILEGE_ENABLED | SE_PRIVILEGE_ENABLED_BY_DEFAULT;
-#ifndef _UNICODE
-			WideCharToMultiByte(0,0,lsaUserRights->Buffer,-1,grName,sizeof(grName),NULL,NULL);
-#else
-			_tcsncpy(grName,lsaUserRights->Buffer,sizeof(grName));
-#endif
-			LookupPrivilegeValue(tszMachine,grName,&TokenPrivs->Privileges[j].Luid);
+			LookupPrivilegeValueW(wszMachine,lsaUserRights->Buffer,&TokenPrivs->Privileges[j].Luid);
 			j++;
 		}
 		NetApiBufferFree(lsaUserRights);
 	}
+	TokenPrivs->PrivilegeCount=j;
 
 	for(n=0; n<(int)pTokenGroups->GroupCount; n++)
 	{
@@ -387,20 +342,19 @@ int nt_setuid(LPCTSTR wszMachine, LPCTSTR wszUser)
 			for(p=0; p<(int)NumUserRights; p++)
 			{
 				LUID luid;
-				TokenPrivs->Privileges[p].Attributes=SE_PRIVILEGE_ENABLED | SE_PRIVILEGE_ENABLED_BY_DEFAULT;
-#ifndef _UNICODE
-				WideCharToMultiByte(0,0,lsaUserRights[p].Buffer,-1,grName,sizeof(grName),NULL,NULL);
-#else
-				_tcsncpy(grName,lsaUserRights[p].Buffer,sizeof(grName));
-#endif
-				if(!LookupPrivilegeValue(tszMachine,grName,&luid))
+				if(!wcscmp(lsaUserRights[p].Buffer,L"SeAssignPrimaryTokenPrivilege") ||
+				   !wcscmp(lsaUserRights[p].Buffer,L"SeUndockPrivilege") ||
+				   !wcscmp(lsaUserRights[p].Buffer,L"SeEnableDelegationPrivilege"))
+					continue; /* NTCreateToken will barf if these are set */
+				if(!LookupPrivilegeValueW(wszMachine,lsaUserRights[p].Buffer,&luid))
 					continue;
 				for(q=0; q<j; q++)
 					if(!memcmp(&luid,&TokenPrivs->Privileges[q].Luid,sizeof(luid)))
 						break;
 				if(q==j)
 				{
-					TokenPrivs->Privileges[p].Luid=luid;
+					TokenPrivs->Privileges[j].Attributes=SE_PRIVILEGE_ENABLED | SE_PRIVILEGE_ENABLED_BY_DEFAULT;
+					TokenPrivs->Privileges[j].Luid=luid;
 					j++;
 				}
 			}
@@ -421,40 +375,30 @@ int nt_setuid(LPCTSTR wszMachine, LPCTSTR wszUser)
 		goto nt_setuid_out;
 	}
 
-	if(NtCreateToken (&hToken, TOKEN_ALL_ACCESS, &oa, TokenImpersonation,
+	if((err=NtCreateToken (&hToken, TOKEN_ALL_ACCESS, &oa, TokenImpersonation,
 		   &AuthLuid, &exp, &_TokenUser, pTokenGroups, TokenPrivs, &_TokenOwner, &_TokenPrimaryGroup,
-		   &TokenDacl, &_TokenSource)!=ERROR_SUCCESS)
+		   &TokenDacl, &_TokenSource))!=ERROR_SUCCESS)
+	{
+		err=LsaNtStatusToWinError(err);
+		goto nt_setuid_out;
+	}
+
+	if(!DuplicateTokenEx(hToken,TOKEN_ALL_ACCESS,&sa,SecurityImpersonation,TokenImpersonation,&hPrimaryToken))
 	{
 		goto nt_setuid_out;
 	}
 
-	if(!DuplicateTokenEx(hToken,TOKEN_ALL_ACCESS,&sa,SecurityImpersonation,TokenPrimary,&hPrimaryToken))
-	{
-		goto nt_setuid_out;
-	}
-
-	RevertToSelf();
-	if(!ImpersonateLoggedOnUser(hPrimaryToken))
-	{
-		goto nt_setuid_out;
-	}
+	if(phToken)
+		*phToken = hPrimaryToken;
+	else
+		CloseHandle(hPrimaryToken);
 
 	retval = 0;
 
 nt_setuid_out:
 	free(UserSid);
-#ifndef _UNICODE
-	free(wszMachine);
-	free(wszUser);
-#endif
 	NetApiBufferFree(GlobalGroups);
 	NetApiBufferFree(LocalGroups);
-	if(pTokenGroups)
-	{
-		for(n=0; n<(int)max_sid; n++)
-			free(pTokenGroups->Groups[n].Sid);
-		FreeSid(pTokenGroups->Groups[identifier_sid].Sid);
-	} 
 	free(pTokenGroups);
 	free(TokenPrivs); 
 	free(_TokenPrimaryGroup.PrimaryGroup); 
@@ -463,12 +407,80 @@ nt_setuid_out:
 		CloseHandle(hToken);
 	if(hProcessToken!=INVALID_HANDLE_VALUE)
 		CloseHandle(hProcessToken);
-	if(hPrimaryToken!=INVALID_HANDLE_VALUE)
-		CloseHandle(hPrimaryToken);
 	free(TokenDacl.DefaultDacl);
 	LsaClose(hLsa); 
 	return retval;
 }
 
+/* S4U call on Win2k3 */
+/* XP actually implements this but drops out early in the processing
+	because it's in workstation mode not server */
+/* Also for this to succeed your PDC needs to be a Win2k3 machine */
+int nt_s4u(LPCWSTR wszDomain, LPCWSTR wszUser, HANDLE *phToken)
+{
+	DWORD err;
+	struct
+	{
+		KERB_S4U_LOGON s4uLogon;
+		WCHAR Upn[UNLEN+DNLEN+2];
+	} Buf = { { KerbS4ULogon } };
+	LSA_STRING Origin = { 4,5, "CVSNT" };
+	TOKEN_SOURCE Source = { "CVSNT", 0, 101 };
+	LUID Luid, TempLuid;
+	NTSTATUS SubStatus;
+	BYTE* Profile;
+	ULONG ProfileLength;
+	HANDLE hLsa, hProcessToken;
+	LSA_OPERATIONAL_MODE Mode;
+	PTOKEN_PRIVILEGES NewToken;
+	ULONG NewTokenLength;
+	int n;
+	QUOTA_LIMITS Quotas;
+	TOKEN_GROUPS Tok = {0};
 
+	/* Enable seTcbName */
+	if(!LookupPrivilegeValue(NULL,SE_TCB_NAME,&TempLuid))
+		return GetLastError();
 
+	if(!OpenProcessToken(GetCurrentProcess(),TOKEN_ADJUST_PRIVILEGES|TOKEN_QUERY,&hProcessToken))
+		return GetLastError();
+
+	GetTokenInformation(hProcessToken,TokenPrivileges,NULL,0,&NewTokenLength);
+	NewToken=(PTOKEN_PRIVILEGES)malloc(NewTokenLength);
+	GetTokenInformation(hProcessToken,TokenPrivileges,NewToken,NewTokenLength,&NewTokenLength);
+	for(n=0; n<(int)NewToken->PrivilegeCount; n++)
+	{
+		if(!memcmp(&NewToken->Privileges[n].Luid,&TempLuid,sizeof(LUID)))
+		{
+			NewToken->Privileges[n].Attributes=SE_PRIVILEGE_ENABLED;
+			break;
+		}
+	}
+	if(n==(int)NewToken->PrivilegeCount)
+	{
+		CloseHandle(hProcessToken);
+		return ERROR_ACCESS_DENIED;
+	}
+	if(!AdjustTokenPrivileges(hProcessToken,FALSE,NewToken,0,0,NULL))
+	{
+		CloseHandle(hProcessToken);
+		return GetLastError();
+	}
+	CloseHandle(hProcessToken);
+	free(NewToken);
+
+	/* Logon */
+	err = LsaRegisterLogonProcess(&Origin, &hLsa, &Mode);
+	if(err)
+		return LsaNtStatusToWinError(err);
+
+	wsprintfW(Buf.Upn,L"%s@%s",wszUser,wszDomain);
+
+	Buf.s4uLogon.ClientUpn.Buffer=Buf.Upn;
+	Buf.s4uLogon.ClientUpn.Length=wcslen(Buf.Upn)*sizeof(wchar_t);
+	Buf.s4uLogon.ClientUpn.MaximumLength=Buf.s4uLogon.ClientUpn.Length+sizeof(wchar_t);
+
+	err = LsaLogonUser(hLsa, &Origin, Network, LOGON32_PROVIDER_DEFAULT, &Buf, sizeof(Buf), &Tok, &Source, &Profile, &ProfileLength, &Luid, phToken, &Quotas, &SubStatus);
+	LsaDeregisterLogonProcess(hLsa);
+	return LsaNtStatusToWinError(err);
+}

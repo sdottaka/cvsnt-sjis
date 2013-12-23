@@ -1,0 +1,9 @@
+Makefile
+DosRel
+DosDbg
+Release
+Debug
+DiffDosRel
+DiffDosDbg
+DiffDbg
+*.plg

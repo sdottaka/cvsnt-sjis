@@ -1,0 +1,118 @@
+.TH ACK 1 "12 Jun 1994" "Version 1.39"
+.SH NAME
+ack \- 日本語コードコンバータ
+.SH SYNOPSIS
+.B ack
+[
+.BI \-{e|s|j "n" |c}
+]
+[
+.B \-{a|A|o
+.I file
+.B }
+]
+[
+.B \-zuCntd
+]
+.if n .ti +0.5i
+[
+.B \-{E|S}
+]
+[
+.I <file>...
+]
+.SH DESCRIPTION
+.B ack
+は、日本語 EUC、シフトJIS、7bit JIS のそれぞれのコード系の相互変換を行う日本語コードコンバータです。
+JIS片仮名(SJIS 半角仮名)の変換に対応しています。
+入力漢字コードは自動判別することが可能で、これら片仮名が含まれていても混乱しません。
+またファイルの日本語コードを置換する、という使い方もできます。
+
+.SH OPTIONS
+.TP
+.B \-e
+出力漢字コードを 日本語EUC にします。
+.TP
+.B \-s
+出力漢字コードを シフトJIS にします。
+.TP
+.BI \-j "n"
+出力漢字コードを 7bit JIS にします。
+.I n
+は出力コードのモードです。省略して
+.B \-j
+とした場合は、
+.I n
+の値はコンパイルスイッチ \-DDEFJIS で与えたものになります。
+.I n
+の数値の意味は以下の通り。
+.nf
+
+               0      1
+       bit0: ESC$B  ESC$@   JISX208-1983,1978切替え
+       bit1: ESC(J  ESC(B   JISX201ローマ字,ASCII切替え
+       bit2: ESC(I  SI/SO   JISX201片仮名の指示方法切替え
+       bit3: ESC$x  ESC$(x  ( を省略する、しない切替え
+
+<例>   -j0 : ESC(J, ESC$B, ESC(I
+       -j1 : ESC(J, ESC$@, ESC(I
+       -j2 : ESC(B, ESC$B, ESC(I
+       -j3 : ESC(B, ESC$@, ESC(I
+.fi
+.TP
+.B \-c
+変換出力をせずに、入力コードの判定のみ行ないます。
+判定結果のコードタイプと、それぞれの文字数を表示します。
+漢字 (kanji, kanji7, err) は 2byte で1文字として数えています。
+.nf
+
+     code    :コードタイプ ascii,sjis,euc,jis の4種類
+     kanji   :sjis,euc 漢字の文字数
+     kana    :sjis,euc 片仮名文字数(SJIS半角仮名)
+     kanji7  :7bit jis 漢字の文字数(2byte code)
+     kana7   :7bit jis 片仮名の文字数(1byte code)
+     err     :sjis,euc 漢字で判定不能文字の文字数
+     ascii   :7bit 表示可能(図形)文字(0x20～0x7e)文字数
+     ctrl    :コントロールコードの文字数(改行,TAB含む)
+     other   :その他の文字数
+.fi
+.TP
+.B \-z
+入力に JISX201 片仮名文字が含まれていれば、それを JISX208 の片仮名に置き換えます。(いわゆる半角仮名->全角仮名変換)
+.TP
+.B \-a
+出力ファイル名を自動で割り当てます。出力コードに応じて、入力ファイル名に .jis/.euc/.sjis を追加した名前になります。(すでについていた .jis/.euc/.sjis/.ujis は削除する)
+.TP
+.B \-A
+ファイル内容をコード変換して置き換えます。元ファイルは .bak をつけた名前で保存します。
+.TP
+.B \-t
+タイムスタンプを保存します。出力ファイルのタイムスタンプを、入力ファイルと同一にします。
+.TP
+.BI \-o " file"
+出力ファイル名として
+.I file
+を指定します。入力ファイル名より先にないと有効になりません。(入力ファイルが複数ある時は、このスイッチは直後に指定したものに対してのみ有効)
+.TP
+.B \-C
+変換不能漢字コードを「※」に置き換えて出力します。このスイッチがなければエラー文字は何の変換も無しにそのまま出力します。
+.TP
+.B \-n
+入力漢字コード判定時に、ファイル名の.jis/.euc/ .sjis/.ujis を参照しません。
+.TP
+.B \-u
+入力の 0x0d および 0x1a を取り除きます。UNIX モードです。DOS -> UNIX のテキスト変換時に使用できます。(注意:暫定機能)
+.TP
+.B \-d
+入力ファイルがディレクトリであっても無視しません。通常はディレクトリ名が与えられた時は無視します。
+.TP
+.B \-E
+入力コード自動判定を使わず、常に入力漢字コードを 日本語EUC または 7bit JIS として扱います。
+.TP
+.B \-S
+入力コード自動判定を使わず、常に入力漢字コードを シフトJIS または 7bit JIS として扱います。
+.SH AUTHOR
+.nf
+小笠原博之 (Ogasawara Hiroyuki)
+  InterNet: oga@dgw.yz.yamagata-u.ac.jp
+DenDen-NET: DEN0006 COR. (0238-21-5952/133.24.72.9,login:den)

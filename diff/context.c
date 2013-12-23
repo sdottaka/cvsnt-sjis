@@ -441,7 +441,7 @@ find_function (file, linenum, linep, lenp)
       size_t len = file->linbuf[i + 1] - line;
 
       for (r = function_regexp_list; r; r = r->next)
-	if (0 <= re_search (&r->buf, line, len, 0, len, 0))
+	if (0 <= regexec (&r->buf, line, len, NULL, 0))
 	  {
 	    *linep = line;
 	    *lenp = len;

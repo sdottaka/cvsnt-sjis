@@ -20,7 +20,6 @@
  *	command line.
  */
 
-#include <assert.h>
 #include "cvs.h"
 #include "savecwd.h"
 
@@ -128,14 +127,20 @@ int do_module (DBM *db, char *mname, enum mtype m_type, char *msg, CALLBACKPROC 
     int restore_server_dir = 0;
     char *server_dir_to_restore = NULL;
 #endif
+
 	TRACE(1,"do_module(%s, %s, %s, %s)",
-		 mname, msg, where ? where : "",
+		 PATCH_NULL(mname), PATCH_NULL(msg), where ? where : "",
 		 extra_arg ? extra_arg : "");
 
-	if(isabsolute(mname))
-	{
-		error(1,0,"Absolute module names not allowed");
-	}
+     if (isabsolute (mname))
+ 			error (1, 0, "Absolute module reference invalid: `%s'", mname);
+ 
+    /* Similarly for directories that attempt to step above the root of the
+     * repository.
+     */
+    if (pathname_levels (mname) > 0)
+		error (1, 0, "up-level in module reference (`..') invalid: `%s'.",
+               mname);
 
     /* if this is a directory to ignore, add it to that list */
     if (mname[0] == '!' && mname[1] != '\0')
@@ -170,7 +175,7 @@ int do_module (DBM *db, char *mname, enum mtype m_type, char *msg, CALLBACKPROC 
 	memcpy (value, val.dptr, val.dsize);
 	value[val.dsize] = '\0';
 
-	TRACE(3,"Found module %s",value);
+	TRACE(3,"Found module %s",PATCH_NULL(value));
 	/* If the line ends in a comment, strip it off */
 	if ((cp = strchr (value, '#')) != NULL)
 	    *cp = '\0';
@@ -189,25 +194,39 @@ int do_module (DBM *db, char *mname, enum mtype m_type, char *msg, CALLBACKPROC 
 	char *file;
 	char *attic_file;
 	char *acp;
+	char *xmname;
 	int is_found = 0;
 
-	/* check to see if mname is a directory or file */
 	file = xmalloc (strlen (current_parsed_root->directory)
-			+ strlen (mname) + sizeof(RCSEXT) + 2);
-	(void) sprintf (file, "%s/%s", current_parsed_root->directory, mname);
-	attic_file = xmalloc (strlen (current_parsed_root->directory)
-			      + strlen (mname)
+		+ strlen (mname) + 10);
+	sprintf(file,"%s/%s",current_parsed_root->directory,mname);
+	xmname = map_repository(file); 
+	xfree(file);
+
+	if(!xmname)
+	{
+		if(callback_proc) /* If there's no callback proc it's not an error to have no module, since we're just doing optional stuff anyway */
+		{
+			/* if we got here, we couldn't find it using our search, so give up */
+			error (0, 0, "cannot find module `%s' - ignored", mname);
+			err++;
+		}
+		goto do_module_return;
+	}
+
+	/* check to see if mname is a directory or file */
+	file = xmalloc (strlen (xmname) + sizeof(RCSEXT) + 10);
+	(void) sprintf (file, "%s", xmname);
+	attic_file = xmalloc (strlen (xmname)
 			      + sizeof (CVSATTIC) + sizeof (RCSEXT) + 3);
-	if ((acp = strrchr (mname, '/')) != NULL)
+	if ((acp = strrchr (xmname, '/')) != NULL)
 	{
 	    *acp = '\0';
-	    (void) sprintf (attic_file, "%s/%s/%s/%s%s", current_parsed_root->directory,
-			    mname, CVSATTIC, acp + 1, RCSEXT);
+	    (void) sprintf (attic_file, "%s/%s/%s%s", xmname, CVSATTIC, acp + 1, RCSEXT);
 	    *acp = '/';
 	}
 	else
-	    (void) sprintf (attic_file, "%s/%s/%s%s", current_parsed_root->directory,
-			    CVSATTIC, mname, RCSEXT);
+	    (void) sprintf (attic_file, "%s/%s%s", CVSATTIC, xmname, RCSEXT);
 
 	if (isdir (file))
 	{
@@ -221,45 +240,45 @@ int do_module (DBM *db, char *mname, enum mtype m_type, char *msg, CALLBACKPROC 
 	    (void) strcat (file, RCSEXT);
 	    if (isfile (file) || isfile (attic_file))
 	    {
-		/* if mname was a file, we have to split it into "dir file" */
-		if ((cp = strrchr (mname, '/')) != NULL && cp != mname)
-		{
-		    modargv = xmalloc (2 * sizeof (*modargv));
-		    modargv[0] = xmalloc (strlen (mname) + 2);
-		    strncpy (modargv[0], mname, cp - mname);
-		    modargv[0][cp - mname] = '\0';
-		    modargv[1] = xstrdup (cp + 1);
-		    modargc = 2;
-		}
-		else
-		{
-		    /*
-		     * the only '/' at the beginning or no '/' at all
-		     * means the file we are interested in is in CVSROOT
-		     * itself so the directory should be '.'
-		     */
-		    if (cp == mname)
-		    {
-			/* drop the leading / if specified */
-			modargv = xmalloc (2 * sizeof (*modargv));
-			modargv[0] = xstrdup (".");
-			modargv[1] = xstrdup (mname + 1);
-			modargc = 2;
-		    }
-		    else
-		    {
-			/* otherwise just copy it */
-			modargv = xmalloc (2 * sizeof (*modargv));
-			modargv[0] = xstrdup (".");
-			modargv[1] = xstrdup (mname);
-			modargc = 2;
-		    }
-		}
-		is_found = 1;
+			/* if mname was a file, we have to split it into "dir file" */
+			if ((cp = strrchr (mname, '/')) != NULL && cp != mname)
+			{
+				modargv = xmalloc (2 * sizeof (*modargv));
+				modargv[0] = xmalloc (strlen (mname) + 2);
+				strncpy (modargv[0], mname, cp - mname);
+				modargv[0][cp - mname] = '\0';
+				modargv[1] = xstrdup (cp + 1);
+				modargc = 2;
+			}
+			else
+			{
+				/*
+				* the only '/' at the beginning or no '/' at all
+				* means the mname we are interested in is in CVSROOT
+				* itself so the directory should be '.'
+				*/
+				if (cp == mname)
+				{
+				/* drop the leading / if specified */
+				modargv = xmalloc (2 * sizeof (*modargv));
+				modargv[0] = xstrdup (".");
+				modargv[1] = xstrdup (mname + 1);
+				modargc = 2;
+				}
+				else
+				{
+				/* otherwise just copy it */
+				modargv = xmalloc (2 * sizeof (*modargv));
+				modargv[0] = xstrdup (".");
+				modargv[1] = xstrdup (mname);
+				modargc = 2;
+				}
+			}
+			is_found = 1;
 	    }
 	}
 	xfree (attic_file);
-	xfree (file);
+	xfree (xmname);
 
 	if (is_found)
 	{
@@ -403,29 +422,32 @@ int do_module (DBM *db, char *mname, enum mtype m_type, char *msg, CALLBACKPROC 
 	switch (c)
 	{
 	    case 'a':
-		alias = 1;
-		break;
+			alias = 1;
+			break;
 	    case 'd':
-		if (mwhere)
-		    xfree (mwhere);
-		mwhere = xstrdup (optarg);
-		nonalias_opt = 1;
+			/* -d ../foo or -d /foo -r -d foo/../.. are illegal in the modules file */
+			if(isabsolute(optarg) || pathname_levels(optarg)>0)
+				error(1,0,"Illegal module directory `%s'",optarg);
+			if (mwhere)
+				xfree (mwhere);
+			mwhere = xstrdup (optarg);
+			nonalias_opt = 1;
 		break;
 	    case 'i':
-	    xfree (checkin_prog);
-		checkin_prog = xstrdup (optarg);
-		nonalias_opt = 1;
-		break;
+			xfree (checkin_prog);
+			checkin_prog = xstrdup (optarg);
+			nonalias_opt = 1;
+			break;
 	    case 'l':
-		local_specified = 1;
-		nonalias_opt = 1;
-		break;
+			local_specified = 1;
+			nonalias_opt = 1;
+			break;
 	    case 'o':
-		if (checkout_prog)
-		    xfree (checkout_prog);
-		checkout_prog = xstrdup (optarg);
-		nonalias_opt = 1;
-		break;
+			if (checkout_prog)
+				xfree (checkout_prog);
+			checkout_prog = xstrdup (optarg);
+			nonalias_opt = 1;
+			break;
 	    case 'e':
 		if (export_prog)
 		    xfree (export_prog);
@@ -495,7 +517,7 @@ int do_module (DBM *db, char *mname, enum mtype m_type, char *msg, CALLBACKPROC 
     {
 	error (0, 0, "\
 module `%s' is a request for a file in a module which is not a directory",
-	       mname);
+	       fn_root(mname));
 	++err;
 	goto do_module_return;
     }

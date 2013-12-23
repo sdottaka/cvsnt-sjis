@@ -5,6 +5,7 @@
 #include "cvsnt.h"
 #include "serverPage.h"
 #include "NewRootDialog.h"
+#include ".\serverpage.h"
 
 #define ServiceName _T("CVS")
 #define ServiceName2 _T("CVSLOCK")
@@ -12,9 +13,9 @@
 /////////////////////////////////////////////////////////////////////////////
 // CserverPage property page
 
-IMPLEMENT_DYNCREATE(CserverPage, CPropertyPage)
+IMPLEMENT_DYNCREATE(CserverPage, CTooltipPropertyPage)
 
-CserverPage::CserverPage() : CPropertyPage(CserverPage::IDD)
+CserverPage::CserverPage() : CTooltipPropertyPage(CserverPage::IDD)
 //, m_szSshStatus(_T(""))
 {
 	m_szVersion = "CVSNT " CVSNT_PRODUCTVERSION_STRING;
@@ -32,7 +33,7 @@ CserverPage::~CserverPage()
 
 void CserverPage::DoDataExchange(CDataExchange* pDX)
 {
-	CPropertyPage::DoDataExchange(pDX);
+	CTooltipPropertyPage::DoDataExchange(pDX);
 	//{{AFX_DATA_MAP(CserverPage)
 	DDX_Control(pDX, IDC_START, m_btStart);
 	DDX_Control(pDX, IDC_STOP, m_btStop);
@@ -45,7 +46,7 @@ void CserverPage::DoDataExchange(CDataExchange* pDX)
 }
 
 
-BEGIN_MESSAGE_MAP(CserverPage, CPropertyPage)
+BEGIN_MESSAGE_MAP(CserverPage, CTooltipPropertyPage)
 	//{{AFX_MSG_MAP(CserverPage)
 	ON_WM_TIMER()
 	ON_BN_CLICKED(IDC_START, OnStart)
@@ -60,7 +61,7 @@ END_MESSAGE_MAP()
 
 BOOL CserverPage::OnInitDialog() 
 {
-	CPropertyPage::OnInitDialog();
+	CTooltipPropertyPage::OnInitDialog();
 	CString tmp;
 
 	if(m_hSCManager)
@@ -313,4 +314,3 @@ void CserverPage::OnBnClickedStop2()
 	}
 	UpdateStatus();
 }
-

@@ -82,7 +82,7 @@ passwd_entry *find_passwd_entry(const char *username)
 {
 	int u;
 	for(u=0; u<passwd_list_size; u++)
-		if(passwd_list[u].username && !strcasecmp(passwd_list[u].username,username))
+		if(passwd_list[u].username && !usercmp(passwd_list[u].username,username))
 			return passwd_list+u;
 	return NULL;
 }

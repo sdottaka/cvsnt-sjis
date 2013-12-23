@@ -17,6 +17,9 @@ static std::string RemoveDirFromPath(LPCTSTR szPath, LPCTSTR szDir)
 	std::string path = szPath;
 	char *p;
 	
+	if(!*szDir)
+		return path;
+
 	while((p=strstr(path.data(),szDir))!=NULL)
 	{
 		strcpy(p,p+strlen(szDir));

@@ -40,7 +40,8 @@ Entnode_Create(
     const char *date,
     const char *ts_conflict,
 	const char *merge_from_tag_1,
-	const char *merge_from_tag_2)
+	const char *merge_from_tag_2,
+	time_t rcs_timestamp)
 {
     Entnode *ent;
     
@@ -54,9 +55,9 @@ Entnode_Create(
     ent->tag       = xstrdup (tag);
     ent->date      = xstrdup (date);
     ent->conflict  = xstrdup (ts_conflict);
-
-	ent->merge_from_tag_1 = xstrdup(merge_from_tag_1?merge_from_tag_1:"");
-	ent->merge_from_tag_2 = xstrdup(merge_from_tag_2?merge_from_tag_2:"");
+	ent->rcs_timestamp = rcs_timestamp;
+    ent->merge_from_tag_1 = xstrdup(merge_from_tag_1?merge_from_tag_1:"");
+    ent->merge_from_tag_2 = xstrdup(merge_from_tag_2?merge_from_tag_2:"");
 
     return ent;
 }
@@ -72,12 +73,11 @@ static void Entnode_Destroy (Entnode *ent)
     xfree (ent->version);
     xfree (ent->timestamp);
     xfree (ent->options);
-	xfree (ent->tag);
-	xfree (ent->date);
-	xfree (ent->conflict);
-
-	xfree(ent->merge_from_tag_1);
-	xfree(ent->merge_from_tag_2);
+    xfree (ent->tag);
+    xfree (ent->date);
+    xfree (ent->conflict);
+    xfree (ent->merge_from_tag_1);
+    xfree (ent->merge_from_tag_2);
 
     xfree (ent);
 }
@@ -92,10 +92,10 @@ static int write_ent_proc (Node *node, void *closure)
     entnode = (Entnode *) node->data;
 
     if (closure != NULL && entnode->type != ENT_FILE)
-	*(int *) closure = 1;
+		*(int *) closure = 1;
 
     if (fputentent(entfile, entnode))
-	error (1, errno, "cannot write %s", entfilename);
+		error (1, errno, "cannot write %s", entfilename);
 
     return (0);
 }
@@ -214,39 +214,106 @@ write_entries (list)
 /*
  * Removes the argument file from the Entries file if necessary.
  */
-void
-Scratch_Entry (list, fname)
-    List *list;
-    char *fname;
+void Scratch_Entry (List *list, const char *fname)
 {
     Node *node;
 
-	TRACE(1,"Scratch_Entry(%s)",fname);
+	TRACE(1,"Scratch_Entry(%s)",PATCH_NULL(fname));
 
     /* hashlookup to see if it is there */
     if ((node = findnode_fn (list, fname)) != NULL)
     {
-	if (!noexec)
-	{
-	    entfilename = CVSADM_ENTLOG;
-	    entfile = open_file (entfilename, "a");
+		if (!noexec)
+		{
+			entfilename = CVSADM_ENTLOG;
+			entexfilename = CVSADM_ENTEXTLOG;
+			entfile = CVS_FOPEN (entfilename, "a");
+			entexfile = CVS_FOPEN (entexfilename, "a");
 
-	    if (fprintf (entfile, "R ") < 0)
-		error (1, errno, "cannot write %s", entfilename);
+			if (fprintf (entfile, "R ") < 0)
+				error (1, errno, "cannot write %s", entfilename);
+			if (fprintf (entexfile, "R ") < 0)
+				error (1, errno, "cannot write %s", entexfilename);
 
-	    write_ent_proc (node, NULL);
+			write_ent_proc (node, NULL);
+			write_ent_ex_proc (node, NULL);
 
-	    if (fclose (entfile) == EOF)
-		error (1, errno, "error closing %s", entfilename);
-	}
+			if (fclose (entfile) == EOF)
+				error (1, errno, "error closing %s", entfilename);
+			if (fclose (entexfile) == EOF)
+				error (1, errno, "error closing %s", entfilename);
+		}
 
-	delnode (node);			/* delete the node */
+		delnode (node);			/* delete the node */
 
 #ifdef SERVER_SUPPORT
-	if (server_active)
-	    server_scratch (fname);
+		if (server_active)
+			server_scratch (fname);
 #endif
     }
+}
+
+void Rename_Entry (List *list, const char *from, const char *to)
+{
+    Node *node,*newnode;
+	Entnode *ent;
+
+	TRACE(1,"Rename_Entry(%s,%s)",PATCH_NULL(from),PATCH_NULL(to));
+
+    /* hashlookup to see if it is there */
+    if ((node = findnode_fn (list, from)) != NULL)
+    {
+		if (!noexec)
+		{
+			entfilename = CVSADM_ENTLOG;
+			entexfilename = CVSADM_ENTEXTLOG;
+			entfile = CVS_FOPEN (entfilename, "a");
+			entexfile = CVS_FOPEN (entexfilename, "a");
+
+			ent = (Entnode*)node->data;
+
+			if (fprintf (entfile, "R ") < 0)
+				error (1, errno, "cannot write %s", entfilename);
+			if (fprintf (entexfile, "R ") < 0)
+				error (1, errno, "cannot write %s", entexfilename);
+
+			write_ent_proc (node, NULL);
+			write_ent_ex_proc (node, NULL);
+
+			xfree(ent->user);
+			ent->user = xstrdup(to);
+
+			if (fprintf (entfile, "A ") < 0)
+				error (1, errno, "cannot write %s", entfilename);
+			if (fprintf (entexfile, "A ") < 0)
+				error (1, errno, "cannot write %s", entexfilename);
+
+			write_ent_proc (node, NULL);
+			write_ent_ex_proc (node, NULL);
+
+			if (fclose (entfile) == EOF)
+				error (1, errno, "error closing %s", entfilename);
+			if (fclose (entexfile) == EOF)
+				error (1, errno, "error closing %s", entfilename);
+		}
+
+		newnode = getnode();
+		newnode->key=xstrdup(to);
+		newnode->data=node->data; /* Has been renamed above */
+		newnode->delproc=node->delproc;
+		node->data=NULL;
+		node->delproc=NULL;
+
+		delnode (node);			/* delete the old node */
+		addnode (list, newnode); /* Add the new node */
+
+#ifdef SERVER_SUPPORT
+//		if (server_active)
+//			server_rename (from,to);
+#endif
+    }
+	else
+		error(0,0,"%s not in entries file?",from);
 }
 
 /*
@@ -254,7 +321,7 @@ Scratch_Entry (list, fname)
  * removing the old entry first, if necessary.
  */
 void Register (List *list, char *fname, char *vn,  char *ts, char *options, char *tag,
-    char *date, char *ts_conflict, char *merge_from_tag_1, char *merge_from_tag_2)
+    char *date, char *ts_conflict, const char *merge_from_tag_1, const char *merge_from_tag_2, time_t rcs_timestamp)
 {
     Entnode *entnode;
     Node *node;
@@ -265,18 +332,18 @@ void Register (List *list, char *fname, char *vn,  char *ts, char *options, char
 
 #ifdef SERVER_SUPPORT
     if (server_active)
-		server_register (fname, vn, ts, options, tag, date, ts_conflict, merge_from_tag_1, merge_from_tag_2);
+		server_register (fname, vn, ts, options, tag, date, ts_conflict, merge_from_tag_1, merge_from_tag_2, rcs_timestamp);
 #endif
 
-	TRACE(1,"Register(%s, %s, %s%s%s, %s, %s %s, %s, %s)",
-			fname, vn, ts ? ts : "",
+	TRACE(1,"Register(%s, %s, %s%s%s, %s, %s %s, %s, %d)",
+			PATCH_NULL(fname), PATCH_NULL(vn), ts ? ts : "",
 			ts_conflict ? "+" : "", ts_conflict ? ts_conflict : "",
-			options, tag ? tag : "", date ? date : "",
+			PATCH_NULL(options), tag ? tag : "", date ? date : "",
 			merge_from_tag_1 ? merge_from_tag_1:"",
-			merge_from_tag_2 ? merge_from_tag_2:"");
+			merge_from_tag_2 ? merge_from_tag_2:"", rcs_timestamp);
 
     entnode = Entnode_Create (ENT_FILE, fname, vn, ts, options, tag, date,
-			      ts_conflict,merge_from_tag_1,merge_from_tag_2);
+			      ts_conflict,merge_from_tag_1,merge_from_tag_2,rcs_timestamp);
     node = AddEntryNode (list, entnode);
 
     if (!noexec)
@@ -436,7 +503,7 @@ static Entnode *fgetentent(FILE *fpin, char *cmd, int *sawdir)
 		char *c = ctime (&sb.st_mtime);
 
 		if (!strncmp (ts + 25, c, 24))
-		    ts = time_stamp (user);
+		    ts = time_stamp (user, 0);
 		else
 		{
 		    ts += 24;
@@ -446,7 +513,7 @@ static Entnode *fgetentent(FILE *fpin, char *cmd, int *sawdir)
 	}
 
 	ent = Entnode_Create (type, user, vn, ts, options, tag, date,
-			      ts_conflict, NULL, NULL);
+			      ts_conflict, NULL, NULL, (time_t)-1);
 	break;
     }
 
@@ -465,7 +532,7 @@ static int fgetententex(List *entries, FILE *fpin, char *cmd)
     char *line;
     size_t line_chars_allocated;
     register char *cp;
-    char *l, *user, *tag1, *tag2;
+    char *l, *user, *tag1, *tag2, *rcs_timestamp_string;
     int line_length;
 
     line = NULL;
@@ -499,13 +566,19 @@ static int fgetententex(List *entries, FILE *fpin, char *cmd)
 
 	if (l[0] != '/')
 	    continue;
-
+	
 	user = l + 1;
 	if ((cp = strchr (user, '/')) == NULL)
 	    continue;
 	if(!fncmp(user,CVSADM))
 		continue;
 	*cp++ = '\0';
+	
+	node = findnode_fn (entries, user);
+	if(!node)
+		continue;
+	ent = (Entnode*)node->data;
+
 	tag1 = cp;
 	if ((cp = strchr (tag1, '/')) == NULL)
 	    continue;
@@ -514,18 +587,31 @@ static int fgetententex(List *entries, FILE *fpin, char *cmd)
 	if ((cp = strchr (tag2, '/')) == NULL)
 	    continue;
 	*cp++ = '\0';
-
-	node = findnode_fn (entries, user);
-	if(!node)
-		continue;
-	ent = (Entnode*)node->data;
+	
 	xfree(ent->merge_from_tag_1);
 	ent->merge_from_tag_1=xstrdup(tag1);
 	xfree(ent->merge_from_tag_2);
 	ent->merge_from_tag_2=xstrdup(tag2);
 
+	if(!*cp)
+	   break;
+	
+	rcs_timestamp_string = cp;
+	if ((cp = strchr (rcs_timestamp_string, '/')) == NULL)
+	   continue;
+	*cp++ = '\0';
+
+#if defined(TIME_64BIT) && defined(_WIN32)
+		if(sscanf(rcs_timestamp_string,"%I64d",&ent->rcs_timestamp)!=1)
+			ent->rcs_timestamp=(time_t)-1;
+#else
+		if(sscanf(rcs_timestamp_string,"%ld",&ent->rcs_timestamp)!=1)
+			ent->rcs_timestamp=(time_t)-1;
+#endif
+	
 	break;
 	}
+	xfree(line);
 	return ent?0:-1;
 }
 
@@ -582,21 +668,43 @@ int fputententex(FILE *fp, Entnode *p)
 	break;
     }
 
-    if (fprintf (fp, "/%s/%s/%s/\n", p->user,p->merge_from_tag_1,p->merge_from_tag_2) < 0)
+	if (fprintf (fp, "/%s/%s/%s/", p->user,p->merge_from_tag_1?p->merge_from_tag_1:"",p->merge_from_tag_2?p->merge_from_tag_2:"") < 0)
 		return 1;
+	if(p->rcs_timestamp!=(time_t)-1)
+	{
+#if defined(TIME_64BIT) && defined(_WIN32)
+		fprintf (fp, "%I64d", p->rcs_timestamp);
+#else
+		fprintf (fp, "%ld", p->rcs_timestamp);
+#endif
+	}
+	fprintf(fp,"/\n");
 
     return 0;
+}
+
+List *Entries_Open_Dir (int aflag, const char *dir, const char *update_dir)
+{
+	const char *lastdir=xgetwd();
+	List *list;
+
+	if(chdir(dir))
+		error(1,errno,"Couldn't chdir to %s",fn_root(dir));
+	list = Entries_Open(aflag,update_dir);
+	if(chdir(lastdir))
+		error(1,errno,"Couldn't chdir to %s",fn_root(lastdir));
+	xfree(lastdir);
+	return list;
 }
 
 /* Read the entries file into a list, hashing on the file name.
 
    UPDATE_DIR is the name of the current directory, for use in error
    messages, or NULL if not known (that is, noone has gotten around
-   to updating the caller to pass in the information).  */
-List *
-Entries_Open (aflag, update_dir)
-    int aflag;
-    char *update_dir;
+   to updating the caller to pass in the information).  
+
+   dir is the directory relative to this one, or NULL */
+List *Entries_Open (int aflag, const char *update_dir)
 {
     List *entries;
     struct stickydirtag *sdtp = NULL;
@@ -614,7 +722,7 @@ Entries_Open (aflag, update_dir)
      * Parse the CVS/Tag file, to get any default tag/date settings. Use
      * list-private storage to tuck them away for Version_TS().
      */
-    ParseTag (&dirtag, &dirdate, &dirnonbranch);
+	ParseTag (&dirtag, &dirdate, &dirnonbranch, NULL);
     if (aflag || dirtag || dirdate)
     {
 	sdtp = (struct stickydirtag *) xmalloc (sizeof (*sdtp));
@@ -721,6 +829,17 @@ Entries_Open (aflag, update_dir)
     return (entries);
 }
 
+void Entries_Close_Dir (List *list, const char *dir)
+{
+	const char *lastdir=xgetwd();
+	if(chdir(dir))
+		error(1,errno,"Couldn't chdir to %s",fn_root(dir));
+	Entries_Close(list);
+	if(chdir(lastdir))
+		error(1,errno,"Couldn't chdir to %s",fn_root(lastdir));
+	xfree(lastdir);
+}
+
 void Entries_Close(List *list)
 {
     if (list)
@@ -751,10 +870,7 @@ static void Entries_delproc (Node *node)
  * Get an Entries file list node, initialize it, and add it to the specified
  * list
  */
-static Node *
-AddEntryNode (list, entdata)
-    List *list;
-    Entnode *entdata;
+static Node *AddEntryNode(List *list, Entnode *entdata)
 {
     Node *p;
 
@@ -785,17 +901,13 @@ AddEntryNode (list, entdata)
 /*
  * Write out/Clear the CVS/Tag file.
  */
-void
-WriteTag (dir, tag, date, nonbranch, update_dir, repository)
-    char *dir;
-    char *tag;
-    char *date;
-    int nonbranch;
-    char *update_dir;
-    char *repository;
+void WriteTag (char *dir, char *tag, char *date, int nonbranch, char *update_dir, char *repository, const char *vers)
 {
     FILE *fout;
     char *tmp;
+
+	if(!vers)
+		vers=get_directory_version();
 
     if (noexec)
 	return;
@@ -808,37 +920,51 @@ WriteTag (dir, tag, date, nonbranch, update_dir, repository)
     else
 	(void) sprintf (tmp, "%s/%s", dir, CVSADM_TAG);
 
-    if (tag || date)
-    {
-	fout = open_file (tmp, "w+");
-	if (tag)
+	if(tag||date||vers)
 	{
-	    if (nonbranch)
-	    {
-		if (fprintf (fout, "N%s\n", tag) < 0)
-		    error (1, errno, "write to %s failed", tmp);
-	    }
-	    else
-	    {
-		if (fprintf (fout, "T%s\n", tag) < 0)
-		    error (1, errno, "write to %s failed", tmp);
-	    }
+		fout = open_file (tmp, "w+");
+		if (tag)
+		{
+			if (nonbranch)
+			{
+			if (fprintf (fout, "N%s\n", tag) < 0)
+				error (1, errno, "write to %s failed", tmp);
+			}
+			else
+			{
+				if(vers)
+				{
+					if (fprintf (fout, "T%s:%s\n", tag, vers) < 0)
+						error (1, errno, "write to %s failed", tmp);
+				}
+				else
+				{
+					if (fprintf (fout, "T%s\n", tag) < 0)
+						error (1, errno, "write to %s failed", tmp);
+				}
+			}
+		}
+		else if(date)
+		{
+			if (fprintf (fout, "D%s\n", date) < 0)
+			error (1, errno, "write to %s failed", tmp);
+		}
+		else
+		{
+			if (fprintf (fout, "T:%s\n", vers) < 0)
+			error (1, errno, "write to %s failed", tmp);
+		}
+		if (fclose (fout) == EOF)
+			error (1, errno, "cannot close %s", tmp);
 	}
 	else
 	{
-	    if (fprintf (fout, "D%s\n", date) < 0)
-		error (1, errno, "write to %s failed", tmp);
+		CVS_UNLINK(tmp);
 	}
-	if (fclose (fout) == EOF)
-	    error (1, errno, "cannot close %s", tmp);
-    }
-    else
-	if (unlink_file (tmp) < 0 && ! existence_error (errno))
-	    error (1, errno, "cannot remove %s", tmp);
     xfree (tmp);
 #ifdef SERVER_SUPPORT
-    if (server_active)
-	server_set_sticky (update_dir, repository, tag, date, nonbranch);
+    if (server_active && (!vers || strcmp(vers,"_H_")))
+		server_set_sticky(update_dir, repository, tag, date, nonbranch, vers);
 #endif
 }
 
@@ -859,83 +985,12 @@ WriteTag (dir, tag, date, nonbranch, update_dir, repository)
 
    If there is an error, print an error message, set *DATEP and *TAGP
    to NULL, and return.  */
-void
-ParseTag (tagp, datep, nonbranchp)
-    char **tagp;
-    char **datep;
-    int *nonbranchp;
+void ParseTag (char **tagp, char **datep, int *nonbranchp, char **version)
 {
-    FILE *fp;
-
-    if (tagp)
-	*tagp = (char *) NULL;
-    if (datep)
-	*datep = (char *) NULL;
-    /* Always store a value here, even in the 'D' case where the value
-       is unspecified.  Shuts up tools which check for references to
-       uninitialized memory.  */
-    if (nonbranchp != NULL)
-	*nonbranchp = 0;
-    fp = CVS_FOPEN (CVSADM_TAG, "r");
-    if (fp)
-    {
-	char *line;
-	int line_length;
-	size_t line_chars_allocated;
-
-	line = NULL;
-	line_chars_allocated = 0;
-
-	if ((line_length = getline (&line, &line_chars_allocated, fp)) > 0)
-	{
-	    /* Remove any trailing newline.  */
-	    if (line[line_length - 1] == '\n')
-	        line[--line_length] = '\0';
-	    switch (*line)
-	    {
-		case 'T':
-		    if (tagp != NULL)
-			*tagp = xstrdup (line + 1);
-		    break;
-		case 'D':
-		    if (datep != NULL)
-			*datep = xstrdup (line + 1);
-		    break;
-		case 'N':
-		    if (tagp != NULL)
-			*tagp = xstrdup (line + 1);
-		    if (nonbranchp != NULL)
-			*nonbranchp = 1;
-		    break;
-		default:
-		    /* Silently ignore it; it may have been
-		       written by a future version of CVS which extends the
-		       syntax.  */
-		    break;
-	    }
-	}
-
-	if (line_length < 0)
-	{
-	    /* FIXME-update-dir: should include update_dir in messages.  */
-	    if (feof (fp))
-		error (0, 0, "cannot read %s: end of file", CVSADM_TAG);
-	    else
-		error (0, errno, "cannot read %s", CVSADM_TAG);
-	}
-
-	if (fclose (fp) < 0)
-	    /* FIXME-update-dir: should include update_dir in message.  */
-	    error (0, errno, "cannot close %s", CVSADM_TAG);
-
-	xfree (line);
-    }
-    else if (!existence_error (errno))
-	/* FIXME-update-dir: should include update_dir in message.  */
-	error (0, errno, "cannot open %s", CVSADM_TAG);
+	ParseTag_Dir(NULL,tagp,datep,nonbranchp,version);
 }
 
-/* Parse the CVS/Tag file for a current directory.
+/* Parse the CVS/Tag file for a directory.
 
    If it contains a date, sets *DATEP to the date in a newly malloc'd
    string, *TAGP to NULL, and *NONBRANCHP to an unspecified value.
@@ -952,87 +1007,116 @@ ParseTag (tagp, datep, nonbranchp)
 
    If there is an error, print an error message, set *DATEP and *TAGP
    to NULL, and return.  */
-void
-ParseTag_Dir (dir, tagp, datep, nonbranchp)
-	const char *dir;
-    char **tagp;
-    char **datep;
-    int *nonbranchp;
+void ParseTag_Dir(const char *dir, char **tagp, char **datep, int *nonbranchp, char **versionp)
 {
     FILE *fp;
-	char *fn;
+	char *p;
 
     if (tagp)
-	*tagp = (char *) NULL;
+		*tagp = (char *) NULL;
     if (datep)
-	*datep = (char *) NULL;
+		*datep = (char *) NULL;
+	if (versionp)
+		*versionp = (char *) NULL;
+
     /* Always store a value here, even in the 'D' case where the value
        is unspecified.  Shuts up tools which check for references to
        uninitialized memory.  */
     if (nonbranchp != NULL)
-	*nonbranchp = 0;
-	fn = xmalloc(strlen(dir)+strlen(CVSADM_TAG)+2);
-	strcpy(fn,dir);
-	strcat(fn,"/");
-	strcat(fn,CVSADM_TAG);
-    fp = CVS_FOPEN (fn, "r");
-	xfree(fn);
+		*nonbranchp = 0;
+	if(dir)
+	{
+		char *fn = xmalloc(strlen(dir)+strlen(CVSADM_TAG)+2);
+		strcpy(fn,dir);
+		strcat(fn,"/");
+		strcat(fn,CVSADM_TAG);
+	    fp = CVS_FOPEN (fn, "r");
+		xfree(fn);
+	}
+	else
+	    fp = CVS_FOPEN (CVSADM_TAG, "r");
     if (fp)
     {
-	char *line;
-	int line_length;
-	size_t line_chars_allocated;
+		char *line;
+		int line_length;
+		size_t line_chars_allocated;
 
-	line = NULL;
-	line_chars_allocated = 0;
+		line = NULL;
+		line_chars_allocated = 0;
 
-	if ((line_length = getline (&line, &line_chars_allocated, fp)) > 0)
-	{
-	    /* Remove any trailing newline.  */
-	    if (line[line_length - 1] == '\n')
-	        line[--line_length] = '\0';
-	    switch (*line)
-	    {
-		case 'T':
-		    if (tagp != NULL)
-			*tagp = xstrdup (line + 1);
-		    break;
-		case 'D':
-		    if (datep != NULL)
-			*datep = xstrdup (line + 1);
-		    break;
-		case 'N':
-		    if (tagp != NULL)
-			*tagp = xstrdup (line + 1);
-		    if (nonbranchp != NULL)
-			*nonbranchp = 1;
-		    break;
-		default:
-		    /* Silently ignore it; it may have been
-		       written by a future version of CVS which extends the
-		       syntax.  */
-		    break;
-	    }
-	}
+		if ((line_length = getline (&line, &line_chars_allocated, fp)) > 0)
+		{
+			/* Remove any trailing newline.  */
+			if (line[line_length - 1] == '\n')
+				line[--line_length] = '\0';
+			switch (*line)
+			{
+			case 'T':
+				if(line[1]==':')
+				{
+					if(versionp != NULL)
+						*versionp = xstrdup(line + 2);
+				}
+				else
+				{
+					if (tagp != NULL)
+					{
+						*tagp = xstrdup (line + 1);
+						p=strchr(*tagp,':');
+					}
+					else
+						p=strchr(line+1,':');
 
-	if (line_length < 0)
-	{
-	    /* FIXME-update-dir: should include update_dir in messages.  */
-	    if (feof (fp))
-		error (0, 0, "cannot read %s: end of file", CVSADM_TAG);
-	    else
-		error (0, errno, "cannot read %s", CVSADM_TAG);
-	}
+					if(p)
+					{
+						*p='\0';
+						if(versionp)
+							*versionp=xstrdup(p+1);
+					}
+				}
+				break;
+			case 'D':
+				if (datep != NULL)
+					*datep = xstrdup (line + 1);
+				break;
+			case 'N':
+				if (tagp != NULL)
+					*tagp = xstrdup (line + 1);
+				if (nonbranchp != NULL)
+					*nonbranchp = 1;
+				break;
+			case 'V':
+				error(0,0,"Obsolete 'V' tag in sandbox.  Please delete and checkout again.");
+				break;
 
-	if (fclose (fp) < 0)
-	    /* FIXME-update-dir: should include update_dir in message.  */
-	    error (0, errno, "cannot close %s", CVSADM_TAG);
+			default:
+				/* Silently ignore it; it may have been
+				written by a future version of CVS which extends the
+				syntax.  */
+				break;
+			}
+		}
 
-	xfree (line);
+		if (line_length < 0)
+		{
+			/* FIXME-update-dir: should include update_dir in messages.  */
+			if (feof (fp))
+			error (0, 0, "cannot read %s: end of file", CVSADM_TAG);
+			else
+			error (0, errno, "cannot read %s", CVSADM_TAG);
+		}
+
+		if (fclose (fp) < 0)
+			/* FIXME-update-dir: should include update_dir in message.  */
+			error (0, errno, "cannot close %s", CVSADM_TAG);
+
+		xfree (line);
     }
     else if (!existence_error (errno))
-	/* FIXME-update-dir: should include update_dir in message.  */
-	error (0, errno, "cannot open %s", CVSADM_TAG);
+	{
+		/* FIXME-update-dir: should include update_dir in message.  */
+		error (0, errno, "cannot open %s", CVSADM_TAG);
+	}
 }
 
 /*
@@ -1041,9 +1125,7 @@ ParseTag_Dir (dir, tagp, datep, nonbranchp)
  * private data.
  */
 
-void
-Subdirs_Known (entries)
-     List *entries;
+void Subdirs_Known (List *entries)
 {
     struct stickydirtag *sdtp;
 
@@ -1093,7 +1175,8 @@ subdir_record (cmd, parent, dir)
        currently meaningful.  */
     entnode = Entnode_Create (ENT_SUBDIR, dir, "", "", "",
 			      (char *) NULL, (char *) NULL,
-			      (char *) NULL, (char *) NULL, (char *)NULL);
+			      (char *) NULL, (char *) NULL,
+			      (char *) NULL, (time_t) -1);
 
     if (!noexec)
     {
@@ -1161,11 +1244,7 @@ subdir_record (cmd, parent, dir)
  * be updated.
  */
 
-void
-Subdir_Register (entries, parent, dir)
-     List *entries;
-     const char *parent;
-     const char *dir;
+void Subdir_Register (List *entries, const char *parent, const char *dir)
 {
     Entnode *entnode;
 

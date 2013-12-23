@@ -21,6 +21,8 @@ static const char *const release_usage[] =
     NULL
 };
 
+static short force_delete = 0;
+
 #ifdef SERVER_SUPPORT
 static int release_server PROTO ((int argc, char **argv));
 
@@ -53,19 +55,19 @@ static int release_fileproc (void *callerdat, struct file_info *finfo)
 
     switch (status)
     {
-	case T_CHECKOUT:
-	case T_PATCH:
 	case T_NEEDS_MERGE:
 	case T_CONFLICT:
-	case T_REMOVE_ENTRY:
 	case T_MODIFIED:
 	case T_ADDED:
 	case T_REMOVED:
 	case T_RESURRECT:
 		modified_files++;
 		break;
+	case T_CHECKOUT:
+	case T_REMOVE_ENTRY:
 	case T_UNKNOWN: 
 	case T_UPTODATE:
+	case T_PATCH:
 		break;
 	}
 
@@ -89,14 +91,20 @@ release_delete_dirleaveproc(void *callerdat, char *dir, int err, char *update_di
 		/* Prune empty dirs on the way out - if necessary */
 		unlink_file_dir(CVSADM);
 		(void) CVS_CHDIR ("..");
-		if (isemptydir (dir, 0))
+		if (force_delete || isemptydir (dir, 0))
 		{
+			List *list;
 			/* I'm not sure the existence_error is actually possible (except
 			in cases where we really should print a message), but since
 			this code used to ignore all errors, I'll play it safe.	*/
 			if (unlink_file_dir (dir) < 0 && !existence_error (errno))
 				error (0, errno, "cannot remove %s directory", dir);
-			Subdir_Deregister (entries, (char *) NULL, dir);
+			if(isdir(CVSADM))
+			{
+				list = Entries_Open(0,NULL);
+				Subdir_Deregister (list, (char *) NULL, dir);
+				Entries_Close(list);
+			}
 		}
     }
 
@@ -123,7 +131,6 @@ release (argc, argv)
     int err = 0;
     short delete_flag = 0;
 	short export_flag = 0;
-	short force_delete = 0;
     struct saved_cwd cwd;
 
 #ifdef SERVER_SUPPORT
@@ -206,7 +213,7 @@ release (argc, argv)
 			char *tmp;
 			modified_files = 0;
 			start_recursion (release_fileproc, (FILESDONEPROC) NULL,
-				 (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL,
+				 (PREDIRENTPROC) NULL, (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL,
 				 (void *) NULL, 0, NULL, 0, W_LOCAL,
 				 0, 0, (char *) NULL, 0, NULL);
 
@@ -247,6 +254,12 @@ release (argc, argv)
 			argv[0] = "dummy";
 			argv[1] = NULL;
 			err += unedit (argc, argv);
+#ifdef CLIENT_SUPPORT
+			/* Unedit will have killed our lockserver connection */
+			if(!current_parsed_root->isremote)
+#endif
+				lock_register_client(CVS_Username,current_parsed_root->directory);
+
 		}
 
 #ifdef CLIENT_SUPPORT
@@ -272,23 +285,15 @@ release (argc, argv)
 		{
 			if(delete_flag)
 			{
-				if(force_delete)
-				{
-					if (unlink_file_dir (thisarg) < 0)
-						error (0, errno, "deletion of directory %s failed", thisarg);
-				}
-				else
-				{
-					start_recursion (release_delete_fileproc, (FILESDONEPROC) NULL,
-							(DIRENTPROC) NULL, release_delete_dirleaveproc,
-							(void *) NULL, 1, &thisarg, 0, W_LOCAL,
-							0, 0, (char *) NULL, 0, NULL);
-				}
+				start_recursion (release_delete_fileproc, (FILESDONEPROC) NULL,
+						(PREDIRENTPROC) NULL, (DIRENTPROC) NULL, release_delete_dirleaveproc,
+						(void *) NULL, 1, &thisarg, 0, W_LOCAL,
+						0, 0, (char *) NULL, 0, NULL);
 			}
 			else if(export_flag)
 			{
 				start_recursion (NULL, (FILESDONEPROC) NULL,
-						(DIRENTPROC) NULL, release_export_dirleaveproc,
+						(PREDIRENTPROC) NULL, (DIRENTPROC) NULL, release_export_dirleaveproc,
 						(void *) NULL, 1, &thisarg, 0, W_LOCAL,
 						0, 0, (char *) NULL, 0, NULL);
 			}

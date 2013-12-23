@@ -17,71 +17,101 @@ CFG=zlib - Win32 Debug
 !MESSAGE 
 !MESSAGE Possible choices for configuration are:
 !MESSAGE 
-!MESSAGE "zlib - Win32 Release" (based on "Win32 (x86) Static Library")
 !MESSAGE "zlib - Win32 Debug" (based on "Win32 (x86) Static Library")
+!MESSAGE "zlib - Win32 Release" (based on "Win32 (x86) Static Library")
+!MESSAGE "zlib - Win32 Purify" (based on "Win32 (x86) Static Library")
 !MESSAGE 
 
 # Begin Project
 # PROP AllowPerConfigDependencies 0
-# PROP Scc_ProjName ""
-# PROP Scc_LocalPath ""
+# PROP Scc_ProjName "cvsnt"
+# PROP Scc_LocalPath "..\.."
 CPP=cl.exe
+MTL=midl.exe
 RSC=rc.exe
 
-!IF  "$(CFG)" == "zlib - Win32 Release"
-
-# PROP BASE Use_MFC 0
-# PROP BASE Use_Debug_Libraries 0
-# PROP BASE Output_Dir "Release"
-# PROP BASE Intermediate_Dir "Release"
-# PROP BASE Target_Dir ""
-# PROP Use_MFC 0
-# PROP Use_Debug_Libraries 0
-# PROP Output_Dir "Release"
-# PROP Intermediate_Dir "Release"
-# PROP Target_Dir ""
-# ADD BASE CPP /nologo /W3 /GX /O2 /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /YX /FD /c
-# ADD CPP /nologo /MD /W3 /GR /GX /Zi /O2 /Op /Ob2 /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /FD /c
-# SUBTRACT CPP /Fr /YX
-# ADD BASE RSC /l 0x809
-# ADD RSC /l 0x809
-BSC32=bscmake.exe
-# ADD BASE BSC32 /nologo
-# ADD BSC32 /nologo
-LIB32=link.exe -lib
-# ADD BASE LIB32 /nologo
-# ADD LIB32 /nologo
-
-!ELSEIF  "$(CFG)" == "zlib - Win32 Debug"
+!IF  "$(CFG)" == "zlib - Win32 Debug"
 
 # PROP BASE Use_MFC 0
 # PROP BASE Use_Debug_Libraries 1
-# PROP BASE Output_Dir "Debug"
-# PROP BASE Intermediate_Dir "Debug"
+# PROP BASE Output_Dir ".\Debug"
+# PROP BASE Intermediate_Dir ".\Debug"
 # PROP BASE Target_Dir ""
 # PROP Use_MFC 0
 # PROP Use_Debug_Libraries 1
-# PROP Output_Dir "Debug"
-# PROP Intermediate_Dir "Debug"
+# PROP Output_Dir ".\Debug"
+# PROP Intermediate_Dir ".\Debug"
 # PROP Target_Dir ""
-# ADD BASE CPP /nologo /W3 /GX /Z7 /Od /D "WIN32" /D "_DEBUG" /D "_WINDOWS" /YX /FD /c
-# ADD CPP /nologo /MDd /W3 /Gm /GR /GX /ZI /Od /D "WIN32" /D "_DEBUG" /D "_WINDOWS" /FD /c
-# SUBTRACT CPP /Fr /YX
-# ADD BASE RSC /l 0x809
-# ADD RSC /l 0x809
+# ADD BASE CPP /nologo /MDd /ZI /W3 /Od /G6 /GA /D "WIN32" /D "_DEBUG" /D "_WINDOWS" /D "_MBCS" /Gm /Gy /GR /Fp".\Debug/zlib.pch" /Fo"$(IntDir)/" /Fd"$(IntDir)/" /GZ /c /GX 
+# ADD CPP /nologo /MDd /ZI /W3 /Od /G6 /GA /D "WIN32" /D "_DEBUG" /D "_WINDOWS" /D "_MBCS" /Gm /Gy /GR /Fp".\Debug/zlib.pch" /Fo"$(IntDir)/" /Fd"$(IntDir)/" /GZ /c /GX 
+# ADD BASE MTL /nologo /win32 
+# ADD MTL /nologo /win32 
+# ADD BASE RSC /l 2057 
+# ADD RSC /l 2057 
 BSC32=bscmake.exe
-# ADD BASE BSC32 /nologo
-# ADD BSC32 /nologo
+# ADD BASE BSC32 /nologo 
+# ADD BSC32 /nologo 
 LIB32=link.exe -lib
-# ADD BASE LIB32 /nologo
-# ADD LIB32 /nologo
+# ADD BASE LIB32 /nologo /out:".\Debug\zlib.lib" 
+# ADD LIB32 /nologo /out:".\Debug\zlib.lib" 
 
-!ENDIF 
+!ELSEIF  "$(CFG)" == "zlib - Win32 Release"
+
+# PROP BASE Use_MFC 0
+# PROP BASE Use_Debug_Libraries 0
+# PROP BASE Output_Dir ".\Release"
+# PROP BASE Intermediate_Dir ".\Release"
+# PROP BASE Target_Dir ""
+# PROP Use_MFC 0
+# PROP Use_Debug_Libraries 0
+# PROP Output_Dir ".\Release"
+# PROP Intermediate_Dir ".\Release"
+# PROP Target_Dir ""
+# ADD BASE CPP /nologo /MD /Zi /W3 /O2 /Ob2 /Oi /Op /Oy /G6 /GA /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /D "_MBCS" /GF /GR /Fp".\Release/zlib.pch" /Fo"$(IntDir)/" /Fd"$(IntDir)/" /c /GX 
+# ADD CPP /nologo /MD /Zi /W3 /O2 /Ob2 /Oi /Op /Oy /G6 /GA /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /D "_MBCS" /GF /GR /Fp".\Release/zlib.pch" /Fo"$(IntDir)/" /Fd"$(IntDir)/" /c /GX 
+# ADD BASE MTL /nologo /win32 
+# ADD MTL /nologo /win32 
+# ADD BASE RSC /l 2057 
+# ADD RSC /l 2057 
+BSC32=bscmake.exe
+# ADD BASE BSC32 /nologo 
+# ADD BSC32 /nologo 
+LIB32=link.exe -lib
+# ADD BASE LIB32 /nologo /out:".\Release\zlib.lib" 
+# ADD LIB32 /nologo /out:".\Release\zlib.lib" 
+
+!ELSEIF  "$(CFG)" == "zlib - Win32 Purify"
+
+# PROP BASE Use_MFC 0
+# PROP BASE Use_Debug_Libraries 0
+# PROP BASE Output_Dir "Purify"
+# PROP BASE Intermediate_Dir "Purify"
+# PROP BASE Target_Dir ""
+# PROP Use_MFC 0
+# PROP Use_Debug_Libraries 0
+# PROP Output_Dir "Purify"
+# PROP Intermediate_Dir "Purify"
+# PROP Target_Dir ""
+# ADD BASE CPP /nologo /MDd /Zi /W3 /Od /G6 /GA /D "WIN32" /D "_DEBUG" /D "_WINDOWS" /Gm /Gy /GR /Fp".\Debug/zlib.pch" /Fo"$(IntDir)/" /Fd"$(IntDir)/" /c /GX 
+# ADD CPP /nologo /MDd /Zi /W3 /Od /G6 /GA /D "WIN32" /D "_DEBUG" /D "_WINDOWS" /Gm /Gy /GR /Fp".\Debug/zlib.pch" /Fo"$(IntDir)/" /Fd"$(IntDir)/" /c /GX 
+# ADD BASE MTL /nologo /win32 
+# ADD MTL /nologo /win32 
+# ADD BASE RSC /l 2057 
+# ADD RSC /l 2057 
+BSC32=bscmake.exe
+# ADD BASE BSC32 /nologo 
+# ADD BSC32 /nologo 
+LIB32=link.exe -lib
+# ADD BASE LIB32 /nologo /out:".\Debug\zlib.lib" 
+# ADD LIB32 /nologo /out:".\Debug\zlib.lib" 
+
+!ENDIF
 
 # Begin Target
 
-# Name "zlib - Win32 Release"
 # Name "zlib - Win32 Debug"
+# Name "zlib - Win32 Release"
+# Name "zlib - Win32 Purify"
 # Begin Group "Source Files"
 
 # PROP Default_Filter "*.c"
@@ -107,14 +137,6 @@ SOURCE=..\gzio.c
 # End Source File
 # Begin Source File
 
-SOURCE=..\infblock.c
-# End Source File
-# Begin Source File
-
-SOURCE=..\infcodes.c
-# End Source File
-# Begin Source File
-
 SOURCE=..\inffast.c
 # End Source File
 # Begin Source File
@@ -124,10 +146,6 @@ SOURCE=..\inflate.c
 # Begin Source File
 
 SOURCE=..\inftrees.c
-# End Source File
-# Begin Source File
-
-SOURCE=..\infutil.c
 # End Source File
 # Begin Source File
 
@@ -151,14 +169,6 @@ SOURCE=..\deflate.h
 # End Source File
 # Begin Source File
 
-SOURCE=..\infblock.h
-# End Source File
-# Begin Source File
-
-SOURCE=..\infcodes.h
-# End Source File
-# Begin Source File
-
 SOURCE=..\inffast.h
 # End Source File
 # Begin Source File
@@ -168,10 +178,6 @@ SOURCE=..\inffixed.h
 # Begin Source File
 
 SOURCE=..\inftrees.h
-# End Source File
-# Begin Source File
-
-SOURCE=..\infutil.h
 # End Source File
 # Begin Source File
 
@@ -192,3 +198,4 @@ SOURCE=..\zutil.h
 # End Group
 # End Target
 # End Project
+

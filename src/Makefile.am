@@ -19,7 +19,6 @@ SHELL = /bin/sh
 # some namespace hackery going on that maybe shouldn't be.  Long term fix is to
 # try and remove naming ocnflicts and fix Automake to allow particular includes
 # to be attached only to particular object files.  Short term fix is either or.
-##INCLUDES = -I. -I.. -I$(srcdir) -I$(top_srcdir)/lib
 
 if WITH_ZLIB
   zlib_inc = 
@@ -37,9 +36,11 @@ else
   cvsgui_lib =
 endif
 
-INCLUDES = -I$(top_srcdir)/lib -I$(top_srcdir)/diff $(cvsgui_inc) $(zlib_inc) $(includeopt) $(INCLTDL)
+AM_CPPFLAGS = -I$(top_srcdir)/lib -I$(top_srcdir)/diff $(cvsgui_inc) $(zlib_inc) $(includeopt) $(INCLTDL)
+AM_CFLAGS=-DCVS_CONFIG_DIR=\"$(cvs_config_dir)\" -DCVS_LIBRARY_DIR=\"$(cvs_library_dir)\"
 
-bin_PROGRAMS = cvs
+bin_PROGRAMS = @cvs_target_name@
+EXTRA_PROGRAMS = cvs cvsnt
 
 # The cvs executable
 cvs_SOURCES = \
@@ -80,6 +81,7 @@ cvs_SOURCES = \
 	ls.c \
 	lsacl.c \
 	main.c \
+	mapping.c \
 	mkmodules.c \
 	modules.c \
 	myndbm.c \
@@ -93,6 +95,7 @@ cvs_SOURCES = \
 	recurse.c \
 	release.c \
 	remove.c \
+	rename.c \
 	repos.c \
 	root.c \
 	run.c \
@@ -101,6 +104,7 @@ cvs_SOURCES = \
 	status.c \
 	subr.c \
 	tag.c \
+	unicode_stuff.c \
 	update.c \
 	version.c \
 	vers_ts.c \
@@ -115,17 +119,25 @@ cvs_SOURCES = \
 	fileattr.h \
 	hardlink.h \
 	hash.h \
+	mapping.h \
 	myndbm.h \
 	rcs.h \
 	server.h \
+	unicode_stuff.h \
 	update.h \
 	watch.h
+
+cvsnt_SOURCES = $(cvs_SOURCES)
+
 cvs_LDADD = \
 	../diff/libdiff.a \
 	../lib/libcvs.a \
+	../cvsdelta/libcvsdelta.a \
 	$(cvsgui_lib) \
 	$(zlib_lib) \
 	$(LIBLTDL)
+
+cvsnt_LDADD = $(cvs_LDADD)
 
 # extra clean targets
 # wish this could be distclean-hdr-local but it's not part of automake

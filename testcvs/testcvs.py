@@ -7,8 +7,8 @@ import filecmp
 import getopt
 
 def cvs(command):
-  #cmd = 'valgrind -q --logfile-fd=9 cvs -D'+base_dir+' -d'+current_cvsroot+' '+command+' >'+outfile+' 2>'+errfile+' 9>/dev/stderr'
-  cmd = 'cvs -D'+base_dir+' -d'+current_cvsroot+' '+command+' >'+outfile+' 2>'+errfile
+  #cmd = 'valgrind -q --logfile-fd=9 cvs --allow-root='+base_dir+'/repos,/repos -d'+current_cvsroot+' '+command+' >'+outfile+' 2>'+errfile+' 9>/dev/stderr'
+  cmd = 'cvs --allow-root='+base_dir+'/repos,/repos -d'+current_cvsroot+' '+command+' >'+outfile+' 2>'+errfile
   if(verbose): print cmd
   result = os.system(cmd)
 #  if(verbose):
@@ -189,9 +189,9 @@ def main():
   file_exists(base_dir+current_cvsroot+'/testcvs/add_test.txt,v')
   cvs_pass('commit -m "" add_test.txt')
   file_not_exists(current_tree+'/testcvs/add_test.txt')
-  file_not_exists(base_dir+current_cvsroot+'/testcvs/add_test.txt,v')
-  dir_exists(base_dir+current_cvsroot+'/testcvs/Attic')
-  file_exists(base_dir+current_cvsroot+'/testcvs/Attic/add_test.txt,v')
+#  file_not_exists(base_dir+current_cvsroot+'/testcvs/add_test.txt,v')
+#  dir_exists(base_dir+current_cvsroot+'/testcvs/Attic')
+#  file_exists(base_dir+current_cvsroot+'/testcvs/Attic/add_test.txt,v')
   file_copy(test_data+'/add_test.txt','add_test.txt')
   cvs_pass('add add_test.txt')
   cvs_pass('commit -m "" add_test.txt')
@@ -201,9 +201,9 @@ def main():
   file_not_exists(current_tree+'/testcvs/add_test.txt')
   cvs_pass('commit -m "" add_test.txt')
   file_not_exists(current_tree+'/testcvs/add_test.txt')
-  file_not_exists(base_dir+current_cvsroot+'/testcvs/add_test.txt,v')
-  dir_exists(base_dir+current_cvsroot+'/testcvs/Attic')
-  file_exists(base_dir+current_cvsroot+'/testcvs/Attic/add_test.txt,v')
+#  file_not_exists(base_dir+current_cvsroot+'/testcvs/add_test.txt,v')
+#  dir_exists(base_dir+current_cvsroot+'/testcvs/Attic')
+#  file_exists(base_dir+current_cvsroot+'/testcvs/Attic/add_test.txt,v')
   cvs_pass('remove -f add_test.txt') # Should fail IMHO but standard cvs doesn't
   cvs_fail('commit -m "" fail_test.txt')
 
@@ -219,6 +219,19 @@ def main():
   file_delete(current_tree+'/testcvs/binary_test.gif')
   cvs_pass('update binary_test.gif')
   file_compare(test_data+'/binary_test.gif',current_tree+'/testcvs/binary_test.gif')
+
+  start_test('Binary delta Add/Checkout')
+  
+  os.chdir(current_tree+'/testcvs')
+  file_copy(test_data+'/binary_test.gif',current_tree+'/testcvs/binary_delta_test.gif')
+  cvs_pass('add -kB binary_delta_test.gif')
+  cvs_pass('commit -m "" binary_delta_test.gif')
+  file_exists(current_tree+'/testcvs/binary_delta_test.gif')
+  file_exists(base_dir+current_cvsroot+'/testcvs/binary_delta_test.gif,v')
+  file_compare(test_data+'/binary_test.gif',current_tree+'/testcvs/binary_delta_test.gif')
+  file_delete(current_tree+'/testcvs/binary_delta_test.gif')
+  cvs_pass('update binary_delta_test.gif')
+  file_compare(test_data+'/binary_test.gif',current_tree+'/testcvs/binary_delta_test.gif')
 
   start_test('Add/Checkout large file')
 

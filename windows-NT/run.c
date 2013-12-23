@@ -240,7 +240,6 @@ int run_command(const char *cmd, int* in_fd, int* out_fd, int *err_fd, HANDLE *h
 	int fd1[2],fd2[2], fd3[2];
 	int fdcp1, fdcp2, fdcp3;
 	char *c;
-	OSVERSIONINFO osv;
 	char szComSpec[_MAX_PATH];
 
 	if(in_fd)
@@ -267,12 +266,11 @@ int run_command(const char *cmd, int* in_fd, int* out_fd, int *err_fd, HANDLE *h
 	si.hStdInput =  (HANDLE) (in_fd?_get_osfhandle(fdcp1):_get_osfhandle(fileno(stdin)));
 	si.hStdOutput = (HANDLE) (out_fd?_get_osfhandle(fdcp2):_get_osfhandle(fileno(stdout)));
 	si.hStdError  = (HANDLE) (err_fd?_get_osfhandle (fdcp3):_get_osfhandle(fileno(stderr)));
-	si.dwFlags = STARTF_USESTDHANDLES;
+	si.wShowWindow = SW_HIDE;
+	si.dwFlags = STARTF_USESTDHANDLES|STARTF_USESHOWWINDOW;
 
 	c=malloc(strlen(cmd)+128);
-	osv.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
-	GetVersionEx(&osv);
-	if (osv.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS)
+	if(bIsWin95)
 		strcpy(c,cmd); // In Win9x we have to execute directly
 	else
 	{

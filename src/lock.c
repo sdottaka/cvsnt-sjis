@@ -73,7 +73,6 @@
    unneeded complication although it presumably would be faster).  */
 
 #include "cvs.h"
-#include <assert.h>
 
 #ifdef _WIN32
 #include <io.h>
@@ -84,6 +83,10 @@
 #endif
 
 #include <stdarg.h>
+
+#ifdef SJIS
+#include <mbstring.h>
+#endif
 
 struct lock {
     /* This is the directory in which we may have a lock named by the
@@ -115,7 +118,6 @@ static int write_lock PROTO ((struct lock *lock));
 static void lock_simple_remove PROTO ((struct lock *lock));
 static void lock_wait PROTO((char *repository));
 static void lock_obtained PROTO((char *repository));
-static int atomic_dir_exists(char *repository);
 
 /* Malloc'd array containing the username of the whoever has the lock.
    Will always be non-NULL in the cases where it is needed.  */
@@ -130,9 +132,6 @@ static char *writelock;
    Will always be non-NULL in the cases where it is used.  */
 static char *masterlock;
 static List *locklist;
-
-/* Static list of directories we did an atomic commit to */
-static List *atomic_repos_list;
 
 #define L_OK		0		/* success */
 #define L_ERROR		1		/* error condition */
@@ -161,6 +160,70 @@ int lock_server_socket = -1;
 
 static char *lock_name PROTO ((char *repository, char *name));
 
+static int lock_server_command(char *line, int line_len, const char *cmd, ...);
+
+void lock_register_client(const char *username, const char *root)
+{
+	char line[1024];
+
+	/* Using file locks for some unknown reason */
+	if(!lock_server)
+		return;
+
+	if(lock_server_socket == -1)
+	{
+		const char *serv;
+		/* First time - connect to lock server & register ourselves */
+		char *p=strchr(lock_server,':');
+		int l;
+		if(p) *(p++)='\0';
+		if(!strcmp(lock_server,"localhost"))
+			serv = "127.0.0.1"; /* XP Home breakage */
+		else
+			serv = lock_server;
+		TRACE(3,"Lock server connect to %s port %s",PATCH_NULL(serv),p?p:"2402");
+
+		if((lock_server_socket=cvs_tcp_connect(serv,p?p:"2402", 0))<0)
+			error(1,0,"Couldn't connect to lock server");
+		if(p)
+			*(--p)=':';
+		if((l=recv(lock_server_socket,line,sizeof(line),0))<=0)
+		{
+			perror("oops");
+			error(1,0,"Error communicating with lock server");
+		}
+		do
+		{
+			line[l--]='\0';
+		} while(l && isspace(line[l]));
+		// Line now contains signon string, including protocol version. 
+
+		{
+			int ver1,ver2;
+#ifdef SJIS
+			if(!_mbschr(line,' ') || sscanf(_mbschr(line,' ')+1,"%d.%d",&ver1,&ver2)!=2)
+#else
+			if(!strchr(line,' ') || sscanf(strchr(line,' ')+1,"%d.%d",&ver1,&ver2)!=2)
+#endif
+			{
+				error(1,0,"Lockserver returned invalid version string: %s",line+4);
+			}
+			if(ver1<2 || ver2<0)
+			{
+				error(1,0,"Invalid Lockserver version - got %d.%d, wanted 2.0",ver1,ver2);
+			}
+		}
+
+		switch(lock_server_command(line,sizeof(line),"Client %s|%s|%s\n",username,root,remote_host_name?remote_host_name:""))
+		{
+		case 0:
+			break;
+		default:
+			error(1,0,"Couldn't authenticate with lock server: %s",line+4);
+		}
+	}
+}
+
 static int lock_server_command(char *line, int line_len, const char *cmd, ...)
 {
 	int l;
@@ -187,58 +250,40 @@ static int lock_server_command(char *line, int line_len, const char *cmd, ...)
 }
 
 /* Connect to the lock server and attain a lock */
-static int do_lock_server(const char *object, const char *flags)
+static size_t do_lock_server(const char *object, const char *directory, const char *flags)
 {
-	char line[1024];
+	char line[MAX_PATH*4],*p,*q;
 	int bWaited;
+	size_t id;
+	unsigned helper;
 
-	if(lock_server_socket == -1)
-	{
-		/* First time - connect to lock server & register ourselves */
-		char *p=strchr(lock_server,':');
-		int l;
-		if(!p) p="2402";
-		else *(p++)='\0';
-		if((lock_server_socket=cvs_tcp_connect(lock_server,p))<0)
-			error(1,0,"Couldn't connect to lock server");
-		if((l=recv(lock_server_socket,line,sizeof(line),0))<=0)
-		{
-			perror("oops");
-			error(1,0,"Error communicating with lock server");
-		}
-		do
-		{
-			line[l--]='\0';
-		} while(l && isspace(line[l]));
-		// Line now contains signon string, including protocol version.  Will do something
-		// with this someday.
-
-		switch(lock_server_command(line,sizeof(line),"Client %s|%s|%s\n",CVS_Username,current_parsed_root->directory,remote_host_name?remote_host_name:""))
-		{
-		case 0:
-			break;
-		default:
-			error(1,0,"Couldn't authenticate with lock server: %s",line);
-		}
-	}
 	bWaited = 0;
 	do
 	{
 		time_t now;
 		char tm[32];
-
 	    time (&now);
 		strncpy(tm,ctime(&now)+11,sizeof(tm));
 		tm[8]='\0';
-		switch(lock_server_command(line,sizeof(line),"Lock %s|%s\n",flags,object))
+		switch(lock_server_command(line,sizeof(line),"Lock %s|%s%s%s\n",flags,directory?directory:"",directory?"/":"",object))
 		{
 		case 0:
+		case 3:
 			if(bWaited)
-				error(0,0,"[%s] obtained lock in %s", tm, object);
-			return 0;
+				error(0,0,"[%s] obtained lock in %s", tm, fn_root(object));
+			p=strchr(line,'(');
+			if(!p)
+				error(1,0,"Lockserver did not return a lock ID.  Check version.");
+			p++;
+			q=strchr(p,')');
+			if(!q)
+				error(1,0,"Lockserver did not return a lock ID.  Check version.");
+			*q='\0';
+			sscanf(p,"%u",&helper);
+			id = helper; /* 64 bit aware */
+			return id;
 		case 1:
-			error(1,0,"Failed to obtain lock on %s: %s",object,line);
-			return -1;
+			error(1,0,"Failed to obtain lock on %s: %s",fn_root(object),line+4);
 		case 2:
 			{
 				char *owner, *host, *path;
@@ -279,192 +324,93 @@ static int do_lock_server(const char *object, const char *flags)
 					error(0,0,"[%s] waiting for %s's lock in %s", tm, owner, fn_root(path));
 				bWaited++;
 				if(bWaited==20)
-				{
-					error(1,0,"Failed to obtain lock on %s",object);
-					return -1;
-				}
+					error(1,0,"Failed to obtain lock on %s",fn_root(object));
 			}
 			break;
 		default:
-			error(1,0,"Unknown response from lock server: %s", line);
+			error(1,0,"Unknown response from lock server: %s", line+4);
 		}
 		// Only get here in case 2 == WAIT
-		sleep(CVSLCKSLEEP);
+		sleep(1);
 	} while(1);
-}
-
-/* Cleanup lock(s) */
-static int do_unlock_server(const char *object)
-{
-	char line[1024];
-
-	if(lock_server_socket == -1)
-		return 0; // Obviously we have no locks!
-
-	switch(lock_server_command(line,sizeof(line),"Unlock %s\n",object?object:"All"))
-	{
-	case 0:
-		break;
-	case 1:
-		return -1;
-	default:
-		error(1,0,"Unknown response from lock server: %s", line);
-	}
 	return 0;
 }
 
-static int recursive_mirror(char *path, char *path_copy)
+size_t do_lock_file(const char *file, const char *repository, int write)
 {
-    DIR		  *dirp;
-    struct dirent *dp;
-    char	   buf[PATH_MAX*2];
-    char	   buf_copy[PATH_MAX*2];
-
-	TRACE(3,"recursive_mirror(%s,%s)",path,path_copy);
-
-	if ((dirp = opendir (path)) == NULL)
-	    /* If unable to open the directory return
-	     * an error
-	     */
-	    return -1;
-
-	while ((dp = readdir (dirp)) != NULL)
-	{
-	    if (strcmp (dp->d_name, ".") == 0 ||
-			strcmp (dp->d_name, "..") == 0)
-		continue;
-
-	    sprintf (buf, "%s/%s", path, dp->d_name);
-	    sprintf (buf_copy, "%s/%s", path_copy, dp->d_name);
-
-		if(isdir(buf))
-		{
-			if(CVS_MKDIR(buf_copy,0775))
-				return -1;
-		    if (recursive_mirror (buf,buf_copy))
-		    {
-				closedir (dirp);
-				return -1;
-		    }
-		}
-		else
-		{
-			if(link(buf,buf_copy))
-			{
-				error(1,errno,"Couldn't create hardlink %s -> %s",buf,buf_copy);
-			}
-		}
-	}
-	closedir (dirp);
-    return 0;
+	if(!lock_server)
+		return (size_t)-1;
+	return do_lock_server(file,repository,write?"Write Full":"Read Full");
 }
 
-static void do_atomic_start(char *repository)
+size_t do_lock_advisory(const char *file, const char *repository, int write)
 {
-	static int test_done = 0;
-	if(!test_done && atomic_commits)
-	{
-         	/* See if we're capable of doing a hardlink on the current directory.
-                   If not, then disable the setting and warn the user.
-                   Mainly of use in Win32 where only certain types of server support hardlink */
-                /* We need to do this in the repository because the temp directory might
-                   be on a different media which would produce incorrect results */
-               char *tmp1=xmalloc(strlen(repository)+32);
-               char *tmp2=xmalloc(strlen(repository)+32);
-	       FILE *f;
-               sprintf(tmp1,"%s/.#hl_test1",repository);
-               sprintf(tmp2,"%s/.#hl_test2",repository);
-	       f=fopen(tmp1,"w");
-	       if(!f)
-	       {
-		    error(1,errno,"No write access to %s.  Cannot start atomic write.");
-	       }
-	       fprintf(f,"foo");
-	       fclose(f);
-               if(link(tmp1,tmp2))
-               {
-               	    error(0,errno,"Hardlinking not supported in %s - disabling atomic commits",repository);
-                    atomic_commits = 0;
-                }
-                CVS_UNLINK(tmp1);
-                CVS_UNLINK(tmp2);
-		test_done=1;
-	}
-
-	if(atomic_commits)
-	{
-		Node *p;
-		char *repos_copy;
-
-		TRACE(2,"do_atomic_start %s",repository);
-		if(atomic_dir_exists(repository))
-		{
-	 	   TRACE(2,"...already atomic, not adding");
-	  	   return;
-		}
-		repos_copy =  xmalloc(strlen(repository)+32);
-		strcpy(repos_copy,repository);
-		strcat(repos_copy,CVSCOPY);
-		if(CVS_MKDIR(repos_copy,0775) && errno!=EEXIST)
-		{
-			error(1,errno,"Can't make mirror directory");
-		}
-		else if(errno==EEXIST)
-		{
-			unlink_file_dir(repos_copy);
-			if(CVS_MKDIR(repos_copy,0775))
-				error(1,errno,"Can't make mirror directory");
-		}
-		if(recursive_mirror(repository,repos_copy))
-			error(1,errno,"Can't mirror directory");
-		xfree(repos_copy);
- 		p = getnode();
-		p->type = NT_UNKNOWN;
-		p->key = xstrdup(repository);
-		p->data = NULL;
-    		if (p->key == NULL || addnode (atomic_repos_list, p) != 0)
-			freenode (p);
-	}
+	if(!lock_server)
+		return (size_t)-1;
+	return do_lock_server(file,repository,write?"Write Advisory":"Read Advisory");
 }
 
-static void do_atomic_end(char *repository)
+/* Cleanup lock(s) */
+int do_unlock_file(size_t lockId)
 {
-	if(atomic_commits)
-	{
-		char *main_repos = (char*)xmalloc(strlen(repository)+32);
-		char *backup_repos = (char*)xmalloc(strlen(repository)+32);
-		char *copy_repos = (char*)xmalloc(strlen(repository)+32);
-		int saved_errno;
-		
-		TRACE(2,"do_atomic_end %s",repository);
-		strcpy(main_repos,repository);
-		strcpy(backup_repos,repository);
-		strcpy(copy_repos,repository);
-		strcat(copy_repos,CVSCOPY);
-		strcat(backup_repos,CVSBACKUP);
-		if(isdir(copy_repos))
-		{
-			if(isdir(backup_repos))
-				if(unlink_file_dir(backup_repos))
-					error(1,errno,"Couldn't remove old backup repository %s",backup_repos);
+ 	char line[1024];
 
-			/* Remove symlinked copy */
-			if(CVS_RENAME(main_repos,backup_repos))
-				error(1,errno,"Couldn't rename %s -> %s",main_repos,backup_repos);
-			if(CVS_RENAME(copy_repos,main_repos))
-			{
-				saved_errno = errno;
-				CVS_RENAME(backup_repos, main_repos);
-				errno = saved_errno;
-				error(1,errno,"Couldn't rename %s -> %s",copy_repos,main_repos);
-			}
-			if(unlink_file_dir(backup_repos))
-				error(1,errno,"Couldn't remove backup repository %s",backup_repos);
-		}
-		xfree(main_repos);
-		xfree(backup_repos);
-		xfree(copy_repos);
+	if(!lock_server)
+		return 0;
+
+ 	switch(lock_server_command(line,sizeof(line),"Unlock %u\n",lockId))
+ 	{
+ 	case 0:
+ 		break;
+ 	case 1:
+ 		return -1;
+ 	default:
+ 		error(1,0,"Unknown response from lock server: %s", line+4);
+ 	}
+	return 0;
+}
+
+int do_lock_version(size_t lockId, const char *branch, char **version)
+{
+ 	char line[1024],*p,*q;
+
+	if(!lock_server)
+	{
+		if(version)
+			*version=NULL;
+		return 0;
 	}
+
+ 	switch(lock_server_command(line,sizeof(line),"Version %u|%s\n",lockId,branch))
+ 	{
+ 	case 0:
+		if(version)
+		{
+			p=strchr(line,'(');
+			if(!p)
+				*version=NULL;
+			else
+			{
+				p++;
+				q=strchr(p,')');
+				if(!q)
+					*version=NULL;
+				else
+				{
+					*version=(char*)xmalloc((q-p)+1);
+					strncpy(*version,p,q-p);
+					(*version)[q-p]='\0';
+				}
+			}
+		}
+ 		break;
+ 	case 1:
+		error(1,0,"Version request failed: %s", line+4);
+ 		return -1;
+ 	default:
+ 		error(1,0,"Unknown response from lock server: %s", line+4);
+ 	}
+	return 0;
 }
 
 /* Return a newly malloc'd string containing the name of the lock for the
@@ -509,9 +455,9 @@ lock_name (repository, name)
 	    short_repos = ".";
 	else
 #ifdef SJIS
-	    assert (isslashmb(repository, short_repos-1));
+	    assert (ISDIRSEPMB(repository, short_repos-1));
 #else
-	    assert (isslash(short_repos[-1]));
+	    assert (ISDIRSEP(short_repos[-1]));
 #endif
 
 	retval = xmalloc (strlen (lock_dir)
@@ -538,7 +484,7 @@ lock_name (repository, name)
 	    if (S_ISDIR (sb.st_mode))
 		goto created;
 	    else
-		error (1, 0, "%s is not a directory", retval);
+		error (1, 0, "%s is not a directory", fn_root(retval));
 	}
 
 	/* Now add the directories one at a time, so we can create
@@ -624,20 +570,19 @@ lock_name (repository, name)
     return retval;
 }
 
-/*
- * walklist proc for removing a list of locks
- */
-static int atomic_unlock_proc (Node *p, void *closure)
+void Lock_Cleanup_Directory()
 {
-	do_atomic_end(p->key);
-    return (0);
+	/* Called by recurse after single directory lock */
+	/* Don't kill the lockserver here */
+	if(lock_server)
+		return; 
+	Lock_Cleanup();
 }
 
 /*
  * Clean up all outstanding locks
  */
-void
-Lock_Cleanup ()
+void Lock_Cleanup ()
 {
     /* FIXME: error handling here is kind of bogus; we sometimes will call
        error, which in turn can call us again.  For the moment work around
@@ -652,12 +597,11 @@ Lock_Cleanup ()
 	if(lock_server)
 	{
 		/* Do lock server stuff */
-		do_unlock_server(NULL);
-		in_lock_cleanup = 0;
+		if(lock_server_socket!=-1)
+			cvs_tcp_close(lock_server_socket);
+		lock_server_socket=-1;
 
-		if(atomic_repos_list)
-			walklist (atomic_repos_list, atomic_unlock_proc, NULL);
-		dellist(&atomic_repos_list);
+		in_lock_cleanup = 0;
 		return;
 	}
 
@@ -673,9 +617,6 @@ Lock_Cleanup ()
 	locked_list = NULL;
     }
 
-/*    if(atomic_repos_list)
-        walklist (atomic_repos_list, atomic_unlock_proc, NULL); */
-    dellist(&atomic_repos_list);
     in_lock_cleanup = 0;
 }
 
@@ -731,9 +672,6 @@ lock_simple_remove (lock)
 	xfree (tmp);
     }
 
-    if (writelock != NULL)
-	do_atomic_end(lock->repository);
-
     /* If writelock is set, the lock directory *might* have been created, but
        since write_lock doesn't use SIG_beginCrSect the way that set_lock
        does, we don't know that.  That is why we need to check for
@@ -742,7 +680,7 @@ lock_simple_remove (lock)
     {
 	tmp = lock_name (lock->repository, writelock);
 	if ( CVS_UNLINK (tmp) < 0 && ! existence_error (errno))
-	    error (0, errno, "failed to remove lock %s", tmp);
+	    error (0, errno, "failed to remove lock %s", fn_root(tmp));
 	xfree (tmp);
     }
 
@@ -774,8 +712,8 @@ Reader_Lock (xrepository)
 
 	if(lock_server)
 	{
-		/* Do lock server stuff */
-		return do_lock_server(xrepository,"Directory Read");
+		/* No recursive locks */
+		return 0;
 	}
 
     /* we only do one directory at a time for read locks! */
@@ -836,7 +774,7 @@ Reader_Lock (xrepository)
     if ((fp = CVS_FOPEN (tmp, "w+")) == NULL || fclose (fp) == EOF)
     {
 	error (0, errno, "cannot create read lock in repository `%s'",
-	       xrepository);
+	       fn_root(xrepository));
 	if (readlock != NULL)
 	    xfree (readlock);
 	readlock = NULL;
@@ -1003,7 +941,7 @@ write_lock (lock)
 	    int xerrno = errno;
 
 	    if ( CVS_UNLINK (tmp) < 0 && ! existence_error (errno))
-		error (0, errno, "failed to remove lock %s", tmp);
+		error (0, errno, "failed to remove lock %s", fn_root(tmp));
 
 	    /* free the lock dir if we created it */
 	    if (status == L_OK)
@@ -1013,7 +951,7 @@ write_lock (lock)
 
 	    /* return the error */
 	    error (0, xerrno, "cannot create write lock in repository `%s'",
-		   lock->repository);
+		   fn_root(lock->repository));
 	    xfree (tmp);
 	    return (L_ERROR);
 	}
@@ -1192,7 +1130,7 @@ set_lock (lock, will_wait)
 	{
 	    error (0, errno,
 		   "failed to create lock directory for `%s' (%s)",
-		   lock->repository, masterlock);
+		   fn_root(lock->repository), masterlock);
 	    return (L_ERROR);
 	}
 
@@ -1204,7 +1142,7 @@ set_lock (lock, will_wait)
 	    if (existence_error (errno))
 		continue;
 
-	    error (0, errno, "couldn't stat lock directory `%s'", masterlock);
+	    error (0, errno, "couldn't stat lock directory `%s'", fn_root(masterlock));
 	    return (L_ERROR);
 	}
 
@@ -1294,35 +1232,6 @@ lock_obtained (repos)
     xfree (msg);
 }
 
-void lock_crashrecover(char *repository)
-{
-	TRACE(3,"lock_crashrecover %s",repository);
-	if(!isdir(repository)) // Repository missing...
-	{
-		char *tmp = xmalloc(strlen(repository)+sizeof(CVSBACKUP));
-		strcpy(tmp,repository);
-		strcat(tmp,CVSBACKUP);
-		if(isdir(tmp))
-		{
-			int n;
-			for(n=0; n<60 && !isdir(repository); n++)
-			{
-				// Possible backup recovery... wait a bit to see if it recovers by itself
-				sleep(1);
-				if(isdir(repository))
-					break;
-				// OK it isn't recovering...
-				error(0,0,"Waiting for atomic write to complete...");
-				sleep(5);
-				CVS_RENAME(tmp,repository);
-			}
-			if(!isdir(repository))			
-				error(1,0,"Repository %s is currently called %s and cannot be recovered for some reason.  Manual intervention required.",repository,tmp);
-		}
-		xfree(tmp);
-	}
-}
-
 static int lock_filesdoneproc PROTO ((void *callerdat, int err,
 				      char *repository, char *update_dir,
 				      List *entries));
@@ -1362,28 +1271,6 @@ lock_filesdoneproc (callerdat, err, repository, update_dir, entries)
     return (err);
 }
 
-static int
-lock_final(void *callerdat, int err, char *repository, char *update_dir, List *entries)
-{
-	do_atomic_start(repository);
-	return 0;
-}
-
-static int
-lockserver_filesdoneproc (void *callerdat, int err, char *repository, char *update_dir, List *entries)
-{
-	int local = *(int*)callerdat;
-
-	if(local)
-		do_lock_server(repository,"Directory Write");
-	else
-		do_lock_server(repository,"Directory Write Recursive");
-
-	do_atomic_start(repository);
-
-   	return err;
-}
-
 void
 lock_tree_for_write (int argc, char **argv, int local, int which, int aflag)
 {
@@ -1392,27 +1279,16 @@ lock_tree_for_write (int argc, char **argv, int local, int which, int aflag)
      * Run the recursion processor to find all the dirs to lock and lock all
      * the dirs
      */
-	atomic_repos_list = getlist ();
 	if(lock_server)
-	{
-		/* Do lock server stuff */
-	    err = start_recursion (NULL, lockserver_filesdoneproc,
-			   NULL, NULL, &local, argc, argv, 1/*local*/,
-			   which, aflag, 0,  NULL, 0, NULL);
-		return;
-	}
+		return; /* No recursive locks */
     lock_tree_list = getlist ();
     err = start_recursion ((FILEPROC) NULL, lock_filesdoneproc,
-			   (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL, NULL, argc,
+			   (PREDIRENTPROC) NULL, (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL, NULL, argc,
 			   argv, local, which, aflag, 0, (char *) NULL, 0,
 			   NULL);
     sortlist (lock_tree_list, fsortcmp);
     if (Writer_Lock (lock_tree_list) != 0)
 		error (1, 0, "lock failed - giving up");
-    err = start_recursion ((FILEPROC) NULL, lock_final,
-			   (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL, NULL, argc,
-			   argv, local, which, aflag, 0, (char *) NULL, 0,
-			   NULL);
 }
 
 /* Lock a single directory in REPOSITORY.  It is OK to call this if
@@ -1425,7 +1301,7 @@ lock_dir_for_write (repository)
 	if(lock_server)
 	{
 		// Do lock server stuff
-		do_lock_server(repository,"Directory Write");
+//		do_lock_server(repository,"Directory Write Advisory", NULL);
 		return;
 	}
     if (repository != NULL
@@ -1451,46 +1327,31 @@ lock_dir_for_write (repository)
     }
 }
 
-char *real_dir_name(char *repos)
+int do_modified(size_t lockId, const char *version, const char *oldversion, const char *branch, char type)
 {
-    Node *head, *p;
-
-    TRACE(3,"real_dir_name %s",repos);
-    if(!atomic_repos_list)
-		return xstrdup(repos);
-
-    head = atomic_repos_list->list;
-    for(p = head->next; p!=head; p = p->next)
-    {
-      int prefix_len = strlen(p->key);
-      if(!pathncmp(repos, p->key, prefix_len, NULL))
-      {
-		char *tmp = xmalloc(strlen(repos)+sizeof(CVSCOPY));
-		memcpy(tmp,repos,prefix_len);
-		strcpy(tmp+prefix_len,CVSCOPY);
-		strcat(tmp,repos+prefix_len);
-		TRACE(3,"real dir name is %s",tmp);
-		return tmp;
-      }
-    }
-    return xstrdup(repos);
-}
-
-static int atomic_dir_exists(char *repository)
-{
-    Node *head, *p;
-    
-    if(!atomic_repos_list)
+	if(lock_server)
+	{
+		char line[1024];
+		switch(lock_server_command(line,sizeof(line),"Modified %s|%d|%s|%s|%s\n",(type=='A')?"Added":(type=='D')?"Deleted":"",lockId,branch,version,oldversion))
+		{
+			case 0:
+				break;
+			default:
+				error(1,0,"Couldn't send Modified to lock server: %s",line+4);
+		}
+	}
 	return 0;
-
-    head = atomic_repos_list->list;
-    for(p = head->next; p!=head; p = p->next)
-    {
-      if(!pathncmp(repository, p->key, strlen(p->key), NULL))
-      {
-	return 1;
-      }
-    }
-    return 0;
 }
 
+int local_lockserver()
+{
+#ifdef _WIN32
+	HANDLE hSem = OpenSemaphore(GENERIC_READ,FALSE,"CVSNT_Lockserver");
+	if(hSem)
+	{
+		CloseHandle(hSem);
+		return 1;
+	}
+#endif
+	return 0;
+}

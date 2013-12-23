@@ -22,8 +22,16 @@
 #include <io.h>
 #endif
 #include <setjmp.h>
-#include "getopt.h"
+#include "getopt1.h"
 #include "diffrun.h"
+
+#ifdef HAVE_UNISTD_H
+#include <unistd.h>
+#endif
+
+#ifdef HAVE_GETOPT_H
+#include <getopt.h>
+#endif
 
 extern char *cvs_temp_name ();
 
@@ -502,6 +510,9 @@ diff3_run (argc, argv, out, callbacks_arg)
       output_diff3 (diff3, mapping, rev_mapping);
       conflicts_found = 0;
     }
+
+  if (conflicts_found == 0 && diff3 == 0)
+	  conflicts_found = 3;
 
   free(content0);
   free(content1);
@@ -1724,7 +1735,7 @@ output_diff3_merge (infile, diff, mapping, rev_mapping,
 {
   int c, i;
   char cc;
-  int conflicts_found = 0, conflict, output_cr;
+  int conflicts_found = 0, conflict, output_cr=0;
   struct diff3_block *b;
   int linesread = 0;
 
@@ -1743,7 +1754,7 @@ output_diff3_merge (infile, diff, mapping, rev_mapping,
       switch (type)
 	{
 	default: continue;
-	case DIFF_2ND: if (!show_2nd) continue; conflict = 1; break;
+	case DIFF_2ND: if (!show_2nd) continue; conflict = 0; /* was 1 */ break;
 	case DIFF_3RD: if (overlap_only) continue; conflict = 0; break;
 	case DIFF_ALL: if (simple_only) continue; conflict = flagging;
 	  format_2nd = "||||||| %s\n";

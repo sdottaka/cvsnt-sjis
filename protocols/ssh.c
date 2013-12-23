@@ -15,7 +15,7 @@
 #include <string.h>
 #ifdef _WIN32
 #include <io.h>
-#define VC_EXTRALEAN
+#define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #else
@@ -174,6 +174,9 @@ int ssh_connect(const struct protocol_interface *protocol, int verify_only)
 	else
 		strcpy(command_line,"cvs");
 	strcat(command_line," server");
+
+	if(current_server->current_root->optional_2)
+		key=current_server->current_root->optional_2;
 
 	if(plink_connect(username, password, key, server, atoi(current_server->current_root->port), version?atoi(version):0, command_line))
 	{

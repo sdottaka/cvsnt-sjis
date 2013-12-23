@@ -102,9 +102,10 @@ am__include = @am__include@
 am__quote = @am__quote@
 cvs_config_dir = @cvs_config_dir@
 cvs_library_dir = @cvs_library_dir@
+cvs_target_name = @cvs_target_name@
 install_sh = @install_sh@
 
-INCLUDES = -I$(top_srcdir)/lib -I$(top_srcdir)/src
+AM_CPPFLAGS = -I$(top_srcdir)/lib -I$(top_srcdir)/src
 AM_CFLAGS = -DCVSGUI -DCVSGUI_PIPE
 
 noinst_LIBRARIES = libcvsgui.a

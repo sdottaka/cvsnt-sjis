@@ -40,6 +40,9 @@ int copy_file (const char *from, const char *to, int force_overwrite, int must_e
     struct stat sb;
     struct utimbuf t;
     int fdin, fdout;
+#ifdef UTIME_EXPECTS_WRITABLE
+    int change_it_back = 0;
+#endif
 
 	TRACE(1,"copy(%s,%s)",from,to);
     if (noexec)
@@ -65,9 +68,8 @@ int copy_file (const char *from, const char *to, int force_overwrite, int must_e
 	if (force_overwrite && unlink_file (to) && !existence_error (errno))
 	    error (1, errno, "unable to remove %s", to);
 		
-    if ((fdout = open (to, O_CREAT | O_TRUNC | O_RDWR | O_BINARY,
-		       (int) sb.st_mode & 07777)) < 0)
-	error (1, errno, "cannot create %s for copying", to);
+    if ((fdout = open (to, O_CREAT | O_TRUNC | O_RDWR | O_BINARY, 0600)) < 0)
+		error (1, errno, "cannot create %s for copying", to);
     if (sb.st_size > 0)
     {
 	char buf[BUFSIZ];
@@ -103,11 +105,23 @@ int copy_file (const char *from, const char *to, int force_overwrite, int must_e
     if (close (fdout) < 0)
 	error (1, errno, "cannot close %s", to);
 
+#ifdef UTIME_EXPECTS_WRITABLE
+	if (!iswritable (to))
+	{
+		xchmod (to, 1);
+		change_it_back = 1;
+	}
+#endif  /* UTIME_EXPECTS_WRITABLE  */
     /* now, set the times for the copied file to match those of the original */
     memset ((char *) &t, 0, sizeof (t));
     t.actime = sb.st_atime;
     t.modtime = sb.st_mtime;
-    (void) utime (to, &t);
+    utime (to, &t);
+	chmod(to,sb.st_mode);
+#ifdef UTIME_EXPECTS_WRITABLE
+	if (change_it_back)
+		xchmod (to, 0);
+#endif  /*  UTIME_EXPECTS_WRITABLE  */
 	return 0;
 }
 
@@ -121,9 +135,12 @@ int copy_and_zip_file (const char *from, const char *to, int force_overwrite, in
     int fdin, fdout;
     z_stream zstr = {0};
     int zstatus;
-    char buf[BUFSIZ];
-    char zbuf[BUFSIZ*2];
-    int n;
+    char buf[BUFSIZ*10];
+    char zbuf[BUFSIZ*20];
+    int n,zlen;
+#ifdef UTIME_EXPECTS_WRITABLE
+    int change_it_back = 0;
+#endif
 
 	TRACE(1,"copy_and_zip(%s,%s)",from,to);
     if (noexec)
@@ -149,8 +166,7 @@ int copy_and_zip_file (const char *from, const char *to, int force_overwrite, in
 	if (force_overwrite && unlink_file (to) && !existence_error (errno))
 	    error (1, errno, "unable to remove %s", to);
 
-    if ((fdout = open (to, O_CREAT | O_TRUNC | O_RDWR | O_BINARY,
-		       (int) sb.st_mode & 07777)) < 0)
+    if ((fdout = open (to, O_CREAT | O_TRUNC | O_RDWR | O_BINARY, 0600)) < 0)
 	    error (1, errno, "cannot create %s for copying", to);
 
 	zstatus = deflateInit2 (&zstr, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 31, 8, Z_DEFAULT_STRATEGY);
@@ -173,15 +189,18 @@ int copy_and_zip_file (const char *from, const char *to, int force_overwrite, in
 		else if (n == 0) 
 		    break;
 
+		zlen = deflateBound(&zstr,n);
+		if(zlen>sizeof(zbuf))
+			error(1,0,"compression error: zlen=%d (> %d)",zlen,sizeof(zbuf));
 		zstr.next_in = buf;
 		zstr.avail_in = n;	
 		zstr.next_out = zbuf;
-		zstr.avail_out = sizeof(zbuf);
-		zstatus = deflate (&zstr, 0);
+		zstr.avail_out = zlen;
+		zstatus = deflate (&zstr, Z_SYNC_FLUSH);
 		if(zstatus != Z_OK)	
-		  error(1,0, "compression error (Z_SYNC_FLUSH): (%d)%s", zstatus,zstr.msg);
+		  error(1,0, "compression error (deflate): (%d)%s", zstatus,zstr.msg);
 		
-		n = sizeof(zbuf)-zstr.avail_out;	
+		n = zlen-zstr.avail_out;	
 		if (n && write(fdout, zbuf, n) != n) {
 		    error (1, errno, "cannot write file %s for copying", to);
 		}
@@ -194,6 +213,8 @@ int copy_and_zip_file (const char *from, const char *to, int force_overwrite, in
 	
 	}
 
+	zstr.next_in = buf;
+	zstr.avail_in = 0;
 	zstr.next_out = zbuf;
 	zstr.avail_out = sizeof(zbuf);
 	zstatus = deflate (&zstr, Z_FINISH);
@@ -203,25 +224,37 @@ int copy_and_zip_file (const char *from, const char *to, int force_overwrite, in
 	if (n && write(fdout, zbuf, n) != n) {
 	   error (1, errno, "cannot write file %s for copying", to);
 	}
-	
+
 	zstr.next_in = buf;
 	zstr.avail_in = 0;
 	zstr.next_out = zbuf;
 	zstr.avail_out = sizeof(zbuf);
 	zstatus = deflateEnd(&zstr);
 	if(zstatus != Z_OK)
-	  error(1,0, "compression error: %s", zstr.msg);
+	  error(1,0, "compression error (deflateEnd): (%d) %s", zstatus, zstr.msg);
 
 	if (close (fdin) < 0) 
 	    error (0, errno, "cannot close %s", from);
 	if (close (fdout) < 0)
 	    error (1, errno, "cannot close %s", to);
 
+#ifdef UTIME_EXPECTS_WRITABLE
+	if (!iswritable (to))
+	{
+		xchmod (to, 1);
+		change_it_back = 1;
+	}
+#endif  /* UTIME_EXPECTS_WRITABLE  */
     /* now, set the times for the copied file to match those of the original */
     memset ((char *) &t, 0, sizeof (t));
     t.actime = sb.st_atime;
     t.modtime = sb.st_mtime;
-    (void) utime (to, &t);
+    utime (to, &t);
+	chmod(to,sb.st_mode);
+#ifdef UTIME_EXPECTS_WRITABLE
+	if (change_it_back)
+		xchmod (to, 0);
+#endif  /*  UTIME_EXPECTS_WRITABLE  */
 	return 0;
 }
 
@@ -235,9 +268,12 @@ int copy_and_unzip_file (const char *from, const char *to, int force_overwrite, 
     int fdin, fdout;
     z_stream zstr = {0};
     int zstatus;
-    char buf[BUFSIZ];
-    char zbuf[BUFSIZ*10];
+    char buf[BUFSIZ*10];
+    char zbuf[BUFSIZ*20];
     int n;
+#ifdef UTIME_EXPECTS_WRITABLE
+    int change_it_back = 0;
+#endif
 
 	TRACE(1,"copy_and_unzip(%s,%s)",from,to);
     if (noexec)
@@ -263,8 +299,7 @@ int copy_and_unzip_file (const char *from, const char *to, int force_overwrite, 
 	if (force_overwrite && unlink_file (to) && !existence_error (errno))
 	    error (1, errno, "unable to remove %s", to);
 
-    if ((fdout = open (to, O_CREAT | O_TRUNC | O_RDWR | O_BINARY,
-		       (int) sb.st_mode & 07777)) < 0)
+    if ((fdout = open (to, O_CREAT | O_TRUNC | O_RDWR | O_BINARY, 0600))<0)
 	    error (1, errno, "cannot create %s for copying", to);
 
 	zstatus = inflateInit2 (&zstr, 47);
@@ -289,19 +324,22 @@ int copy_and_unzip_file (const char *from, const char *to, int force_overwrite, 
 
 		zstr.next_in = buf;
 		zstr.avail_in = n;	
-		zstr.next_out = zbuf;
-		zstr.avail_out = sizeof(zbuf);
-		zstatus = inflate (&zstr, 0);
-		if(zstatus != Z_OK && zstatus != Z_STREAM_END)	
-		  error(1,0, "expansion error (inflate): (%d)%s", zstatus,zstr.msg);
-		
-		n = sizeof(zbuf)-zstr.avail_out;	
-		if (n && write(fdout, zbuf, n) != n) {
-		    error (1, errno, "cannot write file %s for copying", to);
+		while(zstr.avail_in)
+		{
+			zstr.next_out = zbuf;
+			zstr.avail_out = sizeof(zbuf);
+			zstatus = inflate (&zstr, 0);
+			if(zstatus != Z_OK && zstatus != Z_STREAM_END)	
+			error(1,0, "expansion error (inflate): (%d)%s", zstatus,zstr.msg);
+			
+			n = sizeof(zbuf)-zstr.avail_out;	
+			if (n && write(fdout, zbuf, n) != n) {
+				error (1, errno, "cannot write file %s for copying", to);
+			}
 		}
 		if(zstatus == Z_STREAM_END)
 			break;
-	    }
+		}
 
 #ifdef HAVE_FSYNC
 	    if (fsync (fdout)) 
@@ -333,11 +371,23 @@ int copy_and_unzip_file (const char *from, const char *to, int force_overwrite, 
 	if (close (fdout) < 0)
 	    error (1, errno, "cannot close %s", to);
 
+#ifdef UTIME_EXPECTS_WRITABLE
+	if (!iswritable (to))
+	{
+		xchmod (to, 1);
+		change_it_back = 1;
+	}
+#endif  /* UTIME_EXPECTS_WRITABLE  */
     /* now, set the times for the copied file to match those of the original */
     memset ((char *) &t, 0, sizeof (t));
     t.actime = sb.st_atime;
     t.modtime = sb.st_mtime;
-    (void) utime (to, &t);
+    utime (to, &t);
+	chmod(to,sb.st_mode);
+#ifdef UTIME_EXPECTS_WRITABLE
+	if (change_it_back)
+		xchmod (to, 0);
+#endif  /*  UTIME_EXPECTS_WRITABLE  */
 	return 0;
 }
 
@@ -520,47 +570,46 @@ make_directory (name)
     struct stat sb;
 
     if (stat (name, &sb) == 0 && (!S_ISDIR (sb.st_mode)))
-	    error (0, 0, "%s already exists but is not a directory", name);
+	    error (0, 0, "%s already exists but is not a directory", fn_root(name));
     if (!noexec && mkdir (name) < 0)
-	error (1, errno, "cannot make directory %s", name);
+	error (1, errno, "cannot make directory %s", fn_root(name));
 }
 
 /*
  * Make a path to the argument directory, printing a message if something
  * goes wrong.
  */
-void
-make_directories (name)
-    const char *name;
+void make_directories (char *name)
 {
     char *cp;
 
     if (noexec)
-	return;
+		return;
 
     if (mkdir (name) == 0 || errno == EEXIST)
-	return;
+		return;
     if (errno != ENOENT)
     {
-	error (0, errno, "cannot make path to %s", name);
-	return;
+		error (0, errno, "cannot make path to %s", fn_root(name));
+		return;
     }
-    if ((cp = strrchr (name, '/')) == NULL)
-	return;
+	for(cp=name+strlen(name);cp>name && !ISDIRSEP(*cp); --cp)
+		;
+	if(cp==name)
+		return;
     *cp = '\0';
     make_directories (name);
     *cp++ = '/';
     if (*cp == '\0')
-	return;
-    (void) mkdir (name);
+		return;
+    mkdir (name);
 }
 
 /* Create directory NAME if it does not already exist; fatal error for
    other errors.  Returns 0 if directory was created; 1 if it already
    existed.  */
 int
-mkdir_if_needed (name)
-    char *name;
+mkdir_if_needed (char *name)
 {
     if (mkdir (name) < 0)
     {
@@ -576,7 +625,7 @@ mkdir_if_needed (name)
 	    && errno != EACCES
 #endif
 	    )
-	    error (1, errno, "cannot make directory %s", name);
+	    error (1, errno, "cannot make directory %s", fn_root(name));
 	return 1;
     }
     return 0;
@@ -587,39 +636,37 @@ mkdir_if_needed (name)
  * all write permissions.  Adding write permissions honors the current umask
  * setting.
  */
-void
-xchmod (fname, writable)
-    char *fname;
-    int writable;
+void xchmod (char *fname, int writable)
 {
-    struct stat sb;
+	struct stat sb;
     mode_t mode, oumask;
 
     if (stat (fname, &sb) < 0)
     {
 	if (!noexec)
-	    error (0, errno, "cannot stat %s", fname);
+	    error (0, errno, "cannot stat %s", fn_root(fname));
 	return;
     }
+    oumask = 022; /* NT Default umask */
+    (void) umask (oumask);
     if (writable)
     {
-	oumask = umask (0);
-	(void) umask (oumask);
-	mode = sb.st_mode | ~oumask & (((sb.st_mode & S_IRUSR) ? S_IWUSR : 0) |
-				       ((sb.st_mode & S_IRGRP) ? S_IWGRP : 0) |
-				       ((sb.st_mode & S_IROTH) ? S_IWOTH : 0));
+		mode = sb.st_mode | (~oumask
+					& (((sb.st_mode & S_IRUSR) ? S_IWUSR : 0)
+					| ((sb.st_mode & S_IRGRP) ? S_IWGRP : 0)
+					| ((sb.st_mode & S_IROTH) ? S_IWOTH : 0)));
     }
     else
     {
-	mode = sb.st_mode & ~(S_IWRITE | S_IWGRP | S_IWOTH);
+		mode = sb.st_mode & ~(S_IWRITE | S_IWGRP | S_IWOTH) & ~oumask;
     }
 
-	TRACE(1,"chmod(%s,%o)",fname,mode);
+	TRACE(1,"chmod(%s,%o)",PATCH_NULL(fname),mode);
     if (noexec)
-	return;
+		return;
 
     if (chmod (fname, mode) < 0)
-	error (0, errno, "cannot change mode of file %s", fname);
+		error (0, errno, "cannot change mode of file %s", fn_root(fname));
 }
 
 
@@ -639,16 +686,14 @@ int wnt_rename (const char *from, const char *to)
     int result, save_errno;
     int readonly = !iswritable (from);
 
-	if(!pathcmp(from,to))
+	if(!strcmp(from,to))
 		return 0;
 
-	chmod(to,S_IWRITE);
+	if(isfile(to))
+		xchmod(to,1);
 
-    if (readonly)
-    {
-		if (chmod (from, S_IWRITE) < 0)
-			return -1;
-    }
+    if(readonly)
+		xchmod (from,1);
 
 #ifdef CVS95
 	/* Win95 doesn't support atomic rename over existing files */
@@ -662,16 +707,11 @@ int wnt_rename (const char *from, const char *to)
     if (readonly)
     {
 		if (result)
-		{
-			if (chmod (to, S_IREAD) < 0)
-				return -1;
-		}
+			xchmod (to, 0);
 		else
-		{
 			/* We have a choice of which error to report, if there is
 			one here too; report the one from rename ().  */
-			chmod (from, S_IREAD);
-		}
+			xchmod (from, 0);
     }
 	if(!result)
 	{
@@ -689,11 +729,12 @@ rename_file (from, to)
     const char *to;
 {
 	TRACE(1,"rename(%s,%s)",from,to);
+
     if (noexec)
 		return;
 
     if (CVS_RENAME (from, to) < 0)
-		error (1, errno, "cannot rename file %s to %s", from, to);
+		error (1, errno, "cannot rename file %s to %s", fn_root(from), fn_root(to));
 }
 
 /*
@@ -731,7 +772,7 @@ unlink_file_dir (f)
     {
 	/* under Windows NT, unlink returns EACCES if the path
 	   is a directory.  Under Windows 95, ENOENT.  */
-        if (errno == EISDIR || errno == EACCES || errno == ENOENT)
+        if (errno == EISDIR || errno == EACCES || errno == ENOENT || errno == ENOTEMPTY)
                 return deep_remove_dir (f);
         else
 		/* The file wasn't a directory and some other
@@ -784,7 +825,7 @@ deep_remove_dir (path)
 		   We aren't really trying to prevent race conditions here
 		   (e.g. what if something changes between readdir and
 		   unlink?)  */
-		if (errno == EISDIR || errno == EACCES || errno == ENOENT)
+		if (errno == EISDIR || errno == EACCES || errno == ENOENT || errno == ENOTEMPTY)
 		{
 		    if (deep_remove_dir (buf))
 		    {
@@ -858,13 +899,13 @@ xcmp (file1, file2)
     int ret;
 
     if ((fd1 = open (file1, O_RDONLY | O_BINARY,0)) < 0)
-	error (1, errno, "cannot open file %s for comparing", file1);
+	error (1, errno, "cannot open file %s for comparing", fn_root(file1));
     if ((fd2 = open (file2, O_RDONLY | O_BINARY,0)) < 0)
-	error (1, errno, "cannot open file %s for comparing", file2);
+	error (1, errno, "cannot open file %s for comparing", fn_root(file2));
     if (fstat (fd1, &sb1) < 0)
-	error (1, errno, "cannot fstat %s", file1);
+	error (1, errno, "cannot fstat %s", fn_root(file1));
     if (fstat (fd2, &sb2) < 0)
-	error (1, errno, "cannot fstat %s", file2);
+	error (1, errno, "cannot fstat %s", fn_root(file2));
 
     /* A generic file compare routine might compare st_dev & st_ino here 
        to see if the two files being compared are actually the same file.
@@ -889,11 +930,11 @@ xcmp (file1, file2)
 	{
 	    read1 = block_read (fd1, buf1, buf_size);
 	    if (read1 == (size_t)-1)
-		error (1, errno, "cannot read file %s for comparing", file1);
+		error (1, errno, "cannot read file %s for comparing", fn_root(file1));
 
 	    read2 = block_read (fd2, buf2, buf_size);
 	    if (read2 == (size_t)-1)
-		error (1, errno, "cannot read file %s for comparing", file2);
+		error (1, errno, "cannot read file %s for comparing", fn_root(file2));
 
 	    /* assert (read1 == read2); */
 
@@ -934,11 +975,10 @@ isabsolute_remote(const char *filename)
 }
 
 /* Return a pointer into PATH's last component.  */
-char *
-last_component (char *path)
+const char *last_component (const char *path)
 {
-    char *scan;
-    char *last = 0;
+    const char *scan;
+    const char *last = 0;
 
     for (scan = path; *scan; scan++)
 #ifdef SJIS
@@ -1093,8 +1133,8 @@ expand_wild (argc, argv, pargc, pargv)
 	h = FindFirstFileA (argv[i], &fdata);
 	if (h == INVALID_HANDLE_VALUE)
 	{
-	    if (GetLastError () == ENOENT)
-	    {
+//	    if (GetLastError () == ENOENT)
+//	    {
 		/* No match.  The file specified didn't contain a wildcard (in which case
 		   we clearly should return it unchanged), or it contained a wildcard which
 		   didn't match (in which case it might be better for it to be an error,
@@ -1105,11 +1145,12 @@ expand_wild (argc, argv, pargc, pargv)
 		    max_new_argc *= 2;
 		    new_argv = xrealloc (new_argv, max_new_argc * sizeof (char *));
 		}
-	    }
-	    else
-	    {
-		error (1, errno, "cannot find %s", argv[i]);
-	    }
+//	    }
+//	    else
+//	    {
+//			_dosmaperr(GetLastError());
+//			error (1, errno, "cannot find %s", argv[i]);
+//	    }
 	}
 	else
 	{
@@ -1247,4 +1288,39 @@ FILE *cvs_temp_file (filename)
 	GetTempFileNameA(tempdir,"cvs",0,*filename);
 	f=fopen(*filename,"wb+");
 	return f;
+}
+
+void win32ize_root(char *arg)
+{
+	char *p;
+
+	if(ISDIRSEP(arg[0]) && ISDIRSEP(arg[2]) && ISDIRSEP(arg[3]))
+	{
+		strcpy(arg,arg+1);
+		arg[1]=':';
+	}
+	for(p=arg; *p; p++)
+#ifdef SJIS
+		if(*p=='\\' && !_ismbstrail(arg, p))
+#else
+		if(*p=='\\')
+#endif
+			*p='/';
+}
+
+/* On case insensitive systems, find the real case */
+/* On case sensitive ones, just return */
+char *normalize_path(char *arg)
+{
+	if(!arg)
+		return NULL;
+
+	TRACE(3,"normalize_path(%s)",arg);
+	win32ize_root(arg);
+	arg = xrealloc(arg,MAX_PATH*2);
+	ConvertFilespecToCorrectCase(arg);
+	arg = xrealloc(arg, strlen(arg)+1);
+	TRACE(3,"...returns %s",arg);
+
+	return arg;
 }

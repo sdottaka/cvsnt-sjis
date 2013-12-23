@@ -28,9 +28,9 @@
 #include "savecwd.h"
 #include "fileattr.h"
 
-static int add_directory PROTO ((struct file_info *finfo));
-static int build_entry PROTO((char *repository, char *user, char *options,
-		        char *message, List * entries, char *tag));
+static int add_directory(struct file_info *finfo);
+static int build_entry(char *repository, char *user, char *options,
+		        char *message, List * entries, char *tag);
 
 static const char *const add_usage[] =
 {
@@ -60,6 +60,7 @@ add (argc, argv)
        subdirectory.  */
     int found_slash = 0;
     size_t cvsroot_len;
+	const char *mapped_repository;
 
     if (argc == 1 || argc == -1)
 	usage (add_usage);
@@ -107,7 +108,8 @@ add (argc, argv)
 	strip_trailing_slashes (argv[i]);
 	if (strcmp (argv[i], ".") == 0
 	    || strcmp (argv[i], "..") == 0
-	    || fncmp (argv[i], CVSADM) == 0)
+	    || fncmp (argv[i], CVSADM) == 0 
+		|| fncmp (argv[i], CVSDUMMY) == 0)
 	{
 	    if (!quiet)
 		error (0, 0, "cannot add special file `%s'; skipping", argv[i]);
@@ -216,7 +218,7 @@ add (argc, argv)
 		    error_exit ();
 
 		filedir = xstrdup (argv[i]);
-		p = last_component (filedir);
+		p = (char*)last_component (filedir);
 		if (p == filedir)
 		{
 		    update_dir = "";
@@ -236,7 +238,7 @@ add (argc, argv)
 		/* don't add stuff to Emptydir */
 		if (strncmp (repository, current_parsed_root->directory, cvsroot_len) == 0
 #ifdef SJIS
-		    && (ISDIRSEP (repository[cvsroot_len]) && !_ismbstrail(repository, repository + cvsroot_len))
+		    && (ISDIRSEPMB (repository, repository + cvsroot_len))
 #else
 		    && ISDIRSEP (repository[cvsroot_len])
 #endif
@@ -244,7 +246,7 @@ add (argc, argv)
 				CVSROOTADM,
 				sizeof CVSROOTADM - 1) == 0
 #ifdef SJIS
-		    && (ISDIRSEP (repository[cvsroot_len + sizeof CVSROOTADM]) && !_ismbstrail(repository, repository + cvsroot_len + sizeof CVSROOTADM))
+		    && (ISDIRSEPMB (repository, repository + cvsroot_len + sizeof CVSROOTADM))
 #else
 		    && ISDIRSEP (repository[cvsroot_len + sizeof CVSROOTADM])
 #endif
@@ -254,9 +256,9 @@ add (argc, argv)
 
 		/* before we do anything else, see if we have any
 		   per-directory tags */
-		ParseTag (&tag, &date, &nonbranch);
+		ParseTag (&tag, &date, &nonbranch, NULL);
 
-		rcsdir = xmalloc (strlen (repository) + strlen (p) + 5);
+	   rcsdir = xmalloc (strlen (repository) + strlen (p) + 5);
 		sprintf (rcsdir, "%s/%s", repository, p);
 
 		if(fncmp (p, CVSADM))
@@ -300,6 +302,9 @@ add (argc, argv)
     }
 #endif
 
+	if(!server_active)
+		expand_wild(argc,argv,&argc,&argv);
+
     /* walk the arg list adding files/dirs */
     for (i = 0; i < argc; i++)
     {
@@ -309,9 +314,6 @@ add (argc, argv)
 #endif
 	struct file_info finfo;
 	char *p;
-#if defined (SERVER_SUPPORT) && !defined (FILENAMES_CASE_INSENSITIVE)
-	char *found_name;
-#endif
 
 	memset (&finfo, 0, sizeof finfo);
 
@@ -319,7 +321,7 @@ add (argc, argv)
 	    error_exit ();
 
 	finfo.fullname = xstrdup (argv[i]);
-	p = last_component (argv[i]);
+	p = (char*)last_component (argv[i]);
 	if (p == argv[i])
 	{
 	    finfo.update_dir = "";
@@ -343,95 +345,61 @@ add (argc, argv)
 	/* Find the repository associated with our current dir.  */
 	repository = Name_Repository (NULL, finfo.update_dir);
 
+	{
+		char *tag,*date,*version;
+		int nonbranch;
+
+		ParseTag_Dir(finfo.update_dir,&tag,&date,&nonbranch,&version);
+		open_directory(repository,finfo.update_dir,tag,date,nonbranch,version,0);
+		xfree(tag);
+		xfree(date);
+		xfree(version);
+	}
+	finfo.mapped_file = map_filename(repository,finfo.file,&mapped_repository);
+	xfree(mapped_repository);
+	mapped_repository = map_repository(repository);
+
 	/* don't add stuff to Emptydir */
-	if (strncmp (repository, current_parsed_root->directory, cvsroot_len) == 0
+	if (strncmp (mapped_repository, current_parsed_root->directory, cvsroot_len) == 0
 #ifdef SJIS
-	    && (ISDIRSEP (repository[cvsroot_len]) && !_ismbstrail(repository, repository + cvsroot_len)) 
+	    && ISDIRSEPMB (mapped_repository, mapped_repository + cvsroot_len)
 #else
-	    && ISDIRSEP (repository[cvsroot_len])
+	    && ISDIRSEP (mapped_repository[cvsroot_len])
 #endif
-	    && strncmp (repository + cvsroot_len + 1,
+	    && strncmp (mapped_repository + cvsroot_len + 1,
 			CVSROOTADM,
 			sizeof CVSROOTADM - 1) == 0
 #ifdef SJIS
-	    && (ISDIRSEP (repository[cvsroot_len + sizeof CVSROOTADM]) && !_ismbstrail(repository, repository + cvsroot_len + sizeof CVSROOTADM))
+	    && ISDIRSEPMB (mapped_repository, mapped_repository + cvsroot_len + sizeof CVSROOTADM)
 #else
-	    && ISDIRSEP (repository[cvsroot_len + sizeof CVSROOTADM])
+	    && ISDIRSEP (mapped_repository[cvsroot_len + sizeof CVSROOTADM])
 #endif
-	    && strcmp (repository + cvsroot_len + sizeof CVSROOTADM + 1,
+	    && strcmp (mapped_repository + cvsroot_len + sizeof CVSROOTADM + 1,
 		       CVSNULLREPOS) == 0)
-	    error (1, 0, "cannot add to %s", repository);
+	    error (1, 0, "cannot add to %s", fn_root(repository));
 
 	entries = Entries_Open (0, NULL);
 
-	finfo.repository = repository;
+	finfo.repository = (char*)mapped_repository;
+	finfo.virtual_repository = repository;
 	finfo.entries = entries;
-
-#if defined (SERVER_SUPPORT) && !defined (FILENAMES_CASE_INSENSITIVE)
-	if (ign_case)
-	{
-	    /* Need to check whether there is a directory with the
-	       same name but different case.  We'll check for files
-	       with the same name later (when Version_TS calls
-	       RCS_parse which calls fopen_case).  If CVS some day
-	       records directories in the RCS files, then we should be
-	       able to skip the separate check here, which would be
-	       cleaner.  */
-	    DIR *dirp;
-	    struct dirent *dp;
-
-	    dirp = CVS_OPENDIR (finfo.repository);
-	    if (dirp == NULL)
-		error (1, errno, "cannot read directory %s", finfo.repository);
-	    found_name = NULL;
-	    errno = 0;
-	    while ((dp = CVS_READDIR (dirp)) != NULL)
-	    {
-		if (cvs_casecmp (dp->d_name, finfo.file) == 0)
-		{
-		    if (found_name != NULL)
-			error (1, 0, "%s is ambiguous; could mean %s or %s",
-			       finfo.file, dp->d_name, found_name);
-		    found_name = xstrdup (dp->d_name);
-		}
-	    }
-	    if (errno != 0)
-		error (1, errno, "cannot read directory %s", finfo.repository);
-	    CVS_CLOSEDIR (dirp);
-
-	    if (found_name != NULL)
-	    {
-		/* OK, we are about to patch up the name, so patch up
-		   the temporary directory too to match.  The isdir
-		   should "always" be true (since files have ,v), but
-		   I guess we might as well make some attempt to not
-		   get confused by stray files in the repository.  */
-		if (isdir (finfo.file))
-		{
-		    if (CVS_MKDIR (found_name, 0777) < 0
-			&& errno != EEXIST)
-			error (0, errno, "cannot create %s", finfo.file);
-		}
-
-		/* OK, we found a directory with the same name, maybe in
-		   a different case.  Treat it as if the name were the
-		   same.  */
-		finfo.file = found_name;
-	    }
-	}
-#endif
 
 	/* We pass force_tag_match as 1.  If the directory has a
            sticky branch tag, and there is already an RCS file which
            does not have that tag, then the head revision is
            meaningless to us.  */
-	vers = Version_TS (&finfo, options, NULL, NULL, 1, 0);
-    if (! verify_create (repository, vers->tag))
+	vers = Version_TS (&finfo, options, NULL, NULL, 1, 0, 0);
+
+	if(!isdir(mapped_repository))
+	{
+		error(1,0, "Directory %s does not exist on the server",fn_root(repository));
+	}
+    if (! verify_create (mapped_repository, vers->tag))
 	{
 		if(vers->tag)
-			error (1, 0, "User '%s' cannot change %s on tag/branch %s", CVS_Username, repository, vers->tag);
+			error (1, 0, "User '%s' cannot change %s on tag/branch %s", CVS_Username, fn_root(repository), vers->tag);
 		else
-			error (1, 0, "User '%s' cannot change %s", CVS_Username, repository);
+			error (1, 0, "User '%s' cannot change %s", CVS_Username, fn_root(repository));
 	}
 
 	if (vers->vn_user == NULL)
@@ -443,11 +411,10 @@ add (argc, argv)
 		if (vers->ts_user == NULL)
 		{
 		    /* There is no user file either */
-		    error (0, 0, "nothing known about %s", finfo.fullname);
+		    error (0, 0, "nothing known about %s", fn_root(finfo.fullname));
 		    err++;
 		}
-		else if (!isdir (finfo.file)
-			 || wrap_name_has (finfo.file, WRAP_TOCVS))
+		else if (!isdir (finfo.file))
 		{
 		    /*
 		     * See if a directory exists in the repository with
@@ -456,17 +423,22 @@ add (argc, argv)
 		    char *dname = xmalloc (strlen (repository)
 					   + strlen (finfo.file)
 					   + 10);
+		    char *dnamem = xmalloc (strlen (mapped_repository)
+					   + strlen (finfo.file)
+					   + 10);
 		    (void) sprintf (dname, "%s/%s", repository, finfo.file);
-		    if (isdir (dname))
+		    (void) sprintf (dnamem, "%s/%s", mapped_repository, finfo.file);
+		    if (isdir (dnamem))
 		    {
 			error (0, 0,
 			       "cannot add file `%s' since the directory",
-			       finfo.fullname);
+			       fn_root(finfo.fullname));
 			error (0, 0, "`%s' already exists in the repository",
-			       dname);
+			       fn_root(dname));
 			error (1, 0, "illegal filename overlap");
 		    }
 		    xfree (dname);
+			xfree (dnamem);
 
 		    if (vers->options == NULL || *vers->options == '\0')
 		    {
@@ -502,20 +474,12 @@ add (argc, argv)
 			    {
 				if (vers->tag)
 				    error (0, 0, "\
-scheduling %s `%s' for addition on branch `%s'",
-					   (wrap_name_has (finfo.file,
-							   WRAP_TOCVS)
-					    ? "wrapper"
-					    : "file"),
-					   finfo.fullname, vers->tag);
+scheduling file `%s' for addition on branch `%s'",
+					   fn_root(finfo.fullname), vers->tag);
 				else
 				    error (0, 0,
-					   "scheduling %s `%s' for addition",
-					   (wrap_name_has (finfo.file,
-							   WRAP_TOCVS)
-					    ? "wrapper"
-					    : "file"),
-					   finfo.fullname);
+					   "scheduling file `%s' for addition",
+					   fn_root(finfo.fullname));
 			    }
 			}
 		    }
@@ -523,11 +487,10 @@ scheduling %s `%s' for addition on branch `%s'",
 	    }
 	    else if (RCS_isdead (vers->srcfile, vers->vn_rcs))
 	    {
-		if (isdir (finfo.file)
-		    && !wrap_name_has (finfo.file, WRAP_TOCVS))
+		if (isdir (finfo.file))
 		{
 		    error (0, 0, "\
-the directory `%s' cannot be added because a file of the", finfo.fullname);
+the directory `%s' cannot be added because a file of the", fn_root(finfo.fullname));
 		    error (1, 0, "\
 same name already exists in the repository.");
 		}
@@ -547,7 +510,7 @@ same name already exists in the repository.");
 			    if (vers->tag)
 				error (0, 0, "\
 file `%s' will be added on branch `%s' from version %s",
-					finfo.fullname, vers->tag, vers->vn_rcs);
+					fn_root(finfo.fullname), vers->tag, vers->vn_rcs);
 			    else
 				/* I'm not sure that mentioning
 				   vers->vn_rcs makes any sense here; I
@@ -555,11 +518,11 @@ file `%s' will be added on branch `%s' from version %s",
 				   message which is not confusing.  */
 				error (0, 0, "\
 re-adding file %s (in place of dead revision %s)",
-					finfo.fullname, vers->vn_rcs);
+					fn_root(finfo.fullname), vers->vn_rcs);
 			}
 			Register (entries, finfo.file, "0", vers->ts_user,
 				  vers->options,
-				  vers->tag, NULL, NULL, NULL, NULL);
+				  vers->tag, NULL, NULL, NULL, NULL, (time_t)-1);
 			++added_files;
 		    }
 		}
@@ -571,7 +534,7 @@ re-adding file %s (in place of dead revision %s)",
 		 * added it
 		 */
 		error (0, 0, "%s added independently by second party",
-		       finfo.fullname);
+		       fn_root(finfo.fullname));
 		err++;
 	    }
 	}
@@ -583,7 +546,7 @@ re-adding file %s (in place of dead revision %s)",
 	     * inappropriate here
 	     */
 	    if (!quiet)
-		error (0, 0, "%s has already been entered", finfo.fullname);
+		error (0, 0, "%s has already been entered", fn_root(finfo.fullname));
 	    err++;
 	}
 	else if (vers->vn_user[0] == '-')
@@ -600,7 +563,7 @@ re-adding file %s (in place of dead revision %s)",
 		     * it from under us
 		     */
 		    error (0, 0, "\
-cannot resurrect %s; RCS file removed by second party", finfo.fullname);
+cannot resurrect %s; RCS file removed by second party", fn_root(finfo.fullname));
 		    err++;
 		}
 		else
@@ -614,10 +577,10 @@ cannot resurrect %s; RCS file removed by second party", finfo.fullname);
 
 		    (void) strcpy (tmp, vers->vn_user + 1);
 		    (void) strcpy (vers->vn_user, tmp);
-		    (void) sprintf (tmp, "Resurrected %s", finfo.file);
+		    (void) sprintf (tmp, "Resurrected %s", fn_root(finfo.file));
 		    Register (entries, finfo.file, vers->vn_user, tmp,
 			      vers->options,
-			      vers->tag, vers->date, vers->ts_conflict, NULL, NULL);
+			      vers->tag, vers->date, vers->ts_conflict, NULL, NULL, (time_t)-1);
 		    xfree (tmp);
 
 		    /* XXX - bugs here; this really resurrect the head */
@@ -627,12 +590,12 @@ cannot resurrect %s; RCS file removed by second party", finfo.fullname);
 		    if (update (2, argv + i - 1) == 0)
 		    {
 			error (0, 0, "%s, version %s, resurrected",
-			       finfo.fullname,
+			       fn_root(finfo.fullname),
 			       vers->vn_user);
 		    }
 		    else
 		    {
-			error (0, 0, "could not resurrect %s", finfo.fullname);
+			error (0, 0, "could not resurrect %s", fn_root(finfo.fullname));
 			err++;
 		    }
 		}
@@ -640,8 +603,7 @@ cannot resurrect %s; RCS file removed by second party", finfo.fullname);
 	    else
 	    {
 		/* The user file shouldn't be there */
-		error (0, 0, "\
-%s should be removed and is still there (or is back again)", finfo.fullname);
+		error (0, 0, "%s should be removed and is still there (or is back again)", fn_root(finfo.fullname));
 		err++;
 	    }
 	}
@@ -650,7 +612,7 @@ cannot resurrect %s; RCS file removed by second party", finfo.fullname);
 	    /* A normal entry, ts_rcs is valid, so it must already be there */
 	    if (!quiet)
 		error (0, 0, "%s already exists, with version number %s",
-			finfo.fullname,
+			fn_root(finfo.fullname),
 			vers->vn_user);
 	    err++;
 	}
@@ -658,8 +620,7 @@ cannot resurrect %s; RCS file removed by second party", finfo.fullname);
 
 	/* passed all the checks.  Go ahead and add it if its a directory */
 	if (begin_err == err
-	    && isdir (finfo.file)
-	    && !wrap_name_has (finfo.file, WRAP_TOCVS))
+	    && isdir (finfo.file))
 	{
 	    err += add_directory (&finfo);
 	}
@@ -671,17 +632,16 @@ cannot resurrect %s; RCS file removed by second party", finfo.fullname);
 #endif
 	}
 	xfree (repository);
+	xfree (mapped_repository);
 	Entries_Close (entries);
+	close_directory();
 
 	if (restore_cwd (&cwd, NULL))
 	    error_exit ();
 	free_cwd (&cwd);
 
 	xfree (finfo.fullname);
-#if defined (SERVER_SUPPORT) && !defined (FILENAMES_CASE_INSENSITIVE)
-	if (ign_case && found_name != NULL)
-	    xfree (found_name);
-#endif
+	xfree (finfo.mapped_file);
     }
     if (added_files && !really_quiet)
 	error (0, 0, "use '%s commit' to add %s permanently",
@@ -692,6 +652,10 @@ cannot resurrect %s; RCS file removed by second party", finfo.fullname);
 	xfree (message);
     if (options)
 	xfree (options);
+
+	if(!server_active)
+	    /* Free the data which expand_wild allocated.  */
+	    free_names (&argc, argv);
 
     return (err);
 }
@@ -713,6 +677,7 @@ static int new_directory_contents(const char *workfile, char **buffer, size_t *b
 static int add_directory (struct file_info *finfo)
 {
     char *repository = finfo->repository;
+	const char *virtual_repository = finfo->virtual_repository;
     List *entries = finfo->entries;
     char *dir = finfo->file;
 	int err = 0;
@@ -731,14 +696,15 @@ static int add_directory (struct file_info *finfo)
 	       "directory %s not added; must be a direct sub-directory", dir);
 	return (1);
     }
-    if (fncmp (dir, CVSADM) == 0)
+    if (fncmp (dir, CVSADM) == 0
+		|| fncmp (dir, CVSDUMMY) == 0)
     {
-	error (0, 0, "cannot add a `%s' directory", CVSADM);
+	error (0, 0, "cannot add a `%s' directory", dir);
 	return (1);
     }
 
     /* before we do anything else, see if we have any per-directory tags */
-    ParseTag (&tag, &date, &nonbranch);
+    ParseTag (&tag, &date, &nonbranch, NULL);
 
     /* Remember the default attributes from this directory, so we can apply
        them to the new directory.  */
@@ -760,12 +726,13 @@ static int add_directory (struct file_info *finfo)
 	goto out;
     }
 
-    rcsdir = xmalloc (strlen (repository) + strlen (dir) + 5);
+    rcsdir = xmalloc (strlen (repository) + strlen(virtual_repository) + strlen (dir) + 5);
     sprintf (rcsdir, "%s/%s", repository, dir);
     if (isfile (rcsdir) && !isdir (rcsdir))
     {
-	error (0, 0, "%s is not a directory; %s not added", rcsdir,
-	       finfo->fullname);
+    sprintf (rcsdir, "%s/%s", virtual_repository, dir);
+	error (0, 0, "%s is not a directory; %s not added", fn_root(rcsdir),
+	       fn_root(finfo->fullname));
 	goto out;
     }
 
@@ -774,7 +741,8 @@ static int add_directory (struct file_info *finfo)
 		       + 80
 		       + (tag == NULL ? 0 : strlen (tag) + 80)
 		       + (date == NULL ? 0 : strlen (date) + 80));
-    (void) sprintf (message, "Directory %s added to the repository\n", rcsdir);
+    sprintf (rcsdir, "%s/%s", virtual_repository, dir);
+    (void) sprintf (message, "Directory %s added to the repository\n", fn_root(rcsdir));
     if (tag)
     {
 	(void) strcat (message, "--> Using per-directory sticky tag `");
@@ -788,6 +756,7 @@ static int add_directory (struct file_info *finfo)
 	(void) strcat (message, "'\n");
     }
 
+    sprintf (rcsdir, "%s/%s", repository, dir);
     if (!isdir (rcsdir))
     {
 	mode_t omask;
@@ -808,7 +777,7 @@ static int add_directory (struct file_info *finfo)
 	    omask = umask (cvsumask);
 	    if (CVS_MKDIR (rcsdir, 0777) < 0)
 	    {
-		error (0, errno, "cannot mkdir %s", rcsdir);
+		error (0, errno, "cannot mkdir %s", fn_root(rcsdir));
 		(void) umask (omask);
 		goto out;
 	    }
@@ -844,6 +813,7 @@ static int add_directory (struct file_info *finfo)
 	dellist (&ulist);
     }
 
+    sprintf (rcsdir, "%s/%s", virtual_repository, dir);
     if (!server_active)
         Create_Admin (".", finfo->fullname, rcsdir, tag, date, nonbranch, 0, 1);
     if (tag)
@@ -914,7 +884,7 @@ build_entry (repository, user, options, message, entries, tag)
      */
     line = xmalloc (strlen (user) + 20);
     (void) sprintf (line, "Initial %s", user);
-    Register (entries, user, "0", line, options, tag, (char *) 0, (char *) 0, NULL, NULL);
+    Register (entries, user, "0", line, options, tag, (char *) 0, (char *) 0, NULL, NULL, (time_t)-1);
     xfree (line);
     return (0);
 }

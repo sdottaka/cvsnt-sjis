@@ -860,7 +860,7 @@ yylex()
 #define TM_YEAR_ORIGIN 1900
 
 /* Yield A - B, measured in seconds.  */
-static long
+long
 difftm (a, b)
      struct tm *a, *b;
 {

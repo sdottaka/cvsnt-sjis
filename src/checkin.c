@@ -21,37 +21,53 @@
 
 int
 Checkin (int type, struct file_info *finfo, char *rcs, char *rev, char *tag,
-    char *options, char *message, char *merge_from_tag1, char *merge_from_tag2, rcs_callback_t callback)
+    char *options, char *message, const char *merge_from_tag1, const char *merge_from_tag2, RCSCHECKINPROC callback)
 {
     Vers_TS *vers;
     int set_time;
-    char *tocvsPath = NULL;
 	kflag kf;
 
     /* Hmm.  This message goes to stdout and the "foo,v  <--  foo"
        message from "ci" goes to stderr.  This doesn't make a whole
        lot of sense, but making everything go to stdout can only be
        gracefully achieved once RCS_checkin is librarified.  */
-    cvs_output ("Checking in ", 0);
+
+	cvs_output ("Checking in ", 0);
     cvs_output (fn_root(finfo->fullname), 0);
     cvs_output (";\n", 0);
 
-    tocvsPath = wrap_tocvs_process_file (finfo->file);
-    if (!noexec)
-    {
-        if (tocvsPath)
-	{
-	    if (unlink_file_dir (finfo->file) < 0)
-		if (! existence_error (errno))
-		    error (1, errno, "cannot remove %s", fn_root(finfo->fullname));
-	    rename_file (tocvsPath, finfo->file);
-	}
-    }
-
     if (finfo->rcs == NULL)
-		finfo->rcs = RCS_parse (finfo->file, finfo->repository);
+		finfo->rcs = RCS_parse (finfo->mapped_file, finfo->repository);
 
-    switch (RCS_checkin (finfo->rcs, NULL, message, rev, RCS_FLAGS_KEEPFILE, merge_from_tag1, merge_from_tag2, callback))
+#ifdef SJIS
+	if (compat_2_0_14 == 0)
+	{
+#endif
+	/* Migrate out of the attic */
+	RCS_setattic(finfo->rcs, 0);
+#ifdef SJIS
+	}
+#endif
+
+	if(tag && RCS_isfloating(finfo->rcs, tag))
+	{
+		char *cp;
+		/* Checking into a magic branch */
+		/* Change it into a 'normal' branch before the commit */
+		char *branch_head = RCS_getbranch(finfo->rcs,rev,0);
+		rev = RCS_magicrev(finfo->rcs, branch_head);
+		if(!rev)
+			error(1,0,"Internal error: RCS_magicrev failed.  Cannot checkin.");
+		RCS_settag(finfo->rcs,tag,rev,NULL);
+		xfree(branch_head);
+		cp = strrchr(rev,'.');
+		for(--cp;*cp!='.';--cp)
+			;
+		strcpy(cp,cp+2);
+	}
+
+
+    switch (RCS_checkin (finfo->rcs, finfo->file, message, rev, RCS_FLAGS_KEEPFILE, merge_from_tag1, merge_from_tag2, callback, NULL))
     {
 	case 0:			/* everything normal */
 
@@ -73,8 +89,8 @@ Checkin (int type, struct file_info *finfo, char *rcs, char *rev, char *tag,
                call RCS_checkout here, compare the resulting files
                using xcmp, and rename if necessary.  I think this
                should be fixed in RCS_cmp_file.  */
-		kf=RCS_get_kflags(options);
-		if(callback || (kf&(KFLAG_PRESERVE|KFLAG_BINARY))
+		kf=RCS_get_kflags(options, 1);
+		if(callback || (kf.flags&(KFLAG_PRESERVE|KFLAG_BINARY))
 			|| RCS_cmp_file (finfo->rcs, rev, options, finfo->file) == 0)
 	    {
 		/* The existing file is correct.  We don't have to do
@@ -94,35 +110,25 @@ Checkin (int type, struct file_info *finfo, char *rcs, char *rev, char *tag,
 		set_time = 1;
 	    }
 
-	    wrap_fromcvs_process_file (finfo->file);
-
 	    /*
 	     * If we want read-only files, muck the permissions here, before
 	     * getting the file time-stamp.
 	     */
-	    if (!cvswrite || fileattr_get (finfo->file, "_watched"))
-		xchmod (finfo->file, 0);
+	    if (!cvswrite || fileattr_get (finfo->file, "_watched") || (kf.flags&KFLAG_RESERVED_EDIT))
+			xchmod (finfo->file, 0);
 
 	    /* Re-register with the new data.  */
-	    vers = Version_TS (finfo, NULL, tag, NULL, 1, set_time);
+	    vers = Version_TS (finfo, NULL, tag, NULL, 1, set_time, 0);
 	    if (strcmp (vers->options, "-V4") == 0)
-		vers->options[0] = '\0';
+			vers->options[0] = '\0';
 	    Register (finfo->entries, finfo->file, vers->vn_rcs, vers->ts_user,
-		      vers->options, vers->tag, vers->date, (char *) 0, NULL, NULL);
+		      vers->options, vers->tag, vers->date, (char *) 0, NULL, NULL, vers->tt_rcs);
 	    history_write (type, NULL, vers->vn_rcs,
 			   finfo->file, finfo->repository);
-
-	    if (tocvsPath)
-		if (unlink_file_dir (tocvsPath) < 0)
-		    error (0, errno, "cannot remove %s", tocvsPath);
 
 	    break;
 
 	case -1:			/* fork failed */
-	    if (tocvsPath)
-		if (unlink_file_dir (tocvsPath) < 0)
-		    error (0, errno, "cannot remove %s", tocvsPath);
-
 	    if (!noexec)
 		error (1, errno, "could not check in %s -- fork failed",
 		       fn_root(finfo->fullname));
@@ -133,10 +139,6 @@ Checkin (int type, struct file_info *finfo, char *rcs, char *rev, char *tag,
 	    /* The checkin failed, for some unknown reason, so we
 	       print an error, and return an error.  We assume that
 	       the original file has not been touched.  */
-	    if (tocvsPath)
-		if (unlink_file_dir (tocvsPath) < 0)
-		    error (0, errno, "cannot remove %s", tocvsPath);
-
 	    if (!noexec)
 		error (0, 0, "could not check in %s", fn_root(finfo->fullname));
 	    return (1);
@@ -150,7 +152,7 @@ Checkin (int type, struct file_info *finfo, char *rcs, char *rev, char *tag,
     if (rev)
     {
 		RCS_unlock (finfo->rcs, NULL, 1);
-		RCS_rewrite (finfo->rcs, NULL, NULL);
+		RCS_rewrite (finfo->rcs, NULL, NULL, 0);
     }
 
 #ifdef SERVER_SUPPORT

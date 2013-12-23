@@ -12,14 +12,13 @@
  * release as either a date or a revision number.
  */
 
-#include <assert.h>
 #include "cvs.h"
 #include "getline.h"
 
 static RETSIGTYPE patch_cleanup PROTO((void));
 static Dtype patch_dirproc PROTO ((void *callerdat, char *dir,
 				   char *repos, char *update_dir,
-				   List *entries));
+				   List *entries, const char *virtual_repository, Dtype hint));
 static int patch_fileproc PROTO ((void *callerdat, struct file_info *finfo));
 static int patch_proc PROTO((int argc, char **argv, char *xwhere,
 		       char *mwhere, char *mfile, int shorten,
@@ -54,7 +53,6 @@ static const char *const patch_usage[] =
     "\t-t\tTop two diffs - last change made to the file.\n",
     "\t-D date\tDate.\n",
     "\t-r rev\tRevision - symbolic or numeric.\n",
-    "\t-V vers\tUse RCS Version \"vers\" for keyword expansion.\n",
     "(Specify the --help global option for a list of other help options)\n",
     NULL
 };
@@ -73,7 +71,7 @@ patch (argc, argv)
 	usage (patch_usage);
 
     optind = 0;
-    while ((c = getopt (argc, argv, "+V:k:cuftsQqlRD:r:")) != -1)
+    while ((c = getopt (argc, argv, "+:k:cuftsQqlRD:r:")) != -1)
     {
 	switch (c)
 	{
@@ -123,33 +121,6 @@ patch (argc, argv)
 		if (options)
 		    xfree (options);
 		options = RCS_check_kflag (optarg);
-		break;
-	    case 'V':
-		/* This option is pretty seriously broken:
-		   1.  It is not clear what it does (does it change keyword
-		   expansion behavior?  If so, how?  Or does it have
-		   something to do with what version of RCS we are using?
-		   Or the format we write RCS files in?).
-		   2.  Because both it and -k use the options variable,
-		   specifying both -V and -k doesn't work.
-		   3.  At least as of CVS 1.9, it doesn't work (failed
-		   assertion in RCS_checkout where it asserts that options
-		   starts with -k).  Few people seem to be complaining.
-		   In the future (perhaps the near future), I have in mind
-		   removing it entirely, and updating NEWS and cvs.texinfo,
-		   but in case it is a good idea to give people more time
-		   to complain if they would miss it, I'll just add this
-		   quick and dirty error message for now.  */
-		error (1, 0,
-		       "the -V option is obsolete and should not be used");
-#if 0
-		if (atoi (optarg) <= 0)
-		    error (1, 0, "must specify a version number to -V");
-		if (options)
-		    xfree (options);
-		options = xmalloc (strlen (optarg) + 1 + 2);	/* for the -V */
-		(void) sprintf (options, "-V%s", optarg);
-#endif
 		break;
 	    case 'u':
 		unidiff = 1;		/* Unidiff */
@@ -352,7 +323,7 @@ patch_proc (argc, argv, xwhere, mwhere, mfile, shorten, local_specified,
     xfree (repository);
 
     /* start the recursion processor */
-    err = start_recursion (patch_fileproc, (FILESDONEPROC) NULL, patch_dirproc,
+    err = start_recursion (patch_fileproc, (FILESDONEPROC) NULL, (PREDIRENTPROC) NULL, patch_dirproc,
 			   (DIRLEAVEPROC) NULL, NULL,
 			   argc - 1, argv + 1, local,
 			   which, 0, 1, where, 1, verify_read);
@@ -751,14 +722,11 @@ failed to read diff file header %s for %s: end of file", tmpfile3, rcs);
  * Print a warm fuzzy message
  */
 /* ARGSUSED */
-static Dtype
-patch_dirproc (callerdat, dir, repos, update_dir, entries)
-    void *callerdat;
-    char *dir;
-    char *repos;
-    char *update_dir;
-    List *entries;
+static Dtype patch_dirproc (void *callerdat, char *dir, char *repos, char *update_dir, List *entries, const char *virtual_repository, Dtype hint)
 {
+	if(hint!=R_PROCESS)
+		return hint;
+
     if (!quiet)
 	error (0, 0, "Diffing %s", update_dir);
     return (R_PROCESS);

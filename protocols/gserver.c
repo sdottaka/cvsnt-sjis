@@ -146,7 +146,6 @@ int gserver_connect(const struct protocol_interface *protocol, int verify_only)
     gss_buffer_desc *tok_in_ptr, tok_in, tok_out;
     OM_uint32 stat_min, stat_maj;
     gss_name_t server_name;
-	const struct addrinfo *addrinfo;
 
 	if(current_server->current_root->username || !current_server->current_root->hostname || !current_server->current_root->directory)
 		return CVSPROTO_BADPARMS;
@@ -156,9 +155,7 @@ int gserver_connect(const struct protocol_interface *protocol, int verify_only)
 
 	tcp_printf("BEGIN GSSAPI REQUEST\n");
 
-	addrinfo = get_addrinfo(1);
-
-    sprintf (buf, "cvs@%s", addrinfo->ai_canonname);
+    sprintf (buf, "cvs@%s", current_server->current_root->hostname);
     tok_in.length = strlen (buf);
     tok_in.value = buf;
     gss_import_name (&stat_min, &tok_in, GSS_C_NT_HOSTBASED_SERVICE,
@@ -284,12 +281,12 @@ int gserver_auth_protocol_connect(const struct protocol_interface *protocol, con
 	{
 		/* The client will send us a two byte length followed by that many
 		bytes.  */
-		if (read (0, buf, 2) != 2)
+		if (read (current_server->in_fd, buf, 2) != 2)
 			server_error (1, "read of length failed");
 
 		nbytes = ntohs(*(short*)buf);
 
-		if (read (0, buf, nbytes) != nbytes)
+		if (read (current_server->in_fd, buf, nbytes) != nbytes)
 			server_error (1, "read of data failed");
 
 		gcontext = GSS_C_NO_CONTEXT;
@@ -318,12 +315,10 @@ int gserver_auth_protocol_connect(const struct protocol_interface *protocol, con
 			short len;
 
 		    len = htons((short)tok_out.length);
-			if (fwrite(&len, 2, 1, stdout) < 0)
+			if (write(current_server->out_fd, &len, 2) < 0)
 				server_error (1, "cannot send: %s", gai_strerror(socket_errno));
-			fflush(stdout);
-			if (fwrite(tok_out.value, tok_out.length, 1, stdout) < 0)
+			if (write(current_server->out_fd, tok_out.value, tok_out.length) < 0)
 				server_error (1, "cannot send: %s", gai_strerror(socket_errno));
-			fflush(stdout);
 		}
     }
     while (stat_maj == GSS_S_CONTINUE_NEEDED);
@@ -365,9 +360,6 @@ int gserver_auth_protocol_connect(const struct protocol_interface *protocol, con
 	krb5_free_context (kc);
     }
 #endif
-
-	fflush(stdout);
-	fflush(stderr);
 
 	return CVSPROTO_SUCCESS;
 }

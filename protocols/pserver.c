@@ -21,10 +21,6 @@
 #include <unistd.h>
 #endif
 
-#ifndef MAX_PATH
-#define MAX_PATH 1024
-#endif
-
 #include "protocol_interface.h"
 #include "common.h"
 #include "scramble.h"

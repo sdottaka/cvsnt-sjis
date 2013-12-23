@@ -23,14 +23,13 @@
  *                 detailed documentation is below, see also, version_fu.h
  */
 
-#ifdef _WIN32
-#pragma once
-#endif
+#ifndef VERSION_NO__H
+#define VERSION_NO__H
 
 // cvsnt version
 #define CVSNT_PRODUCT_MAJOR 2
 #define CVSNT_PRODUCT_MINOR 0
-#define CVSNT_PRODUCT_PATCHLEVEL 14
+#define CVSNT_PRODUCT_PATCHLEVEL 51d
 
 //
 // Example preprocessor definitions.
@@ -45,7 +44,7 @@
 //#define CVSNT_SPECIAL_BUILD " (Prerelease "__DATE__")"
 #endif
 #ifdef SJIS
-#define CVSNT_SPECIAL_BUILD "(SJIS”Å-3)"
+#define CVSNT_SPECIAL_BUILD "(SJIS”Å-1)"
 #endif
 
 //////////////////////////////////////////////////////////////////////////
@@ -101,3 +100,4 @@
 // version_fu.h
 //
 //////////////////////////////////////////////////////////////////////////
+#endif

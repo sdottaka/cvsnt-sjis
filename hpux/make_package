@@ -1,0 +1,7 @@
+#!/bin/sh
+
+sed s/REVISION/$1/ <cvsnt.psf >/tmp/cvsnt$$.psf
+/usr/sbin/swpackage -vv -s /tmp/cvsnt$$.psf -x target_type=tape @ cvsnt-$1-hpux$2.depot
+compress cvsnt-$1-hpux$2.depot
+rm /tmp/cvsnt$$.psf
+

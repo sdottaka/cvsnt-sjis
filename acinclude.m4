@@ -101,11 +101,9 @@ fi
 if test x$acx_gssapi_cv_gssapi != xno; then
   # define HAVE_GSSAPI and set up the includes
   AC_DEFINE([HAVE_GSSAPI],, [Define if you have GSSAPI with Kerberos version 5 available.])
-  includeopt=$includeopt$GSSAPI_INCLUDES
+  CPPFLAGS=$CPPFLAGS$GSSAPI_INCLUDES
 
   # locate any other headers
-  acx_gssapi_save_CPPFLAGS=$CPPFLAGS
-  CPPFLAGS=$CPPFLAGS$GSSAPI_INCLUDES
   dnl We don't use HAVE_KRB5_H anywhere, but including it here might make it
   dnl easier to spot errors by reading configure output
   AC_CHECK_HEADERS([gssapi.h gssapi/gssapi.h gssapi/gssapi_generic.h])
@@ -141,7 +139,6 @@ if test x$acx_gssapi_cv_gssapi != xno; then
 in the gssapi.h header file.  MIT Kerberos 1.2.1 requires this.  Only relevant
 when using GSSAPI.])
   fi
-  CPPFLAGS=$acx_gssapi_save_CPPFLAGS
 
   # Expect the libs to be installed parallel to the headers
   #
@@ -239,34 +236,16 @@ when using GSSAPI.])
 fi
 ])dnl
 
-dnl @synopsis AC_DEFINE_DIR(VARNAME, DIR [, DESCRIPTION])
-dnl
-dnl This macro _AC_DEFINEs VARNAME to the expansion of the DIR
-dnl variable, taking care of fixing up ${prefix} and such.
-dnl
-dnl VARNAME is offered as both a C preprocessor symbol, and an output
-dnl variable.
-dnl
-dnl Note that the 3 argument form is only supported with autoconf 2.13 and
-dnl later (i.e. only where _AC_DEFINE supports 3 arguments).
-dnl
-dnl Examples:
-dnl
-dnl    AC_DEFINE_DIR(DATADIR, datadir)
-dnl    AC_DEFINE_DIR(PROG_PATH, bindir, [Location of installed binaries])
-dnl
-dnl @version $Id: acinclude.m4,v 1.7.2.1 2003/12/01 21:59:47 tmh Exp $
-dnl @author Guido Draheim <guidod@gmx.de>, original by Alexandre Oliva
-
-AC_DEFUN([AC_DEFINE_DIR], [
-  test "x$prefix" = xNONE && prefix="$ac_default_prefix"
-  test "x$exec_prefix" = xNONE && exec_prefix='${prefix}'
-  ac_define_dir=`eval echo [$]$2`
-  ac_define_dir=`eval echo [$]ac_define_dir`
-  $1="$ac_define_dir"
-  AC_SUBST($1)
-  ifelse($3, ,
-    AC_DEFINE_UNQUOTED($1, "$ac_define_dir"),
-    AC_DEFINE_UNQUOTED($1, "$ac_define_dir", $3))
+AC_DEFUN([AC_TYPE_SOCKLEN_T], [
+   dnl Since the old-style (autoconf 2.13) macro AC_CHECK_TYPE(type, replacement)
+   dnl only checks in <sys/types.h> we have to be more awkward:
+   dnl We have to check for socklen_t in <sys/types.h> -- if it's not defined
+   dnl there, we also look in <sys/socket.h> (a more common place)
+   AC_CHECK_TYPE(socklen_t,,
+     AC_DEFINE(socklen_t, int, [Define to `int' if neither <sys/types.h> nor <sys/socket.h> define.]),
+     [
+#include <sys/types.h>
+#include <sys/socket.h>
+   ])
 ])
 

@@ -4,7 +4,7 @@
 
 # TARGTYPE "Win32 (x86) Dynamic-Link Library" 0x0102
 
-CFG=gserver_protocol_ad - Win32 Debug
+CFG=gserver_protocol_ad - Win32 Release
 !MESSAGE This is not a valid makefile. To build this project using NMAKE,
 !MESSAGE use the Export Makefile command and run
 !MESSAGE 
@@ -13,18 +13,19 @@ CFG=gserver_protocol_ad - Win32 Debug
 !MESSAGE You can specify a configuration when running NMAKE
 !MESSAGE by defining the macro CFG on the command line. For example:
 !MESSAGE 
-!MESSAGE NMAKE /f "gserver_protocol_ad.mak" CFG="gserver_protocol_ad - Win32 Debug"
+!MESSAGE NMAKE /f "gserver_protocol_ad.mak" CFG="gserver_protocol_ad - Win32 Release"
 !MESSAGE 
 !MESSAGE Possible choices for configuration are:
 !MESSAGE 
 !MESSAGE "gserver_protocol_ad - Win32 Release" (based on "Win32 (x86) Dynamic-Link Library")
 !MESSAGE "gserver_protocol_ad - Win32 Debug" (based on "Win32 (x86) Dynamic-Link Library")
+!MESSAGE "gserver_protocol_ad - Win32 Purify" (based on "Win32 (x86) Dynamic-Link Library")
 !MESSAGE 
 
 # Begin Project
 # PROP AllowPerConfigDependencies 0
-# PROP Scc_ProjName ""
-# PROP Scc_LocalPath ""
+# PROP Scc_ProjName "cvsnt"
+# PROP Scc_LocalPath ".."
 CPP=cl.exe
 MTL=midl.exe
 RSC=rc.exe
@@ -33,70 +34,90 @@ RSC=rc.exe
 
 # PROP BASE Use_MFC 0
 # PROP BASE Use_Debug_Libraries 0
-# PROP BASE Output_Dir "Release"
-# PROP BASE Intermediate_Dir "Release"
+# PROP BASE Output_Dir ".\Release"
+# PROP BASE Intermediate_Dir ".\Release"
 # PROP BASE Target_Dir ""
 # PROP Use_MFC 0
 # PROP Use_Debug_Libraries 0
-# PROP Output_Dir "Release"
-# PROP Intermediate_Dir "Release"
-# PROP Ignore_Export_Lib 0
+# PROP Output_Dir ".\Release"
+# PROP Intermediate_Dir ".\Release"
 # PROP Target_Dir ""
-F90=fl32.exe
-# ADD BASE CPP /nologo /MT /W3 /GX /O2 /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /D "_MBCS" /D "_USRDLL" /D "gserver_protocol_ad_EXPORTS" /YX /FD /c
-# ADD CPP /nologo /MD /W3 /GR /GX /Zi /O2 /Op /Oy /Ob2 /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /D "_MBCS" /D "_USRDLL" /D "gserver_protocol_ad_EXPORTS" /D "GSS_AD" /YX /FD /c
-# ADD BASE MTL /nologo /D "NDEBUG" /mktyplib203 /win32
-# ADD MTL /nologo /D "NDEBUG" /mktyplib203 /win32
-# ADD BASE RSC /l 0x809 /d "NDEBUG"
-# ADD RSC /l 0x809 /d "NDEBUG"
+# ADD BASE CPP /nologo /MD /Zi /W3 /O2 /Ob2 /Oi /Op /Oy /G6 /GA /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /D "_USRDLL" /D "gserver_protocol_ad_EXPORTS" /D "GSS_AD" /D "_MBCS" /GF /GR /YX /Fp".\Release/gserver_protocol_ad.pch" /Fo"$(IntDir)/" /Fd"$(IntDir)/" /c /GX 
+# ADD CPP /nologo /MD /Zi /W3 /O2 /Ob2 /Oi /Op /Oy /G6 /GA /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /D "_USRDLL" /D "gserver_protocol_ad_EXPORTS" /D "GSS_AD" /D "_MBCS" /GF /GR /YX /Fp".\Release/gserver_protocol_ad.pch" /Fo"$(IntDir)/" /Fd"$(IntDir)/" /c /GX 
+# ADD BASE MTL /nologo /D"NDEBUG" /mktyplib203 /tlb".\Release\gserver_protocol_ad.tlb" /win32 
+# ADD MTL /nologo /D"NDEBUG" /mktyplib203 /tlb".\Release\gserver_protocol_ad.tlb" /win32 
+# ADD BASE RSC /l 2057 /d "NDEBUG" 
+# ADD RSC /l 2057 /d "NDEBUG" 
 BSC32=bscmake.exe
-# ADD BASE BSC32 /nologo
-# ADD BSC32 /nologo
+# ADD BASE BSC32 /nologo 
+# ADD BSC32 /nologo 
 LINK32=link.exe
-# ADD BASE LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /nologo /dll /machine:I386
-# ADD LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib wsock32.lib secur32.lib ntdsapi.lib netapi32.lib /nologo /dll /debug /machine:I386 /out:"../WinRel/gserver_protocol.dll" /pdbtype:sept
-# SUBTRACT LINK32 /pdb:none /map
+# ADD BASE LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib odbc32.lib odbccp32.lib wsock32.lib /nologo /dll /out:"..\WinRel\gserver_protocol.dll" /incremental:no /debug /pdb:"$(TargetDir)\$(TargetName).pdb" /pdbtype:sept /subsystem:windows /opt:ref /opt:icf /implib:".\Release/gserver_protocol_ad.lib" /MACHINE:I386
+# ADD LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib odbc32.lib odbccp32.lib wsock32.lib /nologo /dll /out:"..\WinRel\gserver_protocol.dll" /incremental:no /debug /pdb:"$(TargetDir)\$(TargetName).pdb" /pdbtype:sept /subsystem:windows /opt:ref /opt:icf /implib:".\Release/gserver_protocol_ad.lib" /MACHINE:I386
 
 !ELSEIF  "$(CFG)" == "gserver_protocol_ad - Win32 Debug"
 
 # PROP BASE Use_MFC 0
 # PROP BASE Use_Debug_Libraries 1
-# PROP BASE Output_Dir "Debug"
-# PROP BASE Intermediate_Dir "Debug"
+# PROP BASE Output_Dir ".\Debug"
+# PROP BASE Intermediate_Dir ".\Debug"
 # PROP BASE Target_Dir ""
 # PROP Use_MFC 0
 # PROP Use_Debug_Libraries 1
-# PROP Output_Dir "Debug"
-# PROP Intermediate_Dir "Debug"
-# PROP Ignore_Export_Lib 0
+# PROP Output_Dir ".\Debug"
+# PROP Intermediate_Dir ".\Debug"
 # PROP Target_Dir ""
-F90=fl32.exe
-# ADD BASE CPP /nologo /MTd /W3 /Gm /GX /ZI /Od /D "WIN32" /D "_DEBUG" /D "_WINDOWS" /D "_MBCS" /D "_USRDLL" /D "gserver_protocol_ad_EXPORTS" /YX /FD /GZ /c
-# ADD CPP /nologo /MDd /W3 /Gm /GR /GX /ZI /Od /D "WIN32" /D "_DEBUG" /D "_WINDOWS" /D "_MBCS" /D "_USRDLL" /D "gserver_protocol_ad_EXPORTS" /D "GSS_AD" /YX /FD /GZ /c
-# ADD BASE MTL /nologo /D "_DEBUG" /mktyplib203 /win32
-# ADD MTL /nologo /D "_DEBUG" /mktyplib203 /win32
-# ADD BASE RSC /l 0x809 /d "_DEBUG"
-# ADD RSC /l 0x809 /d "_DEBUG"
+# ADD BASE CPP /nologo /MDd /ZI /W3 /Od /G6 /GA /D "WIN32" /D "_DEBUG" /D "_WINDOWS" /D "_USRDLL" /D "gserver_protocol_ad_EXPORTS" /D "GSS_AD" /D "_MBCS" /Gm /Gy /GR /YX /Fp".\Debug/gserver_protocol_ad.pch" /Fo"$(IntDir)/" /Fd"$(IntDir)/" /GZ /c /GX 
+# ADD CPP /nologo /MDd /ZI /W3 /Od /G6 /GA /D "WIN32" /D "_DEBUG" /D "_WINDOWS" /D "_USRDLL" /D "gserver_protocol_ad_EXPORTS" /D "GSS_AD" /D "_MBCS" /Gm /Gy /GR /YX /Fp".\Debug/gserver_protocol_ad.pch" /Fo"$(IntDir)/" /Fd"$(IntDir)/" /GZ /c /GX 
+# ADD BASE MTL /nologo /D"_DEBUG" /mktyplib203 /tlb".\Debug\gserver_protocol_ad.tlb" /win32 
+# ADD MTL /nologo /D"_DEBUG" /mktyplib203 /tlb".\Debug\gserver_protocol_ad.tlb" /win32 
+# ADD BASE RSC /l 2057 /d "_DEBUG" 
+# ADD RSC /l 2057 /d "_DEBUG" 
 BSC32=bscmake.exe
-# ADD BASE BSC32 /nologo
-# ADD BSC32 /nologo
+# ADD BASE BSC32 /nologo 
+# ADD BSC32 /nologo 
 LINK32=link.exe
-# ADD BASE LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /nologo /dll /debug /machine:I386 /pdbtype:sept
-# ADD LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib wsock32.lib secur32.lib ntdsapi.lib netapi32.lib /nologo /dll /debug /machine:I386 /out:"../WinDebug/gserver_protocol.dll" /pdbtype:sept
-# SUBTRACT LINK32 /pdb:none /incremental:no /map
+# ADD BASE LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib odbc32.lib odbccp32.lib wsock32.lib /nologo /dll /out:"..\WinDebug\gserver_protocol.dll" /incremental:yes /debug /pdb:"$(TargetDir)\$(TargetName).pdb" /pdbtype:sept /subsystem:windows /implib:".\Debug/gserver_protocol_ad.lib" /MACHINE:I386
+# ADD LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib odbc32.lib odbccp32.lib wsock32.lib /nologo /dll /out:"..\WinDebug\gserver_protocol.dll" /incremental:yes /debug /pdb:"$(TargetDir)\$(TargetName).pdb" /pdbtype:sept /subsystem:windows /implib:".\Debug/gserver_protocol_ad.lib" /MACHINE:I386
 
-!ENDIF 
+!ELSEIF  "$(CFG)" == "gserver_protocol_ad - Win32 Purify"
+
+# PROP BASE Use_MFC 0
+# PROP BASE Use_Debug_Libraries 0
+# PROP BASE Output_Dir "Purify"
+# PROP BASE Intermediate_Dir "Purify"
+# PROP BASE Target_Dir ""
+# PROP Use_MFC 0
+# PROP Use_Debug_Libraries 0
+# PROP Output_Dir "Purify"
+# PROP Intermediate_Dir "Purify"
+# PROP Target_Dir ""
+# ADD BASE CPP /nologo /MDd /Zi /W3 /Od /G6 /GA /D "WIN32" /D "_DEBUG" /D "_WINDOWS" /D "_USRDLL" /D "gserver_protocol_ad_EXPORTS" /D "GSS_AD" /D "_MBCS" /Gm /Gy /GR /YX /Fp".\Debug/gserver_protocol_ad.pch" /Fo"$(IntDir)/" /Fd"$(IntDir)/" /c /GX 
+# ADD CPP /nologo /MDd /Zi /W3 /Od /G6 /GA /D "WIN32" /D "_DEBUG" /D "_WINDOWS" /D "_USRDLL" /D "gserver_protocol_ad_EXPORTS" /D "GSS_AD" /D "_MBCS" /Gm /Gy /GR /YX /Fp".\Debug/gserver_protocol_ad.pch" /Fo"$(IntDir)/" /Fd"$(IntDir)/" /c /GX 
+# ADD BASE MTL /nologo /D"_DEBUG" /mktyplib203 /tlb".\Debug\gserver_protocol_ad.tlb" /win32 
+# ADD MTL /nologo /D"_DEBUG" /mktyplib203 /tlb".\Debug\gserver_protocol_ad.tlb" /win32 
+# ADD BASE RSC /l 2057 /d "_DEBUG" 
+# ADD RSC /l 2057 /d "_DEBUG" 
+BSC32=bscmake.exe
+# ADD BASE BSC32 /nologo 
+# ADD BSC32 /nologo 
+LINK32=link.exe
+# ADD BASE LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib odbc32.lib odbccp32.lib wsock32.lib /nologo /dll /out:"..\WinDebug\gserver_protocol.dll" /incremental:yes /debug /pdb:"$(TargetDir)\$(TargetName).pdb" /pdbtype:sept /subsystem:windows /implib:".\Debug/gserver_protocol_ad.lib" /MACHINE:I386
+# ADD LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib odbc32.lib odbccp32.lib wsock32.lib /nologo /dll /out:"..\WinDebug\gserver_protocol.dll" /incremental:yes /debug /pdb:"$(TargetDir)\$(TargetName).pdb" /pdbtype:sept /subsystem:windows /implib:".\Debug/gserver_protocol_ad.lib" /MACHINE:I386
+
+!ENDIF
 
 # Begin Target
 
 # Name "gserver_protocol_ad - Win32 Release"
 # Name "gserver_protocol_ad - Win32 Debug"
+# Name "gserver_protocol_ad - Win32 Purify"
 # Begin Group "Source Files"
 
 # PROP Default_Filter "cpp;c;cxx;rc;def;r;odl;idl;hpj;bat"
 # Begin Source File
 
-SOURCE=.\common.c
+SOURCE=common.c
 # End Source File
 # Begin Source File
 
@@ -108,11 +129,11 @@ SOURCE=.\gserver.c
 # PROP Default_Filter "h;hpp;hxx;hm;inl"
 # Begin Source File
 
-SOURCE=.\common.h
+SOURCE=common.h
 # End Source File
 # Begin Source File
 
-SOURCE=.\protocol_interface.h
+SOURCE=protocol_interface.h
 # End Source File
 # End Group
 # Begin Group "Resource Files"
@@ -121,3 +142,4 @@ SOURCE=.\protocol_interface.h
 # End Group
 # End Target
 # End Project
+

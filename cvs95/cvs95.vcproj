@@ -24,23 +24,28 @@
 				Name="VCCLCompilerTool"
 				Optimization="0"
 				OmitFramePointers="FALSE"
-				OptimizeForProcessor="2"
+				OptimizeForProcessor="0"
 				OptimizeForWindowsApplication="TRUE"
 				AdditionalIncludeDirectories="..\windows-NT,..\src,..\lib,..\diff,..\zlib,..\cvs95,..\cvsgui"
 				PreprocessorDefinitions="WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM;SJIS;_WINDLL;_DEBUG;_WINDOWS;CVS95_EXPORTS;CVS95;WIN32;HAVE_CONFIG_H;POSIX;CVSGUI;CVSGUI_PIPE"
 				MinimalRebuild="TRUE"
 				BasicRuntimeChecks="3"
+				SmallerTypeCheck="FALSE"
 				RuntimeLibrary="3"
 				BufferSecurityCheck="TRUE"
 				EnableFunctionLevelLinking="TRUE"
+				EnableEnhancedInstructionSet="1"
+				TreatWChar_tAsBuiltInType="TRUE"
+				ForceConformanceInForLoopScope="TRUE"
 				RuntimeTypeInfo="TRUE"
-				UsePrecompiledHeader="2"
+				UsePrecompiledHeader="0"
 				PrecompiledHeaderFile=".\Debug/cvs95.pch"
 				AssemblerListingLocation="$(IntDir)/"
 				ObjectFile="$(IntDir)/"
 				ProgramDataBaseFileName="$(IntDir)/"
 				WarningLevel="3"
 				SuppressStartupBanner="TRUE"
+				Detect64BitPortabilityProblems="FALSE"
 				DebugInformationFormat="4"
 				CompileAs="0"/>
 			<Tool
@@ -56,7 +61,10 @@
 				ProgramDatabaseFile="$(TargetDir)/$(TargetName).pdb"
 				GenerateMapFile="FALSE"
 				MapFileName="..\WinDebug\cvs95.map"
-				OptimizeForWindows98="2"/>
+				OptimizeReferences="0"
+				EnableCOMDATFolding="0"
+				OptimizeForWindows98="1"
+				TargetMachine="1"/>
 			<Tool
 				Name="VCMIDLTool"
 				PreprocessorDefinitions="_DEBUG"
@@ -99,23 +107,28 @@
 				InlineFunctionExpansion="2"
 				EnableIntrinsicFunctions="TRUE"
 				ImproveFloatingPointConsistency="TRUE"
-				FavorSizeOrSpeed="0"
+				FavorSizeOrSpeed="1"
 				OmitFramePointers="TRUE"
-				OptimizeForProcessor="2"
+				OptimizeForProcessor="0"
 				OptimizeForWindowsApplication="TRUE"
 				AdditionalIncludeDirectories="..\windows-NT,..\src,..\lib,..\diff,..\zlib,..\cvs95,..\cvsgui"
 				PreprocessorDefinitions="WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM;SJIS;_WINDLL;NDEBUG;_WINDOWS;CVS95_EXPORTS;CVS95;WIN32;HAVE_CONFIG_H;POSIX;CVSGUI;CVSGUI_PIPE"
 				StringPooling="TRUE"
 				RuntimeLibrary="2"
 				EnableFunctionLevelLinking="FALSE"
+				EnableEnhancedInstructionSet="1"
+				TreatWChar_tAsBuiltInType="TRUE"
+				ForceConformanceInForLoopScope="TRUE"
 				RuntimeTypeInfo="TRUE"
-				UsePrecompiledHeader="2"
+				UsePrecompiledHeader="0"
+				PrecompiledHeaderThrough="cvs.h"
 				PrecompiledHeaderFile=".\Release/cvs95.pch"
 				AssemblerListingLocation="$(IntDir)/"
 				ObjectFile="$(IntDir)/"
 				ProgramDataBaseFileName="$(IntDir)/"
 				WarningLevel="3"
 				SuppressStartupBanner="TRUE"
+				Detect64BitPortabilityProblems="FALSE"
 				DebugInformationFormat="3"
 				CompileAs="0"/>
 			<Tool
@@ -133,7 +146,9 @@
 				MapFileName="..\WinRel\cvs95.map"
 				OptimizeReferences="2"
 				EnableCOMDATFolding="2"
-				OptimizeForWindows98="2"/>
+				OptimizeForWindows98="1"
+				SetChecksum="TRUE"
+				TargetMachine="1"/>
 			<Tool
 				Name="VCMIDLTool"
 				PreprocessorDefinitions="NDEBUG"
@@ -318,30 +333,6 @@
 				</FileConfiguration>
 			</File>
 			<File
-				RelativePath="..\diff\diff.c">
-				<FileConfiguration
-					Name="Debug|Win32">
-					<Tool
-						Name="VCCLCompilerTool"
-						ObjectFile=".\Debug\1/"/>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Release|Win32">
-					<Tool
-						Name="VCCLCompilerTool"
-						ObjectFile=".\Release\1/"/>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Purify|Win32">
-					<Tool
-						Name="VCCLCompilerTool"
-						ObjectFile=".\Debug\1/"/>
-				</FileConfiguration>
-			</File>
-			<File
-				RelativePath="..\diff\diff3.c">
-			</File>
-			<File
 				RelativePath="..\diff\dir.c">
 			</File>
 			<File
@@ -378,13 +369,13 @@
 				RelativePath="..\lib\getdate.c">
 			</File>
 			<File
+				RelativePath="..\lib\getdelim.c">
+			</File>
+			<File
 				RelativePath="..\lib\getline.c">
 			</File>
 			<File
-				RelativePath="..\lib\getopt.c">
-			</File>
-			<File
-				RelativePath="..\lib\getopt1.c">
+				RelativePath="..\lib\getopt_long.c">
 			</File>
 			<File
 				RelativePath="..\src\hash.c">
@@ -435,6 +426,9 @@
 				RelativePath="..\src\main.c">
 			</File>
 			<File
+				RelativePath="..\src\mapping.c">
+			</File>
+			<File
 				RelativePath="..\lib\md5.c">
 			</File>
 			<File
@@ -483,13 +477,16 @@
 				RelativePath="..\src\recurse.c">
 			</File>
 			<File
-				RelativePath="..\lib\regex.c">
+				RelativePath="..\lib\regcomp.c">
 			</File>
 			<File
 				RelativePath="..\src\release.c">
 			</File>
 			<File
 				RelativePath="..\src\remove.c">
+			</File>
+			<File
+				RelativePath="..\src\rename.c">
 			</File>
 			<File
 				RelativePath="..\src\repos.c">
@@ -532,6 +529,12 @@
 			</File>
 			<File
 				RelativePath="..\src\tag.c">
+			</File>
+			<File
+				RelativePath="..\lib\timegm.c">
+			</File>
+			<File
+				RelativePath="..\src\unicode_stuff.c">
 			</File>
 			<File
 				RelativePath="..\src\update.c">
@@ -601,6 +604,9 @@
 				RelativePath="..\lib\fnmatch.h">
 			</File>
 			<File
+				RelativePath="..\lib\getdelim.h">
+			</File>
+			<File
 				RelativePath="..\lib\getline.h">
 			</File>
 			<File
@@ -611,6 +617,9 @@
 			</File>
 			<File
 				RelativePath="..\windows-NT\library.h">
+			</File>
+			<File
+				RelativePath="..\src\mapping.h">
 			</File>
 			<File
 				RelativePath="..\lib\md5.h">
@@ -638,6 +647,12 @@
 			</File>
 			<File
 				RelativePath="..\src\server.h">
+			</File>
+			<File
+				RelativePath="..\lib\timegm.h">
+			</File>
+			<File
+				RelativePath="..\src\unicode_stuff.h">
 			</File>
 			<File
 				RelativePath="..\src\update.h">
@@ -685,6 +700,54 @@
 			</File>
 			<File
 				RelativePath="..\cvsgui\URI_encode.h">
+			</File>
+		</Filter>
+		<Filter
+			Name="ack139">
+			<File
+				RelativePath="..\ack139\ackstring.h">
+			</File>
+			<File
+				RelativePath="..\ack139\codetoeuc.c">
+			</File>
+			<File
+				RelativePath="..\ack139\codetojis.c">
+			</File>
+			<File
+				RelativePath="..\ack139\codetosjis.c">
+			</File>
+			<File
+				RelativePath="..\ack139\codetozen.c">
+			</File>
+			<File
+				RelativePath="..\ack139\euctocode.c">
+			</File>
+			<File
+				RelativePath="..\ack139\fileio.c">
+			</File>
+			<File
+				RelativePath="..\ack139\kanjicheck.c">
+			</File>
+			<File
+				RelativePath="..\ack139\kanjicode.h">
+			</File>
+			<File
+				RelativePath="..\ack139\kanjisub.c">
+			</File>
+			<File
+				RelativePath="..\ack139\kanjixcheck.c">
+			</File>
+			<File
+				RelativePath="..\ack139\kmain.c">
+			</File>
+			<File
+				RelativePath="..\ack139\lcode.c">
+			</File>
+			<File
+				RelativePath="..\ack139\sjistocode.c">
+			</File>
+			<File
+				RelativePath="..\ack139\string.c">
 			</File>
 		</Filter>
 	</Files>

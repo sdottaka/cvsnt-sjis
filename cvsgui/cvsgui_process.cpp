@@ -541,7 +541,7 @@ void cvs_process_init()
 	\return Pointer to the newly allocated object
 	\note You must free allocated memory using cvs_process_destroy
 */
-static CvsProcess* cvs_process_new(char* name, int argc, char** argv)
+static CvsProcess* cvs_process_new(const char* name, int argc, char** argv)
 {
 	CvsProcess* cvs_process;
 
@@ -641,7 +641,7 @@ static void cvs_process_destroy(CvsProcess* cvs_process)
 			WaitForMultipleObjects(cnt, WaitH, TRUE, INFINITE);
 
 			// Close the handles
-			for(i = 0; i < 4; i++)
+			for(int i = 0; i < 4; i++)
 			{
 				if( cvs_process->threads[i] && CloseHandle(cvs_process->threads[i]) )
 				{
@@ -911,7 +911,7 @@ static void sigtt_handler(int sig)
 	\param appData Application-specific data
 	\return Pointer to the new CvsProcess on success, NULL otherwise
 */
-CvsProcess* cvs_process_run(char* name, int argc, char** argv, 
+CvsProcess* cvs_process_run(const char* name, int argc, char** argv, 
 							CvsProcessCallbacks* callbacks, CvsProcessStartupInfo* startupInfo,
 							void* appData)
 {

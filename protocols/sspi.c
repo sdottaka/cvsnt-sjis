@@ -43,13 +43,12 @@ static int sspi_wrap(const struct protocol_interface *protocol, int unwrap, int 
 static int sspi_unwrap_buffer(const void *buffer, int size, void *output, int *newsize);
 static int sspi_wrap_buffer(int encrypt, const void *buffer, int size, void *output, int *newsize);
 static int ServerAuthenticate(const char *proto);
-static int ClientAuthenticate(const char *protocol, const char *name, const char *pwd, const char *domain);
+static int ClientAuthenticate(const char *protocol, const char *name, const char *pwd, const char *domain, const char *hostname);
 static int sspi_get_user_password(const char *username, const char *server, const char *port, const char *directory, char *password, int password_len);
 static int sspi_set_user_password(const char *username, const char *server, const char *port, const char *directory, const char *password);
 
 static int sspi_auth_protocol_connect(const struct protocol_interface *protocol, const char *auth_string);
 static int sspi_impersonate(const struct protocol_interface *protocol, const char *username, void *user_handle);
-static void initSecLib();
 static int InitProtocol(const char *protocol);
 
 struct protocol_interface sspi_protocol_interface =
@@ -85,8 +84,6 @@ struct protocol_interface sspi_protocol_interface =
 	NULL /* server_shutdown */
 };
 
-static PSecurityFunctionTable pFunctionTable;
-static HINSTANCE hSecurity = NULL;
 static CredHandle credHandle;
 static CtxtHandle contextHandle;
 static SecPkgInfo *secPackInfo = NULL;
@@ -97,18 +94,18 @@ struct protocol_interface *get_protocol_interface(const struct server_interface 
 {
 	OSVERSIONINFO osv = { sizeof(OSVERSIONINFO) };
 	
-	initSecLib();
 	current_server = server;
 
 	negotiate_mode = 0;
-	/* sspi encryption in Win9x is utterly broken, so we don't support it */
 	GetVersionEx(&osv);
 	if (osv.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS)
-		sspi_protocol_interface.wrap=NULL;
+	{
+		// Win9x 
+	}
 	else
 	{
-		/* NT4 doesn't support the 'Negotiate' package, so disable it */
-		if (osv.dwMajorVersion>=5)
+		/* If the target supports "Negotiate" use it */
+		if(InitProtocol("Negotiate"))
 			negotiate_mode = 1;
 	}
 	return &sspi_protocol_interface;
@@ -119,10 +116,7 @@ void sspi_destroy(const struct protocol_interface *protocol)
 	free(protocol->auth_username);
 	free(protocol->auth_repository);
 
-	if(pFunctionTable && secPackInfo)
-		(pFunctionTable->FreeContextBuffer)( secPackInfo );
-	if(hSecurity)
-		FreeLibrary(hSecurity);
+	FreeContextBuffer( secPackInfo );
 }
 
 int sspi_connect(const struct protocol_interface *protocol, int verify_only)
@@ -205,7 +199,7 @@ int sspi_connect(const struct protocol_interface *protocol, int verify_only)
 		server_error(1, "Couldn't initialise '%s' package - SSPI broke?",proto);
 	}
 
-	if(!ClientAuthenticate(proto,user,password,domain))
+	if(!ClientAuthenticate(proto,user,password,domain,current_server->current_root->hostname))
 	{
 		/* Actually we never get here... NTLM seems to allow the client to
 		   authenticate then fails at the server end.  Wierd huh? */
@@ -218,7 +212,7 @@ int sspi_connect(const struct protocol_interface *protocol, int verify_only)
 		return CVSPROTO_FAIL;
 	}
 
-	pFunctionTable->QueryContextAttributes(&contextHandle,SECPKG_ATTR_SIZES,&secSizes);
+	QueryContextAttributes(&contextHandle,SECPKG_ATTR_SIZES,&secSizes);
 	
 	if(tcp_printf("%s\n",current_server->current_root->directory)<0)
 		return CVSPROTO_FAIL;
@@ -268,14 +262,14 @@ int sspi_auth_protocol_connect(const struct protocol_interface *protocol, const 
 
     if (!strcmp (auth_string, "BEGIN SSPI"))
 		sspi_protocol_interface.verify_only = 0;
-	else
+	else 
 		return CVSPROTO_NOTME;
 
 	server_getline(protocol, &protocols, 1024);
 
 	if(!protocols)
 	{
-		printf("Nope!\n");
+		server_printf("Nope!\n");
 		return CVSPROTO_FAIL;
 	}
 	if(negotiate_mode && strstr(protocols,"Kerberos"))
@@ -286,14 +280,13 @@ int sspi_auth_protocol_connect(const struct protocol_interface *protocol, const 
 		proto="NTLM";
 	else
 	{
-		printf("Nope!\n");
+		server_printf("Nope!\n");
 		return CVSPROTO_FAIL;
 	}
 	free(protocols);
 
 	
-	printf("%s\n",proto); /* We have negotiated NTLM */
-	fflush(stdout);
+	server_printf("%s\n",proto); /* We have negotiated NTLM */
 
 	if(!InitProtocol(proto))
 		return CVSPROTO_FAIL;
@@ -301,16 +294,16 @@ int sspi_auth_protocol_connect(const struct protocol_interface *protocol, const 
 	if(!ServerAuthenticate(proto))
 		return CVSPROTO_FAIL;
 
-	pFunctionTable->QueryContextAttributes(&contextHandle,SECPKG_ATTR_SIZES,&secSizes);
+	QueryContextAttributes(&contextHandle,SECPKG_ATTR_SIZES,&secSizes);
 
 	// now we try to use the context
-	rc = (pFunctionTable->ImpersonateSecurityContext)( &contextHandle );
+	rc = ImpersonateSecurityContext( &contextHandle );
 	if ( rc != SEC_E_OK )
 		return CVSPROTO_FAIL;
 
 	dwLen=sizeof(szUser);
 	GetUserName( szUser, &dwLen );
-	pFunctionTable->RevertSecurityContext( &contextHandle );
+	RevertSecurityContext( &contextHandle );
 	
 	sspi_protocol_interface.auth_username = strdup(szUser);
 
@@ -370,7 +363,7 @@ static int sspi_unwrap_buffer(const void *buffer, int size, void *output, int *n
 	}
 
 	memcpy(output,buffer,size);
-	rc = pFunctionTable->DecryptMessage(&contextHandle,&sbd,0,0);
+	rc = DecryptMessage(&contextHandle,&sbd,0,0);
 
 	if(rc)
 		return -1;
@@ -397,7 +390,7 @@ static int sspi_wrap_buffer(int encrypt, const void *buffer, int size, void *out
     // describe our buffer for SSPI
     // encrypt in place
 
-	rc = pFunctionTable->EncryptMessage(&contextHandle, 0, &sbd, 0);
+	rc = EncryptMessage(&contextHandle, 0, &sbd, 0);
 
 	if(rc)
 		return -1;
@@ -415,38 +408,12 @@ static int sspi_wrap_buffer(int encrypt, const void *buffer, int size, void *out
 	return 0;
 }
 
-/*********************************************/
-/* From example code on mvps.org */
-void initSecLib()
-{
-	PSecurityFunctionTable (*pSFT)( void );
-
-	hSecurity = LoadLibrary( "secur32.dll" );
-	if(!hSecurity)
-		hSecurity = LoadLibrary( "security.dll" );
-	pSFT = (PSecurityFunctionTable (*)( void )) GetProcAddress( hSecurity, "InitSecurityInterfaceA" );
-	if ( pSFT == NULL )
-	{
-		server_error(1, "Couldn't initialise SSPI:  loading security.dll failed" );
-		exit( 1 );
-	}
-
-	pFunctionTable = pSFT();
-	if ( pFunctionTable == NULL )
-	{
-		server_error(1, "Couldn't initialise SSPI: no function table?!?" );
-	}
-}
-
 int InitProtocol(const char *protocol)
 {
-	if(pFunctionTable->QuerySecurityPackageInfo( (char*)protocol, &secPackInfo ) != SEC_E_OK)
+	if(QuerySecurityPackageInfo( (char*)protocol, &secPackInfo ) != SEC_E_OK)
 		return 0;
-
-	/* If NTLM on this machine doesn't support encryption disable it.  This should never
-	   happen in theory */
-	if(!pFunctionTable->EncryptMessage)
-		sspi_protocol_interface.wrap=NULL;
+	if(!secPackInfo)
+		return 0;
 
 	return 1;
 }
@@ -466,8 +433,7 @@ int ServerAuthenticate(const char *proto)
 	int n;
 	short len;
 
-	rc = (pFunctionTable->AcquireCredentialsHandle)( NULL, (char*)proto, SECPKG_CRED_INBOUND,
-		NULL, NULL, NULL, NULL, &credHandle, &useBefore );
+	rc = AcquireCredentialsHandle( NULL, (char*)proto, SECPKG_CRED_INBOUND, NULL, NULL, NULL, NULL, &credHandle, &useBefore );
 	if ( rc != SEC_E_OK )
 		haveToken = FALSE;
 
@@ -481,7 +447,7 @@ int ServerAuthenticate(const char *proto)
 
 		// receive the client's POD
 
-		rc = read( 0, (char *) &len, sizeof(len) );
+		rc = read( current_server->in_fd, (char *) &len, sizeof(len) );
 		if(rc<=0)
 			break;
 		ib.cbBuffer = ntohs(len);
@@ -492,7 +458,7 @@ int ServerAuthenticate(const char *proto)
 		n = ib.cbBuffer;
 		while ( n )
 		{
-			rc = read( 0, (char *) p, n);
+			rc = read( current_server->in_fd, (char *) p, n);
 			if(rc<=0)
 				break;
 			bytesReceived += rc;
@@ -509,7 +475,7 @@ int ServerAuthenticate(const char *proto)
 		ob.cbBuffer = secPackInfo->cbMaxToken;
 		ob.pvBuffer = malloc( ob.cbBuffer );
 
-		rc = (pFunctionTable->AcceptSecurityContext)( &credHandle, haveContext? &contextHandle: NULL,
+		rc = AcceptSecurityContext( &credHandle, haveContext? &contextHandle: NULL,
 			&ibd, 0, SECURITY_NATIVE_DREP, &contextHandle, &obd, &ctxAttr,
 			&useBefore );
 
@@ -521,8 +487,7 @@ int ServerAuthenticate(const char *proto)
 
 		if ( rc == SEC_I_COMPLETE_AND_CONTINUE || rc == SEC_I_COMPLETE_NEEDED )
 		{
-			if ( pFunctionTable->CompleteAuthToken != NULL ) // only if implemented
-				(pFunctionTable->CompleteAuthToken)( &contextHandle, &obd );
+			CompleteAuthToken( &contextHandle, &obd );
 			if ( rc == SEC_I_COMPLETE_NEEDED )
 				rc = SEC_E_OK;
 			else if ( rc == SEC_I_COMPLETE_AND_CONTINUE )
@@ -536,13 +501,12 @@ int ServerAuthenticate(const char *proto)
 			if ( ob.cbBuffer != 0 )
 			{
 				len=htons((short)ob.cbBuffer);
-				if((n=fwrite(&len,1,sizeof len,stdout))<=0)
+				if((n=write(current_server->out_fd,&len,sizeof(len)))<=0)
 					break;
 				bytesSent += n;
-				if((n=fwrite((const char *) ob.pvBuffer, 1,ob.cbBuffer,stdout))<=0)
+				if((n=write(current_server->out_fd,ob.pvBuffer, ob.cbBuffer))<=0)
 					break;
 				bytesSent += n;
-				fflush(stdout);
 			}
 			free( ob.pvBuffer );
 			ob.pvBuffer = NULL;
@@ -565,7 +529,7 @@ int ServerAuthenticate(const char *proto)
 	return haveToken;
 }
 
-int ClientAuthenticate(const char *protocol, const char *name, const char *pwd, const char *domain)
+int ClientAuthenticate(const char *protocol, const char *name, const char *pwd, const char *domain, const char *hostname)
 {
 	int rc, rcISC;
 	SEC_WINNT_AUTH_IDENTITY nameAndPwd = {0};
@@ -574,7 +538,7 @@ int ClientAuthenticate(const char *protocol, const char *name, const char *pwd, 
 	char username[UNLEN+1];
 	TimeStamp useBefore;
 	DWORD ctxReq, ctxAttr;
-	DWORD dwRead, dwWritten;
+	int dwRead,dwWritten;
 	// input and output buffers
 	SecBufferDesc obd, ibd;
 	SecBuffer ob, ib;
@@ -583,7 +547,6 @@ int ClientAuthenticate(const char *protocol, const char *name, const char *pwd, 
 	char *p;
 	int n;
 	short len;
-	const struct addrinfo *addrinfo;
 
 	if ( name )
 	{
@@ -603,17 +566,14 @@ int ClientAuthenticate(const char *protocol, const char *name, const char *pwd, 
 		nameAndPwd.Flags = SEC_WINNT_AUTH_IDENTITY_ANSI;
 	}
 
-	rc = (pFunctionTable->AcquireCredentialsHandle)( NULL, (char*)protocol, SECPKG_CRED_OUTBOUND,
-		NULL, name?&nameAndPwd:NULL, NULL, NULL, &credHandle, &useBefore );
+	rc = AcquireCredentialsHandle( NULL, (char*)protocol, SECPKG_CRED_OUTBOUND, NULL, name?&nameAndPwd:NULL, NULL, NULL, &credHandle, &useBefore );
 
 	ctxReq = ISC_REQ_REPLAY_DETECT | ISC_REQ_SEQUENCE_DETECT |
 		ISC_REQ_CONFIDENTIALITY | ISC_REQ_DELEGATE;
 
 	ib.pvBuffer = NULL;
 
-	addrinfo = get_addrinfo(1);
-
-    sprintf (myTokenSource, "cvs/%s", addrinfo->ai_canonname);
+    sprintf (myTokenSource, "cvs/%s", hostname);
 
 	while ( 1 )
 	{
@@ -624,7 +584,7 @@ int ClientAuthenticate(const char *protocol, const char *name, const char *pwd, 
 		ob.cbBuffer = secPackInfo->cbMaxToken;
 		ob.pvBuffer = malloc( ob.cbBuffer );
 
-		rcISC = (pFunctionTable->InitializeSecurityContext)( &credHandle, haveContext? &contextHandle: NULL,
+		rcISC = InitializeSecurityContext( &credHandle, haveContext? &contextHandle: NULL,
 			myTokenSource, ctxReq, 0, SECURITY_NATIVE_DREP, haveInbuffer? &ibd: NULL,
 			0, &contextHandle, &obd, &ctxAttr, &useBefore );
 
@@ -636,13 +596,15 @@ int ClientAuthenticate(const char *protocol, const char *name, const char *pwd, 
 
 		if ( rcISC == SEC_I_COMPLETE_AND_CONTINUE || rcISC == SEC_I_COMPLETE_NEEDED )
 		{
-			if ( pFunctionTable->CompleteAuthToken != NULL ) // only if implemented
-				(pFunctionTable->CompleteAuthToken)( &contextHandle, &obd );
+			CompleteAuthToken( &contextHandle, &obd );
 			if ( rcISC == SEC_I_COMPLETE_NEEDED )
 				rcISC = SEC_E_OK;
 			else if ( rcISC == SEC_I_COMPLETE_AND_CONTINUE )
 				rcISC = SEC_I_CONTINUE_NEEDED;
 		}
+
+		if(rcISC<0)
+			server_error(1,"Couldn't authenticate: %08x\n",rcISC);
 
 		// send the output buffer off to the server
 		if ( ob.cbBuffer != 0 )
@@ -739,7 +701,7 @@ int sspi_set_user_password(const char *username, const char *server, const char 
 
 int sspi_impersonate(const struct protocol_interface *protocol, const char *username, void *user_handle)
 {
-	if(pFunctionTable->ImpersonateSecurityContext(&contextHandle)==SEC_E_OK)
+	if(ImpersonateSecurityContext(&contextHandle)==SEC_E_OK)
 		return CVSPROTO_SUCCESS;
 	return CVSPROTO_FAIL;
 }

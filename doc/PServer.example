@@ -1,13 +1,15 @@
 #
 # Repository definitions (0..n)
 #
+# Each definition is in two parts.  The first (RepositoryXX) defines the real path
+# on the server, and the second (RepositoryXXName) defines the path that the client sees.
+#
+# If the name is missing then it is assumed to be equal to the path
+#
 #Repository0=/usr/local/cvs
+#Repository0Name=/cvs
 #Repository1=/usr/local/cvs-other
-
-#
-# Repository prefix
-#
-#RepositoryPrefix=/usr
+#Repository1Name=/other
 
 #
 # Encryption  0=Don't force encryption,
@@ -40,3 +42,40 @@
 #		   using this option.
 #
 #NoReverseDns=0
+
+#
+# LockServer	   Default lock server location.  Can be overridden by
+#		   LockServer directive in individual repositories.
+#
+#LockServer=localhost:2402
+
+#
+# FakeUnixCvs	   Pretend to be a Unix CVS version (1.11.1).  Keeps some
+#                  picky frontends happy (eg. Eclipse)
+#FakeUnixCvs=0
+
+#
+# WinbindWrapper   Enable SSPI server functionality by using the winbind 
+#  		   authentication wrapper
+#WinbindWrapper=/usr/bin/ntlm_auth --helper-protocol=squid-2.5-ntlmssp
+
+#
+# EnableRename     Enable experimental rename code
+#
+#EnableRename=0
+
+#
+# Chroot           Force all user operations within chroot jail 
+#
+#Chroot=/usr/local/cvs-jail
+
+#
+# RunAsUser        Force running as a specified user rather than the client user
+#
+#RunAsUser=nobody
+
+#
+# AllowTrace       Allow a client to trace the server (default off)
+#
+#AllowTrace=1
+

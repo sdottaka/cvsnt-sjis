@@ -115,7 +115,11 @@ am__include = @am__include@
 am__quote = @am__quote@
 cvs_config_dir = @cvs_config_dir@
 cvs_library_dir = @cvs_library_dir@
+cvs_target_name = @cvs_target_name@
 install_sh = @install_sh@
+
+AM_CPPFLAGS = -I$(top_srcdir)/lib $(includeopt)
+AM_CFLAGS = -DCVS_CONFIG_DIR=\"$(cvs_config_dir)\" -DCVS_LIBRARY_DIR=\"$(cvs_library_dir)\"
 
 cvs_targets = cvslockd
 
@@ -126,6 +130,10 @@ cvslockd_SOURCES = \
 
 
 bin_PROGRAMS = $(cvs_targets)
+
+cvslockd_LDADD = \
+	../lib/libcvs.a 
+
 
 EXTRA_DIST = \
 	.cvsignore 
@@ -140,8 +148,7 @@ PROGRAMS = $(bin_PROGRAMS)
 am_cvslockd_OBJECTS = cvslockd.$(OBJEXT) LockParse.$(OBJEXT) \
 	server.$(OBJEXT)
 cvslockd_OBJECTS = $(am_cvslockd_OBJECTS)
-cvslockd_LDADD = $(LDADD)
-cvslockd_DEPENDENCIES =
+cvslockd_DEPENDENCIES = ../lib/libcvs.a
 cvslockd_LDFLAGS =
 
 DEFS = @DEFS@

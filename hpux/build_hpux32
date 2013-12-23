@@ -1,0 +1,14 @@
+#!/bin/sh
+
+export DESTDIR=${PWD}/tmp
+mkdir $DESTDIR
+export PATH=/usr/local/bin:${PATH}
+cd cvsnt
+./configure --prefix=/usr --bindir=/usr/local/bin --libdir=/usr/local/lib
+make clean
+make DESTDIR=${DESTDIR}
+make install DESTDIR=${DESTDIR}
+BUILD=`${DESTDIR}/usr/local/bin/cvs -v | grep "(CVSNT)" | sed 's/.*CVSNT) \([^ ]*\).*/\1/'`
+cd ..
+./make_package $BUILD 32
+rm -rf $DESTDIR

@@ -15,19 +15,20 @@ static int ls_proc (int argc, char **argv, char *xwhere, char *mwhere, char *mfi
 static int ls_fileproc(void *callerdat, struct file_info *finfo);
 static Dtype ls_direntproc(void *callerdat, char *dir,
 				      char *repos, char *update_dir,
-				      List *entries);
+				      List *entries, const char *virtual_repository, Dtype hint);
 
 static RCSNode *xrcsnode;
 
 static const char *const ls_usage[] =
 {
-    "Usage: %s %s [-q] [-e] [-l] [-R] [-r rev] [-D date] [modules...]\n",
+    "Usage: %s %s [-q] [-e] [-l] [-R] [-r rev] [-D date] [-t] [modules...]\n",
 	"\t-q\tQuieter output.\n",
     "\t-e\tDisplay in CVS/Entries format.\n",
     "\t-l\tDisplay all details.\n",
 	"\t-R\tList recursively.\n",
     "\t-r rev\tShow files with revision or tag.\n",
     "\t-D date\tShow files from date.\n",
+    "\t-T\tShow time in local time instead of GMT.\n",
     "(Specify the --help global option for a list of other help options)\n",
     NULL
 };
@@ -40,6 +41,8 @@ static char *show_date;
 static int tag_validated;
 static int recurse;
 static char *regexp_match;
+static int local_time;
+static int local_time_offset;
 
 int
 ls(argc, argv)
@@ -60,8 +63,10 @@ ls(argc, argv)
 	quiet = 0;
 	recurse = 0;
 
+    local_time_offset = get_local_time_offset();
+
     optind = 0;
-    while ((c = getopt (argc, argv, "qelr:D:R")) != -1)
+    while ((c = getopt (argc, argv, "qelr:D:RTo:")) != -1)
     {
 	switch (c)
 	{
@@ -82,6 +87,12 @@ ls(argc, argv)
 		break;
 	case 'R':
 		recurse = 1;
+		break;
+	case 'T':
+		local_time = 1;
+		break;
+	case 'o':
+		local_time_offset = atoi(optarg);
 		break;
     case '?':
     default:
@@ -106,6 +117,13 @@ ls(argc, argv)
 		send_arg("-l");
 	if(recurse)
 		send_arg("-R");
+	if(local_time)
+	{
+		char tmp[64];
+		send_arg("-T");
+		sprintf(tmp,"%d",local_time_offset);
+		option_with_arg("-o",tmp);
+	}
 	if(show_tag)
 		option_with_arg("-r",show_tag);
 	if(show_date)
@@ -117,10 +135,6 @@ ls(argc, argv)
 	for (i = 0; i < argc; i++)
 		send_arg (argv[i]);
 	}
-
-//	send_files (argc, argv, 1, 0, SEND_NO_CONTENTS);
-
-//	send_file_names (argc, argv, SEND_EXPAND_WILD);
 
 	send_to_server ("ls\012", 0);
 
@@ -190,7 +204,7 @@ ls_proc (int argc, char **argv, char *xwhere, char *mwhere, char *mfile,
     char *myargv[2];
     int err = 0;
     int which;
-    char *repository;
+    char *repository, *mapped_repository;
     char *where;
 
 	if(!quiet)
@@ -250,14 +264,18 @@ ls_proc (int argc, char **argv, char *xwhere, char *mwhere, char *mfile,
 	    xfree (path);
 	}
 
+	mapped_repository = map_repository(repository);
+
 	/* cd to the starting repository */
-	if ( CVS_CHDIR (repository) < 0)
+	if ( CVS_CHDIR (mapped_repository) < 0)
 	{
-	    error (0, errno, "cannot chdir to %s", repository);
+	    error (0, errno, "cannot chdir to %s", fn_root(repository));
 	    xfree (repository);
+	    xfree (mapped_repository);
 	    return (1);
 	}
 	xfree (repository);
+	xfree (mapped_repository);
 	/* End section which is identical to patch_proc.  */
 
 	if (show_tag)
@@ -272,7 +290,7 @@ ls_proc (int argc, char **argv, char *xwhere, char *mwhere, char *mfile,
 	tag_validated = 1;
     }
 
-    err = start_recursion (ls_fileproc, (FILESDONEPROC) NULL,
+    err = start_recursion (ls_fileproc, (FILESDONEPROC) NULL,(PREDIRENTPROC) NULL,
 			   ls_direntproc, (DIRLEAVEPROC) NULL, NULL,
 			   argc - 1, argv + 1, local, which, 0, 1,
 			   where, 1, verify_read);
@@ -307,37 +325,27 @@ ls_fileproc(void *callerdat, struct file_info *finfo)
 	Vers_TS *vers;
 	char outdate[32],tag[64];
 	time_t t;
-    int regex_err;
-	regex_t reg;
 
-	if(regexp_match)
-	{
-#ifdef FILENAMES_CASE_INSENSITIVE
-		regex_err = regcomp(&reg, regexp_match, REG_ICASE|REG_EXTENDED|REG_NOSUB);
-#else
-		regex_err = regcomp(&reg, regexp_match, REG_EXTENDED|REG_NOSUB);
-#endif
-		if (regex_err)
-		{
-			char buf[1024];
-			regerror(regex_err, &reg, buf, sizeof(buf));
-			error (0, 0, "bad regular expression: %s", buf);
-			return 0;
-		}
-		regex_err = regexec(&reg, finfo->file, 0, NULL, 0);
-		regfree(&reg);
-		if(regex_err)
-			return 0;				/* no match */
-	}
+	if(regexp_match && !regex_filename_match(regexp_match,finfo->file))
+		return 0;
 
-    vers = Version_TS (finfo, NULL, show_tag, show_date, 1, 0);
+    vers = Version_TS (finfo, NULL, show_tag, show_date, 1, 0, 0);
 	if(!vers->vn_rcs)
 	{
 		freevers_ts(&vers);
 		return 0;
 	}
 
+	if(RCS_isdead(finfo->rcs, vers->vn_rcs))
+	{
+		freevers_ts(&vers);
+		return 0;
+	}
+
 	t=RCS_getrevtime (finfo->rcs, vers->vn_rcs, 0, 0);
+	
+	if(local_time)
+		t+=local_time_offset;
 	strcpy(outdate,asctime(gmtime(&t)));
 	outdate[strlen(outdate)-1]='\0';
 
@@ -362,8 +370,11 @@ ls_fileproc(void *callerdat, struct file_info *finfo)
 
 Dtype ls_direntproc(void *callerdat, char *dir,
 				      char *repos, char *update_dir,
-				      List *entries)
+				      List *entries, const char *virtual_repository, Dtype hint)
 {
+	if(hint!=R_PROCESS)
+		return hint;
+
 	if(!strcasecmp(dir,"."))
 		return R_PROCESS;
 	if(recurse)

@@ -1,5 +1,8 @@
 #include <stdio.h>
+#ifdef HAVE_MALLOC_H
 #include <malloc.h>
+#endif
+#include <stdlib.h>
 #include <string>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN

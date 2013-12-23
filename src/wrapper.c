@@ -30,26 +30,43 @@
   wildcard	[option value][option value]...
 
   where option is one of
-  -f		from cvs filter		value: path to filter
-  -t		to cvs filter		value: path to filter
   -m		update methodology	value: MERGE or COPY
   -k		default -k rcs option to use on import or add
 
   and value is a single-quote delimited value.
 
   E.g:
-  *.nib		-f 'gunzipuntar' -t 'targzip' -m 'COPY'
+  *.nib		-m 'COPY'
 */
 
 
 typedef struct {
     char *wildCard;
-    char *tocvsFilter;
-    char *fromcvsFilter;
     char *rcsOption;
     WrapMergeMethod mergeMethod;
 	int isRemote; /* Received from CVSROOT/cvswrappers on remote server */
 } WrapperEntry;
+
+static const char *wrap_default[] =
+{
+	"*.gif -kb",
+	"*.pdf -kb",
+	"*.bmp -kb",
+	"*.jpg -kb",
+	"*.jpeg -kb",
+	"*.png -kb",
+	"*.exe -kb",
+	"*.dll -kb",
+	"*.so -kb",
+	"*.a -kb",
+	"*.pdb -kb",
+	"*.lib -kb",
+	"*.o -kb",
+	"*.res -kb",
+	"*.class -kb",
+	"*.ogg -kb",
+	"*.mp3 -kb"
+};
 
 static WrapperEntry **wrap_list=NULL;
 static WrapperEntry **wrap_saved_list=NULL;
@@ -87,10 +104,19 @@ void wrap_setup()
 {
     char *homedir;
     char *tmp, *ptr, *server_line;
-	int len;
+    int len;
+    int n;
 
+    /* Add default wrappers */
+    tmp = xmalloc(80);
+    for(n=0; n<sizeof(wrap_default)/sizeof(wrap_default[0]); n++)
+    {
+       strncpy(tmp,wrap_default[n],80);
+       wrap_add(tmp,0,0);
+    }
+    xfree(tmp);
 #ifdef CLIENT_SUPPORT
-    if (!current_parsed_root->isremote)
+    if (current_parsed_root && !current_parsed_root->isremote)
 #endif
     {
 		char *file;
@@ -195,12 +221,6 @@ void wrap_send ()
     {
 		if(wrap_list[i]->isRemote) /* Don't resend exising wrappers back to the server */
 			continue;
-	if (wrap_list[i]->tocvsFilter != NULL
-	    || wrap_list[i]->fromcvsFilter != NULL)
-	    /* For greater studliness we would print the offending option
-	       and (more importantly) where we found it.  */
-	    error (0, 0, "\
--t and -f wrapper options are not supported remotely; ignored");
 	if (wrap_list[i]->mergeMethod == WRAP_COPY)
 	    /* For greater studliness we would print the offending option
 	       and (more importantly) where we found it.  */
@@ -326,12 +346,7 @@ void wrap_free_entry(WrapperEntry *e)
 void wrap_free_entry_internal(WrapperEntry *e)
 {
     xfree (e->wildCard);
-    if (e->tocvsFilter)
-	xfree (e->tocvsFilter);
-    if (e->fromcvsFilter)
-	xfree (e->fromcvsFilter);
-    if (e->rcsOption)
-	xfree (e->rcsOption);
+    xfree (e->rcsOption);
 }
 
 void wrap_restore_saved()
@@ -352,9 +367,16 @@ void wrap_restore_saved()
     wrap_saved_tempcount=0;
 }
 
+void wrap_close()
+{
+	wrap_kill();
+	xfree(wrap_list);
+}
+
 void wrap_add (char *line, int isTemp, int isRemote)
 {
     char *temp;
+    char *linetemp = line;
     char ctemp;
     WrapperEntry e;
     char opt;
@@ -363,21 +385,23 @@ void wrap_add (char *line, int isTemp, int isRemote)
     if (!line || line[0] == '#')
 	return;
 
+    TRACE(3,"wrap_add(%s, %d, %d)",PATCH_NULL(line),isTemp,isRemote);
+
     memset (&e, 0, sizeof(e));
 
 	/* Search for the wild card */
     while (*line && isspace ((unsigned char) *line))
 	++line;
-	if((*line)=='"')
+	if((*line)=='"' || (*line)=='\'')
 	{
-		hasQuote=1;
+		hasQuote=*line;
 		line++;
 	}
 	for(temp=line;*line;++line)
 	{
-		if((*line)=='"' && hasQuote)
+		if(hasQuote && (*line)==hasQuote)
 		{
-			hasQuote=!hasQuote;
+			hasQuote=0;
 			break;
 		}
 		if(isspace ((unsigned char) *line) && !hasQuote)	// JMG 2000-02-10: Fixed logic type
@@ -403,70 +427,30 @@ void wrap_add (char *line, int isTemp, int isRemote)
 	    break;
 	opt=*line;
 
-	    /* Search for the filter commandline */
-	for(++line;*line && *line!='\'';++line);
+	/* Search for the filter commandline */
+	for(++line;*line && isspace(*line); ++line)
+	  ;
+	hasQuote = (*line=='\'');
+	if(hasQuote) line++;	
+	
 	if(!*line)
+	{
+	    error(0,0,"Bad cvswrappers line '%s'",linetemp);
 	    break;
-
-#ifdef SJIS
-	for(temp=++line;;++line) {
-	    if(!*line)
-	    	break;
-	    if(_ismbblead(*line)) {
-		line+=2;
-		if(*line == '\'') {
-		    break;
-		}
-	    } else if(*line == '\'' && line[-1]!='\\')
-	    	break;
 	}
-#else
-	for(temp=++line;*line && (*line!='\'' || line[-1]=='\\');++line)
-	    ;
-#endif
 
-	/* This used to "break;" (ignore the option) if there was a
-	   single character between the single quotes (I'm guessing
-	   that was accidental).  Now it "break;"s if there are no
-	   characters.  I'm not sure either behavior is particularly
-	   necessary--the current options might not require ''
-	   arguments, but surely some future option legitimately
-	   might.  Also I'm not sure that ignoring the option is a
-	   swift way to handle syntax errors in general.  */
-	if (line==temp)
+	for(temp=line;*line && ((hasQuote && *line!='\'') || (!hasQuote && !isspace(*line)));++line)
+	    ;
+
+	if(hasQuote && (*line!='\'' || temp==line))
+	{
+	    error(0,0,"Bad cvswrappers line '%s'",linetemp);
 	    break;
+	}
 
 	ctemp=*line;
 	*line='\0';
 	switch(opt){
-	case 'f':
-	    /* Before this is reenabled, need to address the problem in
-	       commit.c (see http://www.cyclic.com/cvs/dev-wrap.txt).  */
-	    error (1, 0,
-		   "-t/-f wrappers not supported by this version of CVS");
-
-	    if(e.fromcvsFilter)
-		xfree(e.fromcvsFilter);
-	    /* FIXME: error message should say where the bad value
-	       came from.  */
-	    e.fromcvsFilter=expand_path (temp, "<wrapper>", 0);
-            if (!e.fromcvsFilter)
-		error (1, 0, "Correct above errors first");
-	    break;
-	case 't':
-	    /* Before this is reenabled, need to address the problem in
-	       commit.c (see http://www.cyclic.com/cvs/dev-wrap.txt).  */
-	    error (1, 0,
-		   "-t/-f wrappers not supported by this version of CVS");
-
-	    if(e.tocvsFilter)
-		xfree(e.tocvsFilter);
-	    /* FIXME: error message should say where the bad value
-	       came from.  */
-	    e.tocvsFilter=expand_path (temp, "<wrapper>", 0);
-            if (!e.tocvsFilter)
-		error (1, 0, "Correct above errors first");
-	    break;
 	case 'm':
 	    if(*temp=='C' || *temp=='c')
 		e.mergeMethod=WRAP_COPY;
@@ -508,8 +492,6 @@ void wrap_add_entry(WrapperEntry *e, int temp)
     x=(temp ? wrap_count+(wrap_tempcount++):(wrap_count++));
     wrap_list[x]=(WrapperEntry *)xmalloc(sizeof(WrapperEntry));
     wrap_list[x]->wildCard=e->wildCard;
-    wrap_list[x]->fromcvsFilter=e->fromcvsFilter;
-    wrap_list[x]->tocvsFilter=e->tocvsFilter;
     wrap_list[x]->mergeMethod=e->mergeMethod;
     wrap_list[x]->rcsOption = e->rcsOption;
 }
@@ -523,12 +505,6 @@ int wrap_name_has(const char   *name, WrapMergeHas  has)
     for(x=0;x<count;++x)
 	if (CVS_FNMATCH (wrap_list[x]->wildCard, name, 0) == 0){
 	    switch(has){
-	    case WRAP_TOCVS:
-		temp=wrap_list[x]->tocvsFilter;
-		break;
-	    case WRAP_FROMCVS:
-		temp=wrap_list[x]->fromcvsFilter;
-		break;
 	    case WRAP_RCSOPTION:
 		temp = wrap_list[x]->rcsOption;
 		break;
@@ -547,7 +523,9 @@ static WrapperEntry *wrap_matching_entry (const char *name)
 {
     int x,count=wrap_count+wrap_tempcount;
 
-    for(x=0;x<count;++x)
+    /* TH: do this backwards, because the local entries should override
+     * the global ones */
+    for(x=count-1;x>=0;x--)
 	if (CVS_FNMATCH (wrap_list[x]->wildCard, name, 0) == 0)
 	    return wrap_list[x];
     return (WrapperEntry *)NULL;
@@ -577,33 +555,6 @@ char *wrap_rcsoption (const char *filename, int asflag)
     return buf;
 }
 
-char *wrap_tocvs_process_file(const char *fileName)
-{
-    WrapperEntry *e=wrap_matching_entry(fileName);
-    static char *buf = NULL;
-    char *args;
-
-    if(e==NULL || e->tocvsFilter==NULL)
-	return NULL;
-
-    if (buf != NULL)
-	xfree (buf);
-    buf = cvs_temp_name ();
-
-    args = xmalloc (strlen (e->tocvsFilter)
-		    + strlen (fileName)
-		    + strlen (buf));
-    /* FIXME: sprintf will blow up if the format string contains items other
-       than %s, or contains too many %s's.  We should instead be parsing
-       e->tocvsFilter ourselves and giving a real error.  */
-    sprintf (args, e->tocvsFilter, fileName, buf);
-    run_setup (args);
-    run_exec(RUN_NORMAL|RUN_REALLY );
-    xfree (args);
-
-    return buf;
-}
-
 int wrap_merge_is_copy (const char *fileName)
 {
     WrapperEntry *e=wrap_matching_entry(fileName);
@@ -613,22 +564,15 @@ int wrap_merge_is_copy (const char *fileName)
     return 1;
 }
 
-void wrap_fromcvs_process_file(const char *fileName)
+void wrap_display()
 {
-    char *args;
-    WrapperEntry *e=wrap_matching_entry(fileName);
+    int i;
 
-    if(e==NULL || e->fromcvsFilter==NULL)
-	return;
-
-    args = xmalloc (strlen (e->fromcvsFilter)
-		    + strlen (fileName));
-    /* FIXME: sprintf will blow up if the format string contains items other
-       than %s, or contains too many %s's.  We should instead be parsing
-       e->fromcvsFilter ourselves and giving a real error.  */
-    sprintf (args, e->fromcvsFilter, fileName);
-    run_setup (args);
-    run_exec(RUN_NORMAL );
-    xfree (args);
-    return;
+    for (i = 0; i < wrap_count + wrap_tempcount; ++i)
+    {
+	if (wrap_list[i]->rcsOption != NULL)
+	{
+	    printf("%s -k '%s'\n",wrap_list[i]->wildCard,wrap_list[i]->rcsOption);
+	}
+    }
 }

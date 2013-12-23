@@ -24,14 +24,19 @@
 				Name="VCCLCompilerTool"
 				Optimization="0"
 				OmitFramePointers="FALSE"
-				OptimizeForProcessor="2"
+				OptimizeForProcessor="0"
 				OptimizeForWindowsApplication="TRUE"
-				PreprocessorDefinitions="SJIS;WIN32;_DEBUG;_CONSOLE"
+				AdditionalIncludeDirectories="../windows-NT"
+				PreprocessorDefinitions="SJIS;WIN32;_DEBUG;_CONSOLE,HAVE_CONFIG_H"
 				MinimalRebuild="TRUE"
 				BasicRuntimeChecks="3"
+				SmallerTypeCheck="FALSE"
 				RuntimeLibrary="3"
 				BufferSecurityCheck="TRUE"
 				EnableFunctionLevelLinking="TRUE"
+				EnableEnhancedInstructionSet="1"
+				TreatWChar_tAsBuiltInType="TRUE"
+				ForceConformanceInForLoopScope="TRUE"
 				RuntimeTypeInfo="TRUE"
 				UsePrecompiledHeader="0"
 				AssemblerListingLocation="$(IntDir)/"
@@ -39,7 +44,8 @@
 				ProgramDataBaseFileName="$(IntDir)/"
 				WarningLevel="3"
 				Detect64BitPortabilityProblems="FALSE"
-				DebugInformationFormat="4"/>
+				DebugInformationFormat="4"
+				CompileAs="0"/>
 			<Tool
 				Name="VCCustomBuildTool"/>
 			<Tool
@@ -52,7 +58,9 @@
 				ProgramDatabaseFile="$(TargetDir)/$(TargetName).pdb"
 				GenerateMapFile="FALSE"
 				SubSystem="1"
-				OptimizeForWindows98="2"
+				OptimizeReferences="0"
+				EnableCOMDATFolding="0"
+				OptimizeForWindows98="1"
 				TargetMachine="1"/>
 			<Tool
 				Name="VCMIDLTool"/>
@@ -87,13 +95,18 @@
 				InlineFunctionExpansion="2"
 				EnableIntrinsicFunctions="TRUE"
 				ImproveFloatingPointConsistency="TRUE"
+				FavorSizeOrSpeed="1"
 				OmitFramePointers="TRUE"
-				OptimizeForProcessor="2"
+				OptimizeForProcessor="0"
 				OptimizeForWindowsApplication="TRUE"
-				PreprocessorDefinitions="SJIS;WIN32;NDEBUG;_CONSOLE"
+				AdditionalIncludeDirectories="../windows-NT"
+				PreprocessorDefinitions="SJIS;WIN32;NDEBUG;_CONSOLE,HAVE_CONFIG_H"
 				StringPooling="TRUE"
 				RuntimeLibrary="2"
 				EnableFunctionLevelLinking="FALSE"
+				EnableEnhancedInstructionSet="1"
+				TreatWChar_tAsBuiltInType="TRUE"
+				ForceConformanceInForLoopScope="TRUE"
 				RuntimeTypeInfo="TRUE"
 				UsePrecompiledHeader="0"
 				AssemblerListingLocation="$(IntDir)/"
@@ -101,7 +114,8 @@
 				ProgramDataBaseFileName="$(IntDir)/"
 				WarningLevel="3"
 				Detect64BitPortabilityProblems="FALSE"
-				DebugInformationFormat="3"/>
+				DebugInformationFormat="3"
+				CompileAs="0"/>
 			<Tool
 				Name="VCCustomBuildTool"/>
 			<Tool
@@ -116,7 +130,8 @@
 				SubSystem="1"
 				OptimizeReferences="2"
 				EnableCOMDATFolding="2"
-				OptimizeForWindows98="2"
+				OptimizeForWindows98="1"
+				SetChecksum="TRUE"
 				TargetMachine="1"/>
 			<Tool
 				Name="VCMIDLTool"/>
@@ -224,6 +239,9 @@
 				RelativePath="LockService.h">
 			</File>
 			<File
+				RelativePath=".\resource.h">
+			</File>
+			<File
 				RelativePath="..\cvsservice\ServiceMsg.h">
 			</File>
 		</Filter>
@@ -231,7 +249,10 @@
 			Name="Resource Files"
 			Filter="rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe">
 			<File
-				RelativePath="..\cvsservice\ServiceMsg.rc">
+				RelativePath=".\icon1.ico">
+			</File>
+			<File
+				RelativePath=".\lockservice.rc">
 			</File>
 		</Filter>
 	</Files>

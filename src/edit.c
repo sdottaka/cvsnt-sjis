@@ -102,7 +102,7 @@ watch_onoff (argc, argv)
     lock_tree_for_write (argc, argv, local, W_LOCAL, 0);
 
     err = start_recursion (onoff_fileproc, onoff_filesdoneproc,
-			   (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL, NULL,
+			   (PREDIRENTPROC) NULL, (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL, NULL,
 			   argc, argv, local, W_LOCAL, 0, 0, (char *)NULL,
 			   0, verify_write);
 
@@ -239,7 +239,7 @@ send_notifications (argc, argv, local)
     if (current_parsed_root->isremote)
     {
 	err += start_recursion (dummy_fileproc, (FILESDONEPROC) NULL,
-				(DIRENTPROC) NULL, (DIRLEAVEPROC) NULL, NULL,
+				(PREDIRENTPROC) NULL, (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL, NULL,
 				argc, argv, local, W_LOCAL, 0, 0, (char *)NULL,
 				0, NULL);
 
@@ -256,7 +256,7 @@ send_notifications (argc, argv, local)
 
 	lock_tree_for_write (argc, argv, local, W_LOCAL, 0);
 	err += start_recursion (ncheck_fileproc, (FILESDONEPROC) NULL,
-				(DIRENTPROC) NULL, (DIRLEAVEPROC) NULL, NULL,
+				(PREDIRENTPROC) NULL, (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL, NULL,
 				argc, argv, local, W_LOCAL, 0, 0, (char *)NULL,
 				0, NULL);
 	Lock_Cleanup ();
@@ -321,18 +321,14 @@ out:
 }
 
 
-static int check_fileproc PROTO ((void *callerdat, struct file_info *finfo));
-
 /* check file that is to be edited if it's already being edited */
 
-static int
-check_fileproc (callerdat, finfo)
-    void *callerdat;
-    struct file_info *finfo;
+static int check_fileproc (void *callerdat, struct file_info *finfo)
 {
     char *editors = NULL;
     int status;
 	int errors = 0;
+	Vers_TS *v;
 	
 	editors_found = 0;
 
@@ -365,7 +361,15 @@ check_fileproc (callerdat, finfo)
                     {
                         case 'M':
                         {
-                            editors_found = 1;
+							if(fnncmp(editors+2,finfo->file,strchr(editors+2,'\t')-(editors+2)))
+								break;
+
+							v = Version_TS(finfo, NULL, NULL, NULL, 0, 0, 0);
+							if(check_edited>=0 && (check_edited || RCS_get_kflags(v->options,0).flags&KFLAG_RESERVED_EDIT))
+								editors_found = 2;
+							else
+								editors_found = 1;
+							freevers_ts(&v);
 
                             if(!really_quiet)
                             {
@@ -452,20 +456,21 @@ check_fileproc (callerdat, finfo)
 
         if(editors != NULL)
         {
-            editors_found = 1;
+			v = Version_TS(finfo, NULL, NULL, NULL, 0, 0, 0);
+			if(check_edited>=0 && (check_edited || RCS_get_kflags(v->options,0).flags&KFLAG_RESERVED_EDIT))
+				editors_found = 2;
+			else
+				editors_found = 1;
+			freevers_ts(&v);
 
             xfree (editors);
         }
     }
 
-    if(errors || (check_edited && editors_found))
-    {
+    if(errors || editors_found==2)
         status = 1;
-    }
     else
-    {
         status = 0;
-    }
 
     return status;
 }
@@ -473,11 +478,7 @@ check_fileproc (callerdat, finfo)
 static int check_edits PROTO ((int, char **, int));
 
 /* Look through the CVS/fileattr file and check for editors */
-static int
-check_edits (argc, argv, local)
-    int argc;
-    char **argv;
-    int local;
+static int check_edits (int argc, char **argv, int local)
 {
     int err = 0;
 
@@ -492,7 +493,7 @@ check_edits (argc, argv, local)
 #endif
 
 	err += start_recursion (check_fileproc, (FILESDONEPROC) NULL,
-                            (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL, NULL,
+                            (PREDIRENTPROC) NULL, (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL, NULL,
                             argc, argv, local, W_LOCAL, 0, 0, (char *)NULL,
                             0, NULL/*verify_write*/);
 
@@ -505,13 +506,8 @@ check_edits (argc, argv, local)
 #endif
     return err;
 }
-
-static int edit_fileproc PROTO ((void *callerdat, struct file_info *finfo));
 
-static int
-edit_fileproc (callerdat, finfo)
-    void *callerdat;
-    struct file_info *finfo;
+static int edit_fileproc (void *callerdat, struct file_info *finfo)
 {
     FILE *fp;
     time_t now;
@@ -520,7 +516,7 @@ edit_fileproc (callerdat, finfo)
     char *oldfilename;
 
     if (noexec)
-	return 0;
+		return 0;
 
     /* This is a somewhat screwy way to check for this, because it
        doesn't help errors other than the nonexistence of the file
@@ -557,11 +553,11 @@ edit_fileproc (callerdat, finfo)
     }
 
     if (setting_tedit)
-	fprintf (fp, "E");
+		fprintf (fp, "E");
     if (setting_tunedit)
-	fprintf (fp, "U");
+		fprintf (fp, "U");
     if (setting_tcommit)
-	fprintf (fp, "C");
+		fprintf (fp, "C");
     fprintf (fp, "\n");
 
     if (fclose (fp) < 0)
@@ -654,7 +650,7 @@ edit (argc, argv)
                 check_edited = 1;
                 break;
             case 'f':
-                check_edited = 0;
+                check_edited = -1;
                 break;
 	    case 'l':
 		local = 1;
@@ -726,7 +722,7 @@ edit (argc, argv)
     if(!err)
     {
     err = start_recursion (edit_fileproc, (FILESDONEPROC) NULL,
-			   (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL, NULL,
+			   (PREDIRENTPROC) NULL, (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL, NULL,
 			   argc, argv, local, W_LOCAL, 0, 0, (char *)NULL,
 			   0, NULL/*verify_write*/);
     err += send_notifications (argc, argv, local);
@@ -754,13 +750,6 @@ unedit_fileproc (void *callerdat, struct file_info *finfo)
     strcat (basefilename, finfo->file);
     strcpy (gzipfilename, basefilename);
     strcat (gzipfilename, ".gz");
-    if (!isfile (basefilename) && !isfile(gzipfilename) && !notify_user)
-    {
-	/* This file apparently was never cvs edit'd (e.g. we are uneditting
-	   a directory where only some of the files were cvs edit'd.  */
-	xfree (basefilename);
-	return 0;
-    }
 
     if(isfile(gzipfilename))
     {
@@ -833,7 +822,7 @@ unedit_fileproc (void *callerdat, struct file_info *finfo)
 	    entdata = (Entnode *) node->data;
 	    Register (finfo->entries, finfo->file, baserev, entdata->timestamp,
 		      entdata->options, entdata->tag, entdata->date,
-		      entdata->conflict, entdata->merge_from_tag_1, entdata->merge_from_tag_2);
+		      entdata->conflict, entdata->merge_from_tag_1, entdata->merge_from_tag_2, entdata->rcs_timestamp);
 	}
 	xfree (baserev);
 	base_deregister (finfo);
@@ -895,7 +884,7 @@ unedit (argc, argv)
     /* No need to readlock since we aren't doing anything to the
        repository.  */
     err = start_recursion (unedit_fileproc, (FILESDONEPROC) NULL,
-			   (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL, NULL,
+			   (PREDIRENTPROC) NULL, (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL, NULL,
 			   argc, argv, local, W_LOCAL, 0, 0, (char *)NULL,
 			   0, NULL/*verify_write*/);
 
@@ -905,9 +894,7 @@ unedit (argc, argv)
     return err;
 }
 
-void
-mark_up_to_date (file)
-    char *file;
+void mark_up_to_date (char *file)
 {
     char *base;
 
@@ -918,7 +905,10 @@ mark_up_to_date (file)
     strcat (base, "/");
     strcat (base, file);
     if (unlink_file (base) < 0 && ! existence_error (errno))
-	error (0, errno, "cannot remove %s", file);
+		error (0, errno, "cannot remove %s", file);
+	strcat(base,".gz");
+    if (unlink_file (base) < 0 && ! existence_error (errno))
+		error (0, errno, "cannot remove %s", file);
     xfree (base);
 }
 
@@ -929,7 +919,7 @@ editor_set (char *filename, const char *editor, char *val)
     char *edlist;
     char *newlist;
 
-	TRACE(2,"editor_set(%s,%s,%s)",filename,editor,val);
+	TRACE(2,"editor_set(%s,%s,%s)",PATCH_NULL(filename),PATCH_NULL(editor),PATCH_NULL(val));
     edlist = fileattr_get0 (filename, "_editors");
     newlist = fileattr_modify (edlist, editor, val, '>', ',');
     /* If the attributes is unchanged, don't rewrite the attribute file.  */
@@ -1049,8 +1039,7 @@ static int notify_proc(const char *repository, const char *filter)
 /* FIXME: this function should have a way to report whether there was
    an error so that server.c can know whether to report Notified back
    to the client.  */
-void
-notify_do (int type, char *filename, const char *who, char *val,
+void notify_do (int type, char *filename, const char *who, char *val,
     char *watches, char *repository)
 {
     static struct addremove_args blank;
@@ -1094,9 +1083,7 @@ notify_do (int type, char *filename, const char *who, char *val,
 	    break;
 	nextp = strchr (p, ',');
 
-	/* Case sensitive users?  We use the same as the filesystem, but there's no
-	   reason why this should be so.. */
-	if ((size_t)(endp - p) == strlen (who) && fnncmp(who, p, endp - p) == 0)
+	if ((size_t)(endp - p) == strlen (who) && userncmp(who, p, endp - p) == 0)
 	{
 	    /* Don't notify user of their own changes.  Would perhaps
 	       be better to check whether it is the same working
@@ -1384,7 +1371,7 @@ editors (argc, argv)
 #endif /* CLIENT_SUPPORT */
 
     return start_recursion (editors_fileproc, (FILESDONEPROC) NULL,
-			    (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL, NULL,
+			    (PREDIRENTPROC) NULL, (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL, NULL,
 			    argc, argv, local, W_LOCAL, 0, 1, (char *)NULL,
 			    0, verify_write);
 }

@@ -13,6 +13,9 @@
 
 #include <sys/types.h>
 #include <sys/stat.h>
+#ifdef SJIS
+#include <mbstring.h>
+#endif
 
 #ifdef STAT_MACROS_BROKEN
 #undef S_ISBLK
@@ -463,13 +466,15 @@ extern int errno;
 /* Under Windows NT, filenames are case-insensitive, and both / and \
    are path component separators.  */
 
-#define FOLD_FN_CHAR(c) (WNT_filename_classes[(unsigned char) (c)])
-extern unsigned char WNT_filename_classes[];
-#define FILENAMES_CASE_INSENSITIVE 1
+#define FOLD_FN_CHAR(c) ((c)=='\\'?'/':tolower(c))
+#define filenames_case_insensitive 1
 
 /* Is the character C a path name separator?  Under
    Windows NT, you can use either / or \.  */
 #define ISDIRSEP(c) (FOLD_FN_CHAR(c) == '/')
+#ifdef SJIS
+#define ISDIRSEPMB(start, p) ( (*(p)=='/') || ((*(p)=='\\') && !_ismbstrail(start,p)) )
+#endif
 
 /* Like strcmp, but with the appropriate tweaks for file names.
    Under Windows NT, filenames are case-insensitive but case-preserving,
@@ -477,12 +482,21 @@ extern unsigned char WNT_filename_classes[];
 extern int fncmp (const char *n1, const char *n2);
 extern int fnncmp (const char *n1, const char *n2, size_t len);
 
-/* Fold characters in FILENAME to their canonical forms.  
-   If FOLD_FN_CHAR is not #defined, the system provides a default
-   definition for this.  */
-extern void fnfold (char *FILENAME);
+/* Usernames on NT are case insensitive */
+#define usercmp strcasecmp
+#define userncmp strncasecmp
 
 #endif /* defined (__CYGWIN32__) || defined (_WIN32) */
+
+#ifdef __APPLE__
+/* Mac OSX can have multiple concepts of case insensitivity, but we just
+   define as insensitive here (HFS default).  It would be relatively
+   trivial to replace this with a routine to detect it dynamically */
+#define filenames_case_insensitive 1
+#define FOLD_FN_CHAR(c) tolower(c)
+#define fncmp strcasecmp
+#define fnncmp strncasecmp
+#endif
 
 /* Some file systems are case-insensitive.  If FOLD_FN_CHAR is
    #defined, it maps the character C onto its "canonical" form.  In a
@@ -491,7 +505,6 @@ extern void fnfold (char *FILENAME);
    separators, so FOLD_FN_CHAR would map them both to /.  */
 #ifndef FOLD_FN_CHAR
 #define FOLD_FN_CHAR(c) (c)
-#define fnfold(filename) (filename)
 #define fncmp strcmp
 #define fnncmp strncmp
 #endif
@@ -502,6 +515,19 @@ extern void fnfold (char *FILENAME);
 #define ISDIRSEP(c) ((c) == '/')
 #endif
 
+/* Most systems have case sensitive usernames */
+#ifndef usercmp
+#define usercmp strcmp
+#define userncmp strncmp
+#endif
+
+#ifndef filenames_case_insensitive
+#define filenames_case_insensitive 0
+#endif
+
+#ifndef FN_CHAR_EQUAL
+#define FN_CHAR_EQUAL(a,b) (FOLD_FN_CHAR(a)==FOLD_FN_CHAR(b))
+#endif
 
 /* On some systems, we have to be careful about writing/reading files
    in text or binary mode (so in text mode the system can handle CRLF
@@ -522,3 +548,18 @@ extern void fnfold (char *FILENAME);
 #else
 #define OPEN_BINARY (0)
 #endif
+
+/* Define debug xmalloc if debugging. */
+/* Since xmalloc is global it gets defined here rather than cvs.h. */
+#ifdef _DEBUG
+void *dbg_xmalloc(size_t bytes, const char *file, int line);
+void *dbg_xrealloc(void *ptr, size_t bytes, const char *file, int line);
+#define xmalloc(bytes) dbg_xmalloc(bytes,__FILE__,__LINE__)
+#define xrealloc(ptr,bytes) dbg_xrealloc(ptr,bytes,__FILE__,__LINE__)
+#else
+void *xmalloc(size_t bytes);
+void *xrealloc(void *ptr, size_t bytes);
+#endif
+
+void xfree_s(void **ptr);
+#define xfree(s) xfree_s((void**)&s)

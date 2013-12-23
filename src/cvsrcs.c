@@ -36,6 +36,10 @@ int cvsrcs(int argc, char **argv)
 		return 0;
 	}
 
+	current_parsed_root = (cvsroot_t*)xmalloc(sizeof(cvsroot_t));
+	memset(current_parsed_root,0,sizeof(cvsroot_t));
+	current_parsed_root->directory=xstrdup("");
+
 	if(!strcmp(argv[0],"co"))
 	{
 		return checkout(argc,argv);

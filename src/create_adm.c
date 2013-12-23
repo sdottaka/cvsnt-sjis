@@ -30,7 +30,7 @@ int Create_Admin (char *dir, char *update_dir, char *repository, char *tag,
 	char *tmp;
 
 	TRACE(1,"Create_Admin (%s, %s, %s, %s, %s, %d, %d)",
-		 dir, update_dir, repository, tag ? tag : "",
+		 PATCH_NULL(dir), PATCH_NULL(update_dir), PATCH_NULL(repository), tag ? tag : "",
 		 date ? date : "", nonbranch, warn);
 
     if (noexec)
@@ -113,8 +113,8 @@ int Create_Admin (char *dir, char *update_dir, char *repository, char *tag,
     char *path = xmalloc (strlen (current_parsed_root->directory) + 2);
 
     (void) sprintf (path, "%s/", current_parsed_root->directory);
-    if (strncmp (cp, path, strlen (path)) == 0) // Should be pathncmp?
-	cp += strlen (path);
+    if (pathncmp (cp, path, strlen (path), NULL) == 0) 
+		cp += strlen (path);
     xfree (path);
     }
 #endif
@@ -178,15 +178,13 @@ int Create_Admin (char *dir, char *update_dir, char *repository, char *tag,
     }
 
     /* Create a new CVS/Tag file */
-    WriteTag (dir, tag, date, nonbranch, update_dir, repository);
+    WriteTag (dir, tag, date, nonbranch, update_dir, repository, NULL);
 
 #ifdef SERVER_SUPPORT
     if (server_active && dotemplate)
     {
 	server_template (update_dir, repository);
     }
-
-	TRACE(1,"Create_Admin");
 #endif
 
     xfree (reposcopy);

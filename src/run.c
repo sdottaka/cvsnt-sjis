@@ -383,7 +383,7 @@ static int run_command(const char *cmd, int* in_fd, int* out_fd, int* err_fd, in
   int from_child_pipe[2];
   int err_child_pipe[2];
 
-  TRACE(1,"run_command(%s)",cmd);
+  TRACE(1,"run_command(%s)",PATCH_NULL(cmd));
 
   if (noexec)
 	return 0;
@@ -437,7 +437,7 @@ FILE *run_popen (const char *cmd)
   int err_child_pipe[2];
   pid_t pid;
 
-  TRACE(1,"run_popen(%s)",cmd);
+  TRACE(1,"run_popen(%s)",PATCH_NULL(cmd));
 
   if (noexec)
 	return (NULL);

@@ -39,6 +39,21 @@ static valid_names_t *valid_names = NULL;
 static char perms_cache_dir[_MAX_PATH] = {0};
 static char *perms_cache = NULL;
 
+int perms_close()
+{
+	valid_names_t *p = valid_names, *q;
+	while(p)
+	{
+		xfree(p->name);
+		q=p->next;
+		xfree(p);
+		p=q;
+	}
+	valid_names = NULL;
+	xfree(perms_cache);
+	return 0;
+}
+
 static int perms_getline(char **buffer, int *buffer_len, char **ptr)
 {
 	char *endptr;
@@ -76,8 +91,7 @@ static void add_valid_name(const char *name, int isgroup)
 
 /* Add the username to the list of valid names, and then find all the
    groups the user is in and add them to the list of valid names. */
-static void
-get_valid_names()
+static void get_valid_names()
 {
     char   *filename;
     char   *names;
@@ -103,29 +117,33 @@ get_valid_names()
 
     fp = CVS_FOPEN (filename, "r");
     if (fp != NULL) {
-	while (getline (&linebuf, &linebuf_len, fp) >= 0) {
+	while (getline (&linebuf, &linebuf_len, fp) >= 0)
+	{
 	    group = cvs_strtok(linebuf, ":\n");
 	    if (group == NULL)
-		continue;
+			continue;
 	    names = cvs_strtok(NULL, ":\n");
 	    if (names == NULL)
-		continue;
+			continue;
 
 	    name = cvs_strtok(names, ", \t");
-	    while (name != NULL) {
-		if(!strcasecmp(name,"admin"))
-			error(0,0,"The group 'admin' is automatically assigned to repository administrators");
-		if (!fncmp (CVS_Username, name)) {
-		    add_valid_name(group,1);
-		    break;
+	    while (name != NULL)
+		{
+			if(!strcasecmp(name,"admin"))
+				error(0,0,"The group 'admin' is automatically assigned to repository administrators");
+			if (!fncmp (CVS_Username, name))
+			{
+				add_valid_name(group,1);
+				break;
+			}
+			name = cvs_strtok(NULL, ", \t");
 		}
-		name = cvs_strtok(NULL, ", \t");
-            }
 
-            if( linebuf != NULL ) {
-		xfree (linebuf);
-		linebuf = NULL;
-            }
+		if( linebuf != NULL )
+		{
+			xfree (linebuf);
+			linebuf = NULL;
+		}
 	}
 
 	if (ferror (fp))
@@ -145,12 +163,14 @@ static int verify_valid_name(char *name)
 {
     valid_names_t *names = valid_names;
 
-    while (names != NULL) {
-	if (!fncmp (names->name, name)) {
-	    return 1;
-	}
+    while (names != NULL)
+	{
+		if (!fncmp (names->name, name))
+		{
+			return 1;
+		}
 
-	names = names->next;
+		names = names->next;
     }
 
     return 0;
@@ -180,7 +200,7 @@ verify_admin ()
 	strcat (filename, "/admin");
 
 	TRACE(1,"Checking admin file %s for user %s",
-	   		filename, CVS_Username);
+	   		PATCH_NULL(filename), PATCH_NULL(CVS_Username));
 
 	fp = CVS_FOPEN (filename, "r");
 	if (fp != NULL)
@@ -197,10 +217,11 @@ verify_admin ()
 			xfree (linebuf);
 		}
 		if (ferror (fp))
-		error (1, errno, "cannot read %s", filename);
+			error (1, errno, "cannot read %s", filename);
 		if (fclose (fp) < 0)
-		error (0, errno, "cannot close %s", filename);
+			error (0, errno, "cannot close %s", filename);
 	}
+	xfree(filename);
 
 	if(system_auth && !is_the_admin)
 	{
@@ -301,7 +322,7 @@ static int find_perms (const char *dir, char *perm, char *username, const char *
 {
 	char   *filename;
 	char   *linebuf = NULL;
-	size_t linebuf_len;
+	int linebuf_len;
 	char   *name;
 	char   *permptr;
 	FILE   *fp;
@@ -310,12 +331,12 @@ static int find_perms (const char *dir, char *perm, char *username, const char *
 	char *namebra;
 	off_t len;
 
-	TRACE(3,"find_perms(%s,%s,%s,%s,%d)",dir,perm,username,tag,allow_default);
+	TRACE(3,"find_perms(%s,%s,%s,%s,%d)",PATCH_NULL(dir),PATCH_NULL(perm),PATCH_NULL(username),PATCH_NULL(tag),allow_default);
 
 	if(tag && !strcmp(tag,"HEAD"))
 		tag = NULL;
 
-	if(fncmp(perms_cache_dir,dir))
+	if(fncmp(perms_cache_dir,dir) || !perms_cache)
 	{
 		filename = xmalloc (strlen (dir)
 		   + strlen (PERMS_FILE)
@@ -327,15 +348,22 @@ static int find_perms (const char *dir, char *perm, char *username, const char *
 		fp = CVS_FOPEN (filename, "r");
 		if (fp == NULL)
 		{
-			if(!existence_error(errno))
+			xfree(perms_cache);
+			if(errno==EACCES)
+			{
+				strcpy(perm,"n");
+				retval = 1;
+			}
+			else if(!existence_error(errno))
 			{
 				error (0, errno, "cannot open %s", filename);
 				retval = 0;
 			}
-			xfree(perms_cache);
-			perms_cache = NULL;
-			strcpy(perms_cache_dir,dir);
+			else
+			{
+				strcpy(perm,"rwc");
 			retval = 1;
+		}
 		}
 		else
 		{
@@ -386,11 +414,11 @@ static int find_perms (const char *dir, char *perm, char *username, const char *
 				continue; /* Illegal line in .perms */
 			}
 
+			permptr = cvs_strtok(NULL, "\n :");
 			if (!strcasecmp(name, username) && 
 				((namebra && tag && !strncmp(namebra,tag,(name-namebra)-1)) ||
 				((!namebra || !strncmp(namebra, "HEAD}", 5)) && !tag)))
 			{
-				permptr = cvs_strtok(NULL, "\n :");
 				if (permptr != NULL)
 				{
 					strncpy(perm, permptr, 3);
@@ -400,11 +428,19 @@ static int find_perms (const char *dir, char *perm, char *username, const char *
 				xfree (linebuf);
 				break;
 			}
+			/* default all_perms to 'default' with no branch */
+/*			if(!all_perms[0] && !strcasecmp(name,"DEFAULT") && !namebra)
+			{
+				if (permptr != NULL)
+				{
+				   strncpy(all_perms, permptr, 3);
+				   all_perms[3] = '\0';
+				}
+			} */
 			if (!strcasecmp(name, "DEFAULT") && 
 				((namebra && tag && !strncmp(namebra,tag,(name-namebra)-1)) ||
 				((!namebra || !strncmp(namebra, "HEAD}", 5)) && !tag)))
 			{
-				permptr = cvs_strtok(NULL, "\n :");
 				if (permptr != NULL)
 				{
 				   strncpy(all_perms, permptr, 3);
@@ -427,13 +463,6 @@ static int find_perms (const char *dir, char *perm, char *username, const char *
 		}
 	}
 
-	/* If no perms file, always allow access */
-	if(!perms_cache)
-	{
-		strcpy(perm,"rwc");
-		retval = 1;
-	}
-
 	return retval;
 }
 
@@ -448,15 +477,15 @@ static int verify_perm (const char *dir, char perm, const char *tag)
     /* The whole cvs code assumes any directory called 'EmptyDir'
 	   is invalid wherever it is. */
 #ifdef SJIS
-    for(p=dir+strlen(dir)-1; p>dir && !isslashmb(dir,p); p--)
+    for(p=dir+strlen(dir)-1; p>dir && !ISDIRSEPMB(dir,p); p--)
 #else
-    for(p=dir+strlen(dir)-1; p>dir && !isslash(*p); p--)
+    for(p=dir+strlen(dir)-1; p>dir && !ISDIRSEP(*p); p--)
 #endif
 		;
 #ifdef SJIS
-	if(isslashmb(dir,p))
+	if(ISDIRSEPMB(dir,p))
 #else
-	if(isslash(*p))
+	if(ISDIRSEP(*p))
 #endif
 		p++;
 	if(!fncmp(p,CVSNULLREPOS))

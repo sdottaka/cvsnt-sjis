@@ -10,7 +10,6 @@
  */
 
 #include "cvs.h"
-#include <assert.h>
 #include <stdio.h>
 #include "diffrun.h"
 
@@ -228,26 +227,74 @@ call_diff3 (out)
 			  &call_diff_file_callbacks);
 }
 
-
+/* Rebuild options string */
+char *rebuild_options(kflag* kf, char *options)
+{
+	char *p=options;
+	if(kf->flags&KFLAG_BINARY_DELTA)
+		*(p++)='B';
+	else if(kf->flags&KFLAG_BINARY)
+		*(p++)='b';
+	if(kf->flags&KFLAG_ENCODED)
+	{
+		switch(kf->encoding)
+		{
+		case ENC_UCS2LE_BOM:
+			*(p++)='u';
+			break;
+		case ENC_UCS2LE:
+			strcpy(p,"x{ucs2le}"); p+=strlen(p);
+			break;
+		case ENC_UCS2BE:
+			strcpy(p,"x{ucs2be}"); p+=strlen(p);
+			break;
+		case ENC_UCS2BE_BOM:
+			strcpy(p,"x{ucs2be_bom}"); p+=strlen(p);
+			break;
+		case ENC_UCS4LE:
+			strcpy(p,"x{ucs4le}"); p+=strlen(p);
+			break;
+		case ENC_UCS4BE:
+			strcpy(p,"x{ucs2be_bom}"); p+=strlen(p);
+			break;
+		case ENC_SHIFTJIS:
+			strcpy(p,"x{shiftjis}"); p+=strlen(p);
+			break;
+		default:
+			error(1,0,"Internal error - can't reencode option string for this encoding");
+		}
+	}
+	if(kf->flags&KFLAG_KEYWORD)
+		*(p++)='k';
+	if(kf->flags&KFLAG_VALUE)
+		*(p++)='v';
+	if(kf->flags&KFLAG_VALUE_LOGONLY)
+		*(p++)='V';
+	if(kf->flags&KFLAG_LOCKER)
+		*(p++)='l';
+	if(kf->flags&KFLAG_PRESERVE)
+		*(p++)='o';
+	if(kf->flags&KFLAG_UNIX)
+		*(p++)='L';
+	if(kf->flags&KFLAG_COMPRESS_DELTA)
+		*(p++)='z';
+	*(p++)='\0';
+	return options;
+}
 
 /* Merge revisions REV1 and REV2. */
 
-int
-RCS_merge(rcs, path, workfile, options, rev1, rev2)
-    RCSNode *rcs;
-    char *path;
-    char *workfile;
-    char *options;
-    char *rev1;
-    char *rev2;
+int RCS_merge(RCSNode *rcs, char *path, char *workfile, char *options, char *rev1, char *rev2, int conflict_3way)
 {
     char *xrev1, *xrev2;
     char *tmp1, *tmp2;
     char *diffout = NULL;
     int retval;
 	kflag kf;
+	int is_unicode;
+	char *wf;
 
-	TRACE(2,"rcs_merge(%s,%s,%s,%s,%s,%s)",rcs->path,path,workfile,options,rev1,rev2);
+	TRACE(2,"rcs_merge(%s,%s,%s,%s,%s,%s)",PATCH_NULL(rcs->path),PATCH_NULL(path),PATCH_NULL(workfile),PATCH_NULL(options),PATCH_NULL(rev1),PATCH_NULL(rev2));
 
     if (options != NULL && options[0] != '\0')
       assert (options[0] == '-' && options[1] == 'k');
@@ -269,10 +316,18 @@ RCS_merge(rcs, path, workfile, options, rev1, rev2)
     cvs_output ("\n", 1);
 
     tmp1 = cvs_temp_name();
-	kf=RCS_get_kflags(options);
-	if(!options || !*options || (kf&(KFLAG_PRESERVE|KFLAG_BINARY)))
-		options="-kk";
-	if (RCS_checkout (rcs, NULL, xrev1, rev1, options?options:"-kk", tmp1,
+	kf=RCS_get_kflags(options, 1);
+	if(kf.flags&KFLAG_ENCODED && !server_active) /* The server already automatically ignores -u */
+	{
+		is_unicode = 1;
+		kf.flags&=~KFLAG_ENCODED;
+		options = rebuild_options(&kf, options);
+	}
+	else
+		is_unicode = 0;
+	if(!options || !*options)
+		options="-kkV";
+	if (RCS_checkout (rcs, NULL, xrev1, rev1, options, tmp1,
 		      (RCSCHECKOUTPROC)0, NULL, NULL))
     {
 	cvs_outerr ("rcsmerge: co failed\n", 0);
@@ -300,35 +355,73 @@ RCS_merge(rcs, path, workfile, options, rev1, rev2)
     cvs_output (workfile, 0);
     cvs_output ("\n", 1);
 
+	if(is_unicode)
+	{
+		char *unibuf=NULL;
+		size_t unisiz,unilen;
+		FILE *f;
+	    wf = cvs_temp_name();
+		TRACE(2,"Converting Unicode %s to UTF-8 %s",PATCH_NULL(workfile),PATCH_NULL(wf));
+		get_file(workfile,workfile,kf.flags&KFLAG_BINARY?"rb":"r",&unibuf,&unisiz,&unilen,kf);
+		if((f=fopen(wf,kf.flags&KFLAG_BINARY?"wb":"w"))==NULL)
+			error(1,errno,"Couldn't create temporary unicode file %s",wf);
+		if(fwrite(unibuf,1,unilen,f)!=unilen)
+			error(1,errno,"Couldn't write temporary unicode file %s",wf);
+		fclose(f);
+		xfree(unibuf);
+	}
+	else
+		wf = xstrdup(workfile);
+
     /* Remember that the first word in the `call_diff_setup' string is used now
        only for diagnostic messages -- CVS no longer forks to run diff3. */
     diffout = cvs_temp_name();
     call_diff_setup ("diff3");
-    call_diff_arg ("-E");
+	call_diff_arg (conflict_3way?"-A":"-E");
     call_diff_arg ("-am");
 
     call_diff_arg ("-L");
-    call_diff_arg (workfile);
+    call_diff_arg (wf);
     call_diff_arg ("-L");
     call_diff_arg (xrev1);
     call_diff_arg ("-L");
     call_diff_arg (xrev2);
 
-    call_diff_arg (workfile);
+    call_diff_arg (wf);
     call_diff_arg (tmp1);
     call_diff_arg (tmp2);
 
-	TRACE(2,"Calling diff3 with %s, %s, %s",workfile,tmp1,tmp2);
+	TRACE(2,"Calling diff3 with %s, %s, %s",PATCH_NULL(wf),PATCH_NULL(tmp1),PATCH_NULL(tmp2));
     retval = call_diff3 (diffout);
 	TRACE(2,"diff3 returned %d",retval);
 
     if (retval == 1)
-	cvs_outerr ("rcsmerge: warning: conflicts during merge\n", 0);
+		cvs_outerr ("rcsmerge: warning: conflicts during merge\n", 0);
     else if (retval == 2)
-	error_exit();
+		error_exit();
+/* commented this out as I'm not sure that 'there was no difference' really warrants a warning */
+/*	else if (retval == 3)   
+		cvs_outerr ("rcsmerge: warning: work file unchanged\n", 0); */
 
     if (diffout)
-		copy_file (diffout, workfile,0, 1);
+	{
+		if(is_unicode)
+		{
+			char *unibuf=NULL;
+			size_t unisiz,unilen;
+			FILE *f;
+			TRACE(2,"Converting UTF-8 %s to Unicode %s",PATCH_NULL(wf),PATCH_NULL(workfile));
+			get_file(diffout,diffout,kf.flags&KFLAG_BINARY?"rb":"r",&unibuf,&unisiz,&unilen,kf);
+			if((f=fopen(workfile,kf.flags&KFLAG_BINARY?"wb":"w"))==NULL)
+				error(1,errno,"Couldn't create unicode file %s",workfile);
+			if(output_utf8_as_encoding(fileno(f),unibuf,unilen,kf.encoding))
+				error(1,errno,"Couldn't expand temporary file to unicode %s",workfile);
+			fclose(f);
+			xfree(unibuf);
+		}
+		else
+			copy_file (diffout, workfile,0, 1);
+	}
 
     /* Clean up. */
     {
@@ -346,6 +439,15 @@ RCS_merge(rcs, path, workfile, options, rev1, rev2)
 		error (0, errno, "cannot remove temp file %s", tmp2);
 	}
 	xfree (tmp2);
+	if (is_unicode)
+	{
+		if (unlink_file (wf) < 0)
+		{
+			if (!existence_error (errno))
+			error (0, errno, "cannot remove temp file %s", wf);
+		}
+	}
+	xfree(wf);
 	if (diffout)
 	{
 	    if (unlink_file (diffout) < 0)
@@ -548,7 +650,7 @@ diff_exec (file1, file2, label1, label2, options, out)
 {
     char *args;
 
-	TRACE(2,"diff_exec(%s,%s,%s,%s,%s,%s)",file1,file2,label1,label2,options,out);
+	TRACE(2,"diff_exec(%s,%s,%s,%s,%s,%s)",PATCH_NULL(file1),PATCH_NULL(file2),PATCH_NULL(label1),PATCH_NULL(label2),PATCH_NULL(options),PATCH_NULL(out));
 
     args = xmalloc (strlen (options) + 10);
     /* The first word in this string is used only for error reporting. */
@@ -577,7 +679,7 @@ diff_execv (file1, file2, label1, label2, options, out)
 {
     char *args;
 
-	TRACE(2,"diff_execv(%s,%s,%s,%s,%s,%s)",file1,file2,label1,label2,options,out);
+	TRACE(2,"diff_execv(%s,%s,%s,%s,%s,%s)",PATCH_NULL(file1),PATCH_NULL(file2),PATCH_NULL(label1),PATCH_NULL(label2),PATCH_NULL(options),PATCH_NULL(out));
 
     args = xmalloc (strlen (options) + 10);
     /* The first word in this string is used only for error reporting.  */

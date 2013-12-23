@@ -16,7 +16,6 @@
 /* The routines in this file are the interface between the CVS
    client/server support and the zlib compression library.  */
 
-#include <assert.h>
 #include "cvs.h"
 #include "buffer.h"
 
@@ -198,9 +197,6 @@ compress_buffer_input (closure, data, need, size, got)
 	bd->size = cb->zstr.avail_in;
 	bd->bufp = (char *) cb->zstr.next_in;
 
-	if (zstatus == Z_STREAM_END)
-	    return -1;
-
 	/* If we have obtained NEED bytes, then return, unless NEED is
            zero and we haven't obtained anything at all.  If NEED is
            zero, we will keep reading from the underlying buffer until
@@ -209,6 +205,9 @@ compress_buffer_input (closure, data, need, size, got)
 	sofar = size - cb->zstr.avail_out;
 	if (sofar > 0 && sofar >= need)
 	    break;
+
+	if (zstatus == Z_STREAM_END)
+	    return -1;
 
 	/* All our buffered data should have been processed at this
            point.  */
@@ -424,13 +423,7 @@ compress_buffer_shutdown_output (closure)
    mentioning FULLNAME as the name of the file for FD.  Return 1 if
    it is an error we can't recover from.  */
 
-int
-gunzip_and_write (fd, fullname, buf, size, unicode)
-    int fd;
-    char *fullname;
-    unsigned char *buf;
-    size_t size;
-	int unicode;
+int gunzip_and_write (int fd, char *fullname, unsigned char *buf, size_t size, encoding_type encoding)
 {
     size_t pos;
     z_stream zstr;
@@ -494,7 +487,7 @@ gunzip_and_write (fd, fullname, buf, size, unicode)
 		xfree(buffer);
 	    return 1;
 	}
-	if(unicode)
+	if(encoding!=ENC_UNKNOWN)
 	{
 		int old_buffer_len = buffer_len;
 		buffer_len += sizeof(outbuf) - zstr.avail_out;
@@ -535,9 +528,9 @@ gunzip_and_write (fd, fullname, buf, size, unicode)
 	return 1;
     }
 
-	if(!server_active && unicode)
+	if(!server_active && encoding!=ENC_UNKNOWN)
 	{
-		if(output_utf8_as_unicode(fd, buffer, buffer_len))
+		if(output_utf8_as_encoding(fd, buffer, buffer_len, encoding))
 		{
 			error (0, errno, "writing decompressed file %s", fullname);
 			xfree(buffer);
@@ -549,160 +542,4 @@ gunzip_and_write (fd, fullname, buf, size, unicode)
 	return 0;
 }
 
-/* Read all of FD and put the gzipped data (RFC1952/RFC1951) into *BUF,
-   replacing previous contents of *BUF.  *BUF is malloc'd and *SIZE is
-   its allocated size.  Put the actual number of bytes of data in
-   *LEN.  If something goes wrong, give a nonfatal error mentioning
-   FULLNAME as the name of the file for FD, and return 1 if we can't
-   recover from it).  LEVEL is the compression level (1-9).  */
-
-int
-read_and_gzip (fd, fullname, buf, size, len, level, bin)
-    int fd;
-    char *fullname;
-    unsigned char **buf;
-    size_t *size;
-    size_t *len;
-    int level;
-	int bin;
-{
-    z_stream zstr;
-    int zstatus;
-    unsigned char inbuf[8192],*utfbuf=NULL;
-    int nread;
-    unsigned long crc;
-	int first,unicode,swap,utflen;
-
-    if (*size < 1024)
-    {
-	unsigned char *newbuf;
-
-	*size = 1024;
-	newbuf = xrealloc(*buf, *size);
-	if (newbuf == NULL)
-	{
-	    error (0, 0, "out of memory in zlib.c");
-	    return 1;
-	}
-	*buf = newbuf;
-    }
-    (*buf)[0] = 31;
-    (*buf)[1] = 139;
-    (*buf)[2] = 8;
-    (*buf)[3] = 0;
-    (*buf)[4] = (*buf)[5] = (*buf)[6] = (*buf)[7] = 0;
-    /* Could set this based on level, but why bother?  */
-    (*buf)[8] = 0;
-    (*buf)[9] = 255;
-
-    memset (&zstr, 0, sizeof zstr);
-    zstatus = deflateInit2 (&zstr, level, Z_DEFLATED, -15, 8,
-			    Z_DEFAULT_STRATEGY);
-    crc = crc32 (0, NULL, 0);
-    if (zstatus != Z_OK)
-    {
-	compress_error (0, zstatus, &zstr, fullname);
-	return 1;
-    }
-    zstr.avail_out = *size;
-    zstr.next_out = *buf + 10;
-
-	first = 1;
-	unicode = 0;
-    while (1)
-    {
-	int finish = 0;
-
-	nread = read (fd, inbuf, sizeof inbuf);
-	if (nread < 0)
-	{
-	    error (0, errno, "cannot read %s", fullname);
-		xfree(utfbuf);
-	    return 1;
-	}
-	else if (nread == 0)
-	    /* End of file.  */
-	    finish = 1;
-	if(first && !bin)
-	{
-		if(*(unsigned short *)inbuf == 0xfeff || *(unsigned short *)inbuf == 0xfffe)
-		{
-			unicode = 1;
-			utfbuf=xmalloc(sizeof(inbuf)*3);
-			swap=(*(unsigned short *)inbuf == 0xfffe);
-		}
-	}
-
-	/* Here we should compress inbuf to utf8.  Doesn't work yet */
-	if(unicode)
-	{
-		convert_unicode_buffer_to_utf8(inbuf,sizeof(inbuf),utfbuf,&utflen,first,swap);
-		crc = crc32 (crc, utfbuf, utflen);
-		zstr.next_in = utfbuf;
-		zstr.avail_in = utflen;
-	}
-	else
-	{
-		crc = crc32 (crc, inbuf, nread);
-		zstr.next_in = inbuf;
-		zstr.avail_in = nread;
-	}
-
-	first = 0;
-
-	do
-	{
-	    size_t offset;
-
-	    /* I don't see this documented anywhere, but deflate seems
-	       to tend to dump core sometimes if we pass it Z_FINISH and
-	       a small (e.g. 2147 byte) avail_out.  So we insist on at
-	       least 4096 bytes (that is what zlib/gzio.c uses).  */
-
-	    if (zstr.avail_out < 4096)
-	    {
-		unsigned char *newbuf;
-
-		offset = zstr.next_out - *buf;
-		*size *= 2;
-		newbuf = xrealloc(*buf, *size);
-		if (newbuf == NULL)
-		{
-		    error (0, 0, "out of memory in zlib.c");
-			xfree(utfbuf);
-		    return 1;
-		}
-		*buf = newbuf;
-		zstr.next_out = *buf + offset;
-		zstr.avail_out = *size - offset;
-	    }
-
-	    zstatus = deflate (&zstr, finish ? Z_FINISH : 0);
-	    if (zstatus == Z_STREAM_END)
-		goto done;
-	    else if (zstatus != Z_OK)
-		compress_error (0, zstatus, &zstr, fullname);
-	} while (zstr.avail_out == 0);
-    }
- done:
-    *(*buf + zstr.total_out + 10) = crc & 0xff;
-    *(*buf + zstr.total_out + 11) = (crc >> 8) & 0xff;
-    *(*buf + zstr.total_out + 12) = (crc >> 16) & 0xff;
-    *(*buf + zstr.total_out + 13) = (crc >> 24) & 0xff;
-
-    *(*buf + zstr.total_out + 14) = zstr.total_in & 0xff;
-    *(*buf + zstr.total_out + 15) = (zstr.total_in >> 8) & 0xff;
-    *(*buf + zstr.total_out + 16) = (zstr.total_in >> 16) & 0xff;
-    *(*buf + zstr.total_out + 17) = (zstr.total_in >> 24) & 0xff;
-
-    *len = zstr.total_out + 18;
-
-    zstatus = deflateEnd (&zstr);
-    if (zstatus != Z_OK)
-		compress_error (0, zstatus, &zstr, fullname);
-
-	xfree(utfbuf);
-
-    return 0;
-}
 #endif /* defined (SERVER_SUPPORT) || defined (CLIENT_SUPPORT) */

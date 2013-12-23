@@ -44,9 +44,9 @@ typedef struct _CvsProcess CvsProcess;
 /// Structure to hold cvsgui protocol callbacks
 typedef struct
 {
-	long (*consoleout)(char* txt, long len, const CvsProcess* process);	/*!< Get cvs stdout */
-	long (*consoleerr)(char* txt, long len, const CvsProcess* process);	/*!< Get cvs stderr */
-	const char* (*getenv)(char* name, const CvsProcess* process);		/*!< Ask about environmental variable */
+	long (*consoleout)(const char* txt, long len, const CvsProcess* process);	/*!< Get cvs stdout */
+	long (*consoleerr)(const char* txt, long len, const CvsProcess* process);	/*!< Get cvs stderr */
+	const char* (*getenv)(const char* name, const CvsProcess* process);		/*!< Ask about environmental variable */
 	void (*exit)(int code, const CvsProcess* process);					/*!< Tells the exit code */
 } CvsProcessCallbacks;
 

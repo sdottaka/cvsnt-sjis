@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 1992, Brian Berliner and Jeff Polk
  * Copyright (c) 1989-1992, Brian Berliner
- * 
+ *
  * You may distribute under the terms of the GNU General Public License as
  * specified in the README file that comes with the CVS source distribution.
  */
@@ -9,24 +9,16 @@
 #include "cvs.h"
 
 #ifdef SERVER_SUPPORT
-static void time_stamp_server PROTO((char *, Vers_TS *, Entnode *));
+static void time_stamp_server (char *file, Vers_TS *vers_ts, Entnode *entdata);
 #endif
 
 /* Fill in and return a Vers_TS structure for the file FINFO.  TAG and
    DATE are from the command line.  */
-
-Vers_TS *
-Version_TS (finfo, options, tag, date, force_tag_match, set_time)
-    struct file_info *finfo;
-
-    /* Keyword expansion options, I think generally from the command
-       line.  Can be either NULL or "" to indicate none are specified
-       here.  */
-    char *options;
-    char *tag;
-    char *date;
-    int force_tag_match;
-    int set_time;
+/* Keyword expansion options, I think generally from the command
+    line.  Can be either NULL or "" to indicate none are specified
+    here.  */
+Vers_TS *Version_TS (struct file_info *finfo, const char *options, const char *tag,
+    const char *date, int force_tag_match, int set_time, int force_case_match)
 {
     Node *p;
     RCSNode *rcsdata;
@@ -49,60 +41,73 @@ Version_TS (finfo, options, tag, date, force_tag_match, set_time)
      */
     if (finfo->entries == NULL)
     {
-	sdtp = NULL;
-	p = NULL;
+		sdtp = NULL;
+		p = NULL;
     }
     else
     {
-	p = findnode_fn (finfo->entries, finfo->file);
-	sdtp = (struct stickydirtag *) finfo->entries->list->data; /* list-private */
+		if(force_case_match)
+			p = findnode (finfo->entries, finfo->file);
+		else
+			p = findnode_fn (finfo->entries, finfo->file);
+		sdtp = (struct stickydirtag *) finfo->entries->list->data; /* list-private */
     }
 
     entdata = NULL;
     if (p != NULL)
     {
-	entdata = (Entnode *) p->data;
+		entdata = (Entnode *) p->data;
 
-	if (entdata->type == ENT_SUBDIR)
-	{
-	    /* According to cvs.texinfo, the various fields in the Entries
-	       file for a directory (other than the name) do not have a
-	       defined meaning.  We need to pass them along without getting
-	       confused based on what is in them.  Therefore we make sure
-	       not to set vn_user and the like from Entries, add.c and
-	       perhaps other code will expect these fields to be NULL for
-	       a directory.  */
-	    vers_ts->entdata = entdata;
-	}
-	else
+		if (entdata->type == ENT_SUBDIR)
+		{
+			/* According to cvs.texinfo, the various fields in the Entries
+			file for a directory (other than the name) do not have a
+			defined meaning.  We need to pass them along without getting
+			confused based on what is in them.  Therefore we make sure
+			not to set vn_user and the like from Entries, add.c and
+			perhaps other code will expect these fields to be NULL for
+			a directory.  */
+			vers_ts->entdata = entdata;
+		}
+		else
 #ifdef SERVER_SUPPORT
 	/* An entries line with "D" in the timestamp indicates that the
 	   client sent Is-modified without sending Entry.  So we want to
 	   use the entries line for the sole purpose of telling
 	   time_stamp_server what is up; we don't want the rest of CVS
 	   to think there is an entries line.  */
-	if (strcmp (entdata->timestamp, "D") != 0)
+	if (strcmp (entdata->timestamp, DATE_CHAR_S) != 0)
 #endif
-	{
-	    vers_ts->vn_user = xstrdup (entdata->version);
-	    vers_ts->ts_rcs = xstrdup (entdata->timestamp);
-	    vers_ts->ts_conflict = xstrdup (entdata->conflict);
-	    if (!(tag || date) && !(sdtp && sdtp->aflag))
-	    {
-		vers_ts->tag = xstrdup (entdata->tag);
-		vers_ts->date = xstrdup (entdata->date);
-	    }
-	    vers_ts->entdata = entdata;
-	}
-	/* Even if we don't have an "entries line" as such
-	   (vers_ts->entdata), we want to pick up options which could
-	   have been from a Kopt protocol request.  */
-	if (!options || *options == '\0')
-	{
-	    if (!(sdtp && sdtp->aflag))
-		vers_ts->options = xstrdup (entdata->options);
-	}
+		{
+			vers_ts->vn_user = xstrdup (entdata->version);
+			vers_ts->ts_rcs = xstrdup (entdata->timestamp);
+
+			vers_ts->ts_conflict = xstrdup (entdata->conflict);
+			if (!(tag || date) && !(sdtp && sdtp->aflag))
+			{
+				vers_ts->tag = xstrdup (entdata->tag);
+				vers_ts->date = xstrdup (entdata->date);
+			}
+			vers_ts->entdata = entdata;
+		}
+		/* Even if we don't have an "entries line" as such
+		(vers_ts->entdata), we want to pick up options which could
+		have been from a Kopt protocol request.  */
+		if (!options || *options == '\0')
+		{
+			if (!(sdtp && sdtp->aflag))
+			vers_ts->options = xstrdup (entdata->options);
+		}
     }
+	else
+	{
+		/* If this is a directory history file, use the directory version */
+		if(!strcmp(finfo->file,RCSREPOVERSION))
+		{
+			vers_ts->vn_user = xstrdup(get_directory_version());
+			vers_ts->ts_user = xstrdup("0"); /* We set a bogus timestamp so classify_file does the right thing */
+		}
+	}
 
     /*
      * -k options specified on the command line override (and overwrite)
@@ -110,10 +115,6 @@ Version_TS (finfo, options, tag, date, force_tag_match, set_time)
      */
     if (options && *options != '\0')
 		vers_ts->options = xstrdup (options);
-/* K options in the RCS file override K options in the entries file
-    else if (!vers_ts->options || *vers_ts->options == '\0')
-    {
-*/
 	else if (finfo->rcs != NULL)
 	{
 	    /* If no keyword expansion was specified on command line,
@@ -132,11 +133,9 @@ Version_TS (finfo, options, tag, date, force_tag_match, set_time)
 		else
 			vers_ts->options = NULL;
 	}
-/*
-    }
-*/
+
     if (!vers_ts->options)
-	vers_ts->options = xstrdup ("");
+		vers_ts->options = xstrdup ("");
 
     /*
      * if tags were specified on the command line, they override what is in
@@ -164,93 +163,104 @@ Version_TS (finfo, options, tag, date, force_tag_match, set_time)
 	rcsdata->refcount++;
     }
     else if (finfo->repository != NULL)
-	rcsdata = RCS_parse (finfo->file, finfo->repository);
+		rcsdata = RCS_parse (finfo->mapped_file, finfo->repository);
     else
-	rcsdata = NULL;
+		rcsdata = NULL;
 
     if (rcsdata != NULL)
     {
-	/* squirrel away the rcsdata pointer for others */
-	vers_ts->srcfile = rcsdata;
+		/* squirrel away the rcsdata pointer for others */
+		vers_ts->srcfile = rcsdata;
 
-	if (vers_ts->tag && strcmp (vers_ts->tag, TAG_BASE) == 0)
-	{
-	    vers_ts->vn_rcs = xstrdup (vers_ts->vn_user);
-	    vers_ts->vn_tag = xstrdup (vers_ts->vn_user);
-	}
-	else
-	{
-	    int simple;
-
-	    vers_ts->vn_rcs = RCS_getversion (rcsdata, vers_ts->tag,
-					      vers_ts->date, force_tag_match,
-					      &simple);
-	    if (vers_ts->vn_rcs == NULL)
-		vers_ts->vn_tag = NULL;
-	    else if (simple)
-		vers_ts->vn_tag = xstrdup (vers_ts->tag);
-	    else
-		vers_ts->vn_tag = xstrdup (vers_ts->vn_rcs);
-	}
-
-	/*
-	 * If the source control file exists and has the requested revision,
-	 * get the Date the revision was checked in.  If "user" exists, set
-	 * its mtime.
-	 */
-	if (set_time && vers_ts->vn_rcs != NULL)
-	{
-#ifdef SERVER_SUPPORT
-	    if (server_active)
-		server_modtime (finfo, vers_ts);
-	    else
-#endif
-	    {
-		struct utimbuf t;
-
-		memset (&t, 0, sizeof (t));
-		t.modtime =
-		    RCS_getrevtime (rcsdata, vers_ts->vn_rcs, 0, 0);
-		if (t.modtime != (time_t) -1)
+		if (vers_ts->tag && strcmp (vers_ts->tag, TAG_BASE) == 0)
 		{
-		    t.actime = t.modtime;
+			vers_ts->vn_rcs = xstrdup (vers_ts->vn_user);
+			vers_ts->vn_tag = xstrdup (vers_ts->vn_user);
+		}
+		else
+		{
+			int simple;
+
+			vers_ts->vn_rcs = RCS_getversion (rcsdata, vers_ts->tag,
+							vers_ts->date, force_tag_match,
+							&simple);
+			if (vers_ts->vn_rcs == NULL)
+				vers_ts->vn_tag = NULL;
+			else if (simple)
+				vers_ts->vn_tag = xstrdup (vers_ts->tag);
+			else
+				vers_ts->vn_tag = xstrdup (vers_ts->vn_rcs);
+		}
+
+		if(vers_ts->vn_rcs)
+		{
+			vers_ts->filename = RCS_getfilename(rcsdata, vers_ts->vn_rcs);
+			vers_ts->tt_rcs = RCS_getrevtime(rcsdata, vers_ts->vn_rcs, NULL, 0);
+		}
+
+		/*
+		* If the source control file exists and has the requested revision,
+		* get the Date the revision was checked in.  If "user" exists, set
+		* its mtime.
+		*/
+		if (set_time && vers_ts->vn_rcs != NULL)
+		{
+#ifdef SERVER_SUPPORT
+			if (server_active)
+			server_modtime (finfo, vers_ts);
+			else
+#endif
+			{
+				struct utimbuf t;
+
+				memset (&t, 0, sizeof (t));
+				t.modtime =
+					RCS_getrevtime (rcsdata, vers_ts->vn_rcs, 0, 0);
+				if (t.modtime != (time_t) -1)
+				{
+					t.actime = t.modtime;
 
 #ifdef UTIME_EXPECTS_WRITABLE
-		    if (!iswritable (finfo->file))
-		    {
-			xchmod (finfo->file, 1);
-			change_it_back = 1;
-		    }
+					if (!iswritable (vers_ts->filename?vers_ts->filename:finfo->file))
+					{
+					xchmod (vers_ts->filename?vers_ts->filename:finfo->file, 1);
+					change_it_back = 1;
+					}
 #endif  /* UTIME_EXPECTS_WRITABLE  */
 
-		    /* This used to need to ignore existence_errors
-		       (for cases like where update.c now clears
-		       set_time if noexec, but didn't used to).  I
-		       think maybe now it doesn't (server_modtime does
-		       not like those kinds of cases).  */
-		    (void) utime (finfo->file, &t);
+					/* This used to need to ignore existence_errors
+					(for cases like where update.c now clears
+					set_time if noexec, but didn't used to).  I
+					think maybe now it doesn't (server_modtime does
+					not like those kinds of cases).  */
+					(void) utime (vers_ts->filename?vers_ts->filename:finfo->file, &t);
 
 #ifdef UTIME_EXPECTS_WRITABLE
-		    if (change_it_back == 1)
-		    {
-			xchmod (finfo->file, 0);
-			change_it_back = 0;
-		    }
+					if (change_it_back == 1)
+					{
+					xchmod (vers_ts->filename?vers_ts->filename:finfo->file, 0);
+					change_it_back = 0;
+					}
 #endif  /*  UTIME_EXPECTS_WRITABLE  */
+				}
+			}
 		}
-	    }
-	}
     }
 
     /* get user file time-stamp in ts_user */
     if (finfo->entries != (List *) NULL)
     {
 #ifdef SERVER_SUPPORT
-	if (server_active)
-	    time_stamp_server (finfo->file, vers_ts, entdata);
-	else
+		if (server_active)
+			time_stamp_server (finfo->file, vers_ts, entdata);
+		else
 #endif
-	    vers_ts->ts_user = time_stamp (finfo->file);
+		{
+			if(filenames_case_insensitive && force_case_match && !case_isfile(vers_ts->filename?vers_ts->filename:finfo->file,NULL))
+				vers_ts->ts_user = NULL;
+			else
+				vers_ts->ts_user = time_stamp (vers_ts->filename?vers_ts->filename:finfo->file,0);
+		}
     }
 
     return (vers_ts);
@@ -264,11 +274,7 @@ Version_TS (finfo, options, tag, date, force_tag_match, set_time)
 #define mark_lost(V)		((V)->ts_user = 0)
 #define mark_unchanged(V)	((V)->ts_user = xstrdup ((V)->ts_rcs))
 
-static void
-time_stamp_server (file, vers_ts, entdata)
-    char *file;
-    Vers_TS *vers_ts;
-    Entnode *entdata;
+static void time_stamp_server (char *file, Vers_TS *vers_ts, Entnode *entdata)
 {
     struct stat sb;
     char *cp;
@@ -289,11 +295,11 @@ time_stamp_server (file, vers_ts, entdata)
 	if (entdata == NULL)
 	    mark_lost (vers_ts);
 	else if (entdata->timestamp
-		 && entdata->timestamp[0] == '=')
+		 && entdata->timestamp[0] == UNCHANGED_CHAR)
 	    mark_unchanged (vers_ts);
 	else if (entdata->timestamp != NULL
-		 && (entdata->timestamp[0] == 'M'
-		     || entdata->timestamp[0] == 'D')
+		 && (entdata->timestamp[0] == MODIFIED_CHAR
+		     || entdata->timestamp[0] == DATE_CHAR)
 		 && entdata->timestamp[1] == '\0')
 	    vers_ts->ts_user = xstrdup ("Is-modified");
 	else
@@ -328,17 +334,17 @@ time_stamp_server (file, vers_ts, entdata)
 
 	cp[24] = 0;
 	(void) strcpy (vers_ts->ts_user, cp);
+
     }
 }
 
 #endif /* SERVER_SUPPORT */
+
 /*
  * Gets the time-stamp for the file "file" and returns it in space it
  * allocates
  */
-char *
-time_stamp (file)
-    char *file;
+char *time_stamp (const char *file, int local)
 {
     struct stat sb;
     char *cp;
@@ -360,7 +366,7 @@ time_stamp (file)
 	   systems where gmtime returns NULL, the modification time is
 	   stored in local time, and therefore it is not possible to cause
 	   st_mtime to be out of sync by changing the timezone.  */
-	tm_p = gmtime (&sb.st_mtime);
+	tm_p = local?NULL:gmtime (&sb.st_mtime);
 	if (tm_p)
 	{
 	    memcpy (&local_tm, tm_p, sizeof (local_tm));
@@ -379,9 +385,7 @@ time_stamp (file)
 /*
  * free up a Vers_TS struct
  */
-void
-freevers_ts (versp)
-    Vers_TS **versp;
+void freevers_ts(Vers_TS **versp)
 {
 	if(*versp)
 	{
@@ -396,6 +400,8 @@ freevers_ts (versp)
 		xfree ((*versp)->tag);
 		xfree ((*versp)->date);
 		xfree ((*versp)->ts_conflict);
+		xfree ((*versp)->filename);
 		xfree (*versp);
 	}
 }
+

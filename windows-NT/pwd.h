@@ -25,8 +25,9 @@ struct passwd
   gid_t pw_gid;			/* Group ID					*/
   uid_t pw_uid;			/* User ID					*/
   const char *pw_passwd;		/* Password					*/
-  const TCHAR *pw_pdc;			/* Primary domain controller */
-  const TCHAR *pw_name_t;		/* login user id (unicode)	*/
+  const wchar_t *pw_pdc_w;		/* Primary domain controller (unicode) */
+  const wchar_t *pw_domain_w;		/* Primary domain (unicode) */
+  const wchar_t *pw_name_w;		/* login user id (unicode)	*/
 };
 
 //extern struct passwd *getpwuid (uid_t);

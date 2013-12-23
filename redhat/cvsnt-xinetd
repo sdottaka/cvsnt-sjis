@@ -1,0 +1,10 @@
+service cvspserver
+{
+	disable	= yes
+	socket_type     = stream
+	wait            = no
+	user            = root
+	server          = /usr/bin/cvs
+	server_args     = pserver
+	log_on_failure  += USERID
+}

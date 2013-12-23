@@ -19,6 +19,9 @@ GNU General Public License for more details.
 #ifdef _WIN32
 #include <io.h>
 #endif
+/* This is a cheat... it basically means we don't have to define the cvs unicode routines twice, but
+   means that there's a circular dependency. */
+#include "../src/unicode_stuff.h"
 
 extern int binary_I_O;
 
@@ -77,12 +80,9 @@ static void prepare_text_end PARAMS((struct file_data *));
 /* Return 1 if BUF contains a non text character.
    SIZE is the number of characters in BUF.  */
 
-#define binary_file_p(buf, size) (!is_unicode(buf,size,NULL) && memchr (buf, '\0', size) != 0)
+#define binary_file_p(buf, size) (encoding==ENC_UNKNOWN && !file_encoding(buf,size,NULL,encoding) && memchr (buf, '\0', size) != 0)
 
-static int is_unicode(const char *buf, int len, int *swap);
-static int convert_unicode_to_utf8(char **buf, int len, int *bufsize);
-
-extern int unicode_files; /* Override detection if --unicode passed */
+extern encoding_type encoding; /* Override detection if --encoding passed */
 
 /* Get ready to read the current file.
    Return nonzero if SKIP_TEST is zero,
@@ -126,6 +126,27 @@ sip (current, skip_test)
 #endif
 	  return binary_file_p (current->buffer, n);
 	}
+
+#if HAVE_SETMODE
+	  if(!binary_I_O)
+	  {
+		  /* Check for unicode, switch to binary I/O if true */
+		  struct stat st;
+		  fstat(current->desc,&st);
+		  if(!(st.st_size&1))
+		  {
+			int oldmode = setmode (current->desc, O_BINARY);
+			size_t n = read (current->desc, current->buffer, max(current->bufsize,256));
+			if (n == -1)
+				pfatal_with_name (current->name);
+			if (lseek (current->desc, - (off_t) n, SEEK_CUR) == -1)
+				pfatal_with_name (current->name);
+			if(!file_encoding(current->buffer,max(n,256),NULL,encoding))
+				setmode (current->desc, oldmode);
+		  }
+		}
+#endif
+
     }
 
   current->buffered_chars = 0;
@@ -167,8 +188,7 @@ slurp (current, binary)
 	  current->buffered_chars += cc;
 	  if(!binary_I_O && !binary)
 	  {
-		convert_unicode_to_utf8(&current->buffer,current->buffered_chars,&current->buffered_chars); /* Translate the incoming buffer to utf8 */
-		current->bufsize=current->buffered_chars + 1 + sizeof(word); /* Leave room for sentinel + linefeed */
+		current->buffered_chars = convert_encoding_to_utf8(&current->buffer,current->buffered_chars,&current->bufsize,encoding); /* Translate the incoming buffer to utf8 */
 		current->buffer = xrealloc(current->buffer, current->bufsize);
 	  }
 	}
@@ -731,114 +751,3 @@ read_files (filevec, pretend_binary)
   return 0;
 }
 
-int is_unicode(const char *buf, int len, int *swap)
-{
-	const unsigned short *c;
-	int lowchar_count, swap_lowchar_count;
-
-	if(len<2 || len&1)
-		return 0; // Odd length files (by definition) can't be unicode
-
-	// Check for unicode header
-	if(*(unsigned short *)buf == 0xfeff)
-	{
-		if(swap) *swap=0;
-		return 1;
-	}
-
-	// Byteswap unicode header
-	if(*(unsigned short *)buf == 0xfffe)
-	{
-		if(swap) *swap=1;
-		return 1;
-	}
-
-	if(unicode_files) /* In case of ambiguity, unicode_files overrides the default */
-		return 1;
-
-	// Into uncertain territory...  For stuff like US-ANSI encodings then we can be fairly
-	// certain, but once it gets into arabic and stuff there is no good method of autodetection
-	lowchar_count=0;
-	swap_lowchar_count=0;
-	for(c=(const unsigned short*)buf; ((const char *)c)<(buf+len); c++)
-	{
-		if((*c)<128) lowchar_count++;
-		if(((((*c)>>8)+(((*c)&0xff)<<8)))<128) swap_lowchar_count++;
-	}
-	// If >80% of the buffer is unicode<128
-	if(lowchar_count>((len*8)/10))
-	{
-		if(swap) *swap=0;
-		return 1;
-	}
-	// same for byteswapped
-	if(swap_lowchar_count>((len*8)/10))
-	{
-		if(swap) *swap=1;
-		return 1;
-	}
-
-	return 0; // Not unicode
-}
-
-/* NT doesn't support UCS-4 only UCS-2 
-   Therefore this routine doesn't attempt to encode full UCS-4 unicode */
-int convert_unicode_to_utf8(char **buf, int len, int *bufsize)
-{
-	const unsigned short *source;
-	unsigned char *dest;
-	unsigned char *destbuf;
-	unsigned short c;
-	int swap;
-
-	if(is_unicode(*buf,len,&swap))
-	{
-		// unicode
-		destbuf=xmalloc(len*2); // dest shouldn't be more than double source...
-		source=(const unsigned short*)((*buf)+2);
-		dest=destbuf+3;
-		// UTF8 header
-		destbuf[0]=0xef;
-		destbuf[1]=0xbb;
-		destbuf[2]=0xbf;
-	
-		while(source<(const unsigned short *)((*buf)+len))
-		{
-			c=*(source++);
-			if(swap)
- 				c=(c>>8)+((c&0xff)<<8);
-			if(c==0x0d)
-			{
-				unsigned short d = *source;
-				if(swap)
-					d=(d>>8)+((d&0xff)<<8);
-				if(d==0x0a)
-				{
-					source++;
-					c=0x0a;
-				}
-			}
-			if(c<0x80)
-			{
-				*(dest++)=c;
-			}
-			else if(c<0x800)
-			{
-				*(dest++)=0xc0+(c>>6);
-				*(dest++)=0x80+(c&0x3f);
-			}
-			else /* 0x800-0xFFFF */
-			{
-				*(dest++)=0xe0+(c>>12);
-				*(dest++)=0x80+((c>>6)&0x3f);
-				*(dest++)=0x80+(c&0x3f);
-			}
-		}
-		free(*buf);
-		*bufsize=(dest-destbuf)+32;
-		*buf=realloc(destbuf,*bufsize);
-		return dest-destbuf;
-	}
-	else
-		return len;
-}

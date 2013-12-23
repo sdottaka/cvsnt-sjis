@@ -89,8 +89,7 @@ int CALLBACK BrowseValid(HWND hWnd, UINT uMsg, LPARAM lParam, LPARAM lpData)
 #ifdef JP_STRING
 				SendMessage(hWnd,BFFM_SETSTATUSTEXT,NULL,(LPARAM)"ネットワークドライブは使用できません");
 #else
-				SendMessage(hWnd,BFFM_SETSTATUSTEXT,NULL,(LPARAM)"Network drives are not 
-allowed");
+				SendMessage(hWnd,BFFM_SETSTATUSTEXT,NULL,(LPARAM)"Network drives are not allowed");
 #endif
 			}
 			SendMessage(hWnd,BFFM_ENABLEOK,NULL,bOk);

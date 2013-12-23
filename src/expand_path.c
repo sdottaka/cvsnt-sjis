@@ -270,7 +270,7 @@ expand_path (name, file, line)
 char *cvspid()
 {
 	static char tmp[32];
-	sprintf(tmp,"%08x",getpid());
+	sprintf(tmp,"%08x",(int)getpid());
 	return tmp;
 }
 

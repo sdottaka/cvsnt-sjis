@@ -6,23 +6,24 @@
 #endif // _MSC_VER > 1000
 // NewRootDialog.h : header file
 //
+#include "RepositoryPage.h"
 
 /////////////////////////////////////////////////////////////////////////////
 // CNewRootDialog dialog
-
 class CNewRootDialog : public CDialog
 {
 // Construction
 public:
 	CNewRootDialog(CWnd* pParent = NULL);   // standard constructor
 
-	CString m_RepoPrefix;
+	CString m_szRoot;
+	CString m_szName;
 	CString m_szInstallPath;
+	bool m_bSyncName;
 
 // Dialog Data
 	//{{AFX_DATA(CNewRootDialog)
 	enum { IDD = IDD_NEWROOT };
-	CString	m_szRoot;
 	//}}AFX_DATA
 
 
@@ -35,6 +36,7 @@ public:
 
 // Implementation
 protected:
+	void UpdateName();
 
 	// Generated message map functions
 	//{{AFX_MSG(CNewRootDialog)
@@ -43,6 +45,9 @@ protected:
 	virtual BOOL OnInitDialog();
 	//}}AFX_MSG
 	DECLARE_MESSAGE_MAP()
+public:
+	afx_msg void OnEnChangeRoot();
+	afx_msg void OnEnChangeName();
 };
 
 //{{AFX_INSERT_LOCATION}}

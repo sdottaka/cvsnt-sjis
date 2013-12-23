@@ -25,6 +25,13 @@ char cvsrc[] = CVSRC_FILENAME;
 extern char *strtok (char *, const char *);
 #endif
 
+/* old_argc and old_argv hold the values returned from the
+    previous invocation of read_cvsrc and are used to free the
+    allocated memory.  The first invocation of read_cvsrc gets argv
+    from the system, this memory must not be freed.  */
+static int old_argc = 0;
+static char **old_argv = NULL;
+
 /* Read cvsrc, processing options matching CMDNAME ("cvs" for global
    options, and update *ARGC and *ARGV accordingly.  */
 
@@ -52,13 +59,6 @@ read_cvsrc (int *argc, char ***argv, char *cmdname)
 
 	int len;
 	char *buffer = NULL, *ptr;
-
-    /* old_argc and old_argv hold the values returned from the
-       previous invocation of read_cvsrc and are used to free the
-       allocated memory.  The first invocation of read_cvsrc gets argv
-       from the system, this memory must not be free'd.  */
-    static int old_argc = 0;
-    static char **old_argv = NULL;
 
     /* don't do anything if argc is -1, since that implies "help" mode */
     if (*argc == -1)
@@ -154,7 +154,7 @@ read_cvsrc (int *argc, char ***argv, char *cmdname)
 		ptr = strtok(buffer, "\n");
 		while(ptr && *ptr && !server_found)
 		{
-			TRACE(3,"%s",ptr);
+			TRACE(3,"%s",PATCH_NULL(ptr));
 			/* skip over comment lines */
 			if (ptr[0] == '#')
 			{
@@ -293,4 +293,11 @@ read_cvsrc (int *argc, char ***argv, char *cmdname)
     old_argv = *argv = new_argv;
 
     return;
+}
+
+int close_cvsrc()
+{
+	if(old_argv != NULL)
+		free_names(&old_argc, old_argv);
+	return 0;
 }

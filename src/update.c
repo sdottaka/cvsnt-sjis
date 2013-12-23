@@ -46,7 +46,7 @@
 #include "hardlink.h"
 
 static int checkout_file(struct file_info *finfo, Vers_TS *vers_ts,
-				 int adding, int merging, int update_server, int resurrect, int is_rcs);
+				 int adding, int merging, int update_server, int resurrect, int is_rcs, const char *merge_rev1, const char *merge_rev2);
 #ifdef SERVER_SUPPORT
 static void checkout_to_buffer PROTO ((void *, const char *, size_t));
 #endif
@@ -59,9 +59,12 @@ static void patch_file_write PROTO ((void *, const char *, size_t));
 #endif
 static int merge_file PROTO ((struct file_info *finfo, Vers_TS *vers));
 static int scratch_file PROTO((struct file_info *finfo, Vers_TS *vers));
-static Dtype update_dirent_proc PROTO ((void *callerdat, char *dir,
+static int update_predirent_proc(void *callerdat, char *dir,
 					char *repository, char *update_dir,
-					List *entries));
+					List *entries, const char *virtual_repository, Dtype hint);
+static Dtype update_dirent_proc(void *callerdat, char *dir,
+					char *repository, char *update_dir,
+					List *entries, const char *virtual_repository, Dtype hint);
 static int update_dirleave_proc PROTO ((void *callerdat, char *dir,
 					int err, char *update_dir,
 					List *entries));
@@ -92,23 +95,30 @@ static char *tag_update_dir;
 static char *join_rev1, *date_rev1;
 static char *join_rev2, *date_rev2;
 static int aflag = 0;
-static int toss_local_changes = 0;
+static int toss_local_changes;
 static int force_tag_match = 1;
-static int update_build_dirs = 0;
-static int update_prune_dirs = 0;
-static int pipeout = 0;
-static int dotemplate = 0;
-static int merge_from_branchpoint = 0;
+static int update_build_dirs;
+static int update_prune_dirs;
+static int pipeout;
+static int dotemplate;
 static int is_rcs;
+static int merge_from_branchpoint;
+static int conflict_3way;
+static int case_sensitive;
+static int force_checkout_time;
 #ifdef SERVER_SUPPORT
 static int patches = 0;
-static int rcs_diff_patches = 0;
+static int rcs_diff_patches ;
 #endif
 static List *ignlist = (List *) NULL;
 static time_t last_register_time;
+static List *renamed_file_list;
+
+extern int client_overwrite_existing;
+
 static const char *const update_usage[] =
 {
-    "Usage: %s %s [-APCdflRpbm] [-k kopt] [-r rev] [-D date] [-j rev]\n",
+    "Usage: %s %s [-APCdflRpbmt] [-k kopt] [-r rev] [-D date] [-j rev]\n",
     "    [-I ign] [-W spec] [files...]\n",
     "\t-A\tReset any sticky tags/date/kopts.\n",
     "\t-P\tPrune empty directories.\n",
@@ -126,6 +136,9 @@ static const char *const update_usage[] =
 	"\t-m\tPerform -j merge from last merge point (default).\n",
     "\t-I ign\tMore files to ignore (! to reset).\n",
     "\t-W spec\tWrappers specification line.\n",
+    "\t-3\tProduce 3-way conflicts.\n",
+	"\t-S\tSelect between conflicting case sensitive names.\n",
+	"\t-t\tUpdate using last checkin time.\n",
     "(Specify the --help global option for a list of other help options)\n",
     NULL
 };
@@ -147,7 +160,7 @@ update (argc, argv)
 
     /* parse the args */
     optind = 0;
-    while ((c = getopt (argc, argv, "+ApCPflRQqduk:r:D:j:bmI:W:")) != -1)
+    while ((c = getopt (argc, argv, "+ApCPflRQqduk:r:D:j:bmI:W:3St")) != -1)
     {
 	switch (c)
 	{
@@ -231,6 +244,15 @@ update (argc, argv)
 #endif
 		    usage (update_usage);
 		break;
+		case '3':
+			conflict_3way = 1;
+			break;
+		case 'S':
+			case_sensitive = 1;
+			break;
+		case 't':
+			force_checkout_time = 1;
+			break;
 	    case '?':
 	    default:
 		usage (update_usage);
@@ -252,6 +274,9 @@ update (argc, argv)
 	do
 	{
 	    int status;
+
+		if(!server_started)
+			start_server(0); 
 
 	    if (local)
 		send_arg("-l");
@@ -277,10 +302,16 @@ update (argc, argv)
 		option_with_arg ("-j", join_rev1);
 	    if (join_rev2)
 		option_with_arg ("-j", join_rev2);
+		if (conflict_3way)
+			send_arg("-3");
+		if (force_checkout_time)
+			send_arg("-t");
 		ign_send ();
 	    wrap_send ();
 		if (merge_from_branchpoint)
 			send_arg("-b");
+
+		client_overwrite_existing = case_sensitive;
 
 	    if (failed_patches_count == 0)
 	    {
@@ -299,24 +330,27 @@ update (argc, argv)
 		if (supported_request ("update-patches"))
 		    send_arg ("-u");
 
-                if (update_build_dirs)
-                    flags |= SEND_BUILD_DIRS;
+        if (update_build_dirs)
+            flags |= SEND_BUILD_DIRS;
 
-                if (toss_local_changes) {
-                    flags |= SEND_NO_CONTENTS;
-                    flags |= BACKUP_MODIFIED_FILES;
-                }
+        if (toss_local_changes) {
+            flags |= SEND_NO_CONTENTS;
+            flags |= BACKUP_MODIFIED_FILES;
+        }
+
+		if(case_sensitive)
+			flags |= SEND_CASE_SENSITIVE;
 
 		send_arg("--");
 		/* If noexec, probably could be setting SEND_NO_CONTENTS.
 		   Same caveats as for "cvs status" apply.  */
 
 		send_files (argc, argv, local, aflag, flags);
-		send_file_names (argc, argv, SEND_EXPAND_WILD);
+		send_file_names (argc, argv, SEND_EXPAND_WILD|(case_sensitive?SEND_CASE_SENSITIVE:0));
 	    }
 	    else
 	    {
-		int i;
+		int i, flags = 0;
 
 		(void) printf ("%s client: refetching unpatchable files\n",
 			       program_name);
@@ -332,15 +366,22 @@ update (argc, argv)
 			&& !existence_error (errno))
 			error (0, errno, "cannot remove %s",
 			       failed_patches[i]);
+
+		if(update_build_dirs)
+			flags |= SEND_BUILD_DIRS;
+
+		if(case_sensitive)
+			flags |= SEND_CASE_SENSITIVE;
+
 		send_files (failed_patches_count, failed_patches, local,
-			    aflag, update_build_dirs ? SEND_BUILD_DIRS : 0);
+			    aflag, flags);
 		send_file_names (failed_patches_count, failed_patches, 0);
 		free_names (&failed_patches_count, failed_patches);
 	    }
 
 	    send_to_server ("update\012", 0);
 
-	    status = get_server_responses(); // Was get_responses_and_close, which is *totally* wrong...  been like this since cvs 1.10 apparently
+	    status = get_responses_and_close(); 
 
 	    /* If there are any conflicts, the server will return a
                non-zero exit status.  If any patches failed, we still
@@ -355,18 +396,17 @@ update (argc, argv)
 	       ideal.  (2) it would be nice to have a testsuite case for the
 	       conflict-and-patch-failed case.  */
 
-	    if (status != 0
-		&& (failed_patches_count == 0 || pass > 1))
+	    if (status != 0 && (failed_patches_count == 0 || pass > 1))
 	    {
-		if (failed_patches_count > 0)
-		    free_names (&failed_patches_count, failed_patches);
-		return status;
+			if (failed_patches_count > 0)
+				free_names (&failed_patches_count, failed_patches);
+			return status;
 	    }
 
 	    ++pass;
 	} while (failed_patches_count > 0);
 
-	cleanup_and_close_server();
+//	cleanup_and_close_server();
 
 	return 0;
     }
@@ -423,15 +463,22 @@ update (argc, argv)
 	    xfree (repos);
 	}
 
-	/* keep the CVS/Tag file current with the specified arguments */
-	if (aflag || tag || date)
+	/* This block is only in the case of a single file update, so directory versions aren't relevant */
 	{
-	    char *repos = Name_Repository (NULL, NULL);
-	    WriteTag ((char *) NULL, tag, date, 0, ".", repos);
-	    xfree (repos);
-	    rewrite_tag = 1;
-	    nonbranch = 0;
+		char *repos = Name_Repository (NULL, NULL);
+		/* keep the CVS/Tag file current with the specified arguments */
+		if (!(aflag || tag || date))
+		{
+			ParseTag(&tag,&date,&nonbranch,NULL);
+		}
+		else
+		{
+			nonbranch = 0;
+			rewrite_tag = 1;
+			WriteTag (NULL, tag, date, nonbranch, ".", repos, NULL);
+		}
 	}
+
     }
 
     /* look for files/dirs locally and in the repository */
@@ -457,8 +504,8 @@ update (argc, argv)
 	{
 		for (i = 0; i < argc; i++)
 		{
-		    char *repos = Name_Repository (NULL, argv[i]);
-			err += do_module (db, repos + strlen(current_parsed_root->directory)+1, mtUPDATE, "Updating", NULL,
+		    const char *repos = Name_Repository (NULL, argv[i]);
+			err += do_module (db, (char*)relative_repos(repos), mtUPDATE, "Updating", NULL,
 				NULL, 0, local, run_module_prog, 0,
 				(char *) NULL);
 			xfree(repos);
@@ -466,8 +513,8 @@ update (argc, argv)
 	}
 	else
 	{
-	    char *repos = Name_Repository (NULL, NULL);
-		err += do_module (db, repos + strlen(current_parsed_root->directory)+1, mtUPDATE, "Updating", NULL,
+	    const char *repos = Name_Repository (NULL, NULL);
+		err += do_module (db, (char*)relative_repos(repos), mtUPDATE, "Updating", NULL,
 			  NULL, 0, local, run_module_prog, 0,
 			  (char *) NULL);
 		xfree(repos);
@@ -536,7 +583,7 @@ do_update (argc, argv, xoptions, xtag, xdate, xforce, local, xbuild, xaflag,
 	date_rev2 = (char *) NULL;
 
     /* call the recursion processor */
-    err = start_recursion (update_fileproc, update_filesdone_proc,
+    err = start_recursion (update_fileproc, update_filesdone_proc, update_predirent_proc,
 			   update_dirent_proc, update_dirleave_proc, NULL,
 			   argc, argv, local, which, aflag, 1,
 			   preload_update_dir, 1, verify_read);
@@ -614,10 +661,10 @@ static int update_fileproc (void *callerdat, struct file_info *finfo)
 	    case T_REMOVED:		/* removed but not committed */
 	    case T_CHECKOUT:		/* needs checkout */
 	    case T_PATCH:		/* needs patch */
-		retval = checkout_file (finfo, vers, 0, 0, 0, 0, is_rcs);
+		retval = checkout_file (finfo, vers, 0, 0, 0, 0, is_rcs, NULL, NULL);
 		break;
 		case T_RESURRECT:	/* resurrect last version */
-		retval = checkout_file (finfo, vers, 0, 0, 0, 1, is_rcs);
+		retval = checkout_file (finfo, vers, 0, 0, 0, 1, is_rcs, NULL, NULL);
 		break;
 
 	    default:			/* can't ever happen :-) */
@@ -631,91 +678,90 @@ static int update_fileproc (void *callerdat, struct file_info *finfo)
     {
 	switch (status)
 	{
-	    case T_UNKNOWN:		/* unknown file was explicitly asked
-					 * about */
+	    case T_UNKNOWN:		/* unknown file was explicitly asked about */
 	    case T_UPTODATE:		/* file was already up-to-date */
-		retval = 0;
-		break;
-	    case T_CONFLICT:		/* old punt-type errors */
-		retval = 1;
-		write_letter (finfo, 'C');
-		break;
-	    case T_NEEDS_MERGE:		/* needs merging */
-		if (! toss_local_changes)
-		{
-		    retval = merge_file (finfo, vers);
-		    break;
-		}
+			retval = 0;
+			break;
+		case T_CONFLICT:		/* old punt-type errors */
+			retval = 1;
+			write_letter (finfo, 'C');
+			break;
+		case T_NEEDS_MERGE:		/* needs merging */
+			if (! toss_local_changes)
+			{
+				retval = merge_file (finfo, vers);
+				break;
+			}
 		/* else FALL THROUGH */
 	    case T_MODIFIED:		/* locally modified */
-		retval = 0;
-                if (toss_local_changes)
-                {
-                    char *bakname;
-                    bakname = backup_file (finfo->file, vers->vn_user);
-                    /* This behavior is sufficiently unexpected to
-                       justify overinformativeness, I think. */
-                    if ((! really_quiet) && (! server_active))
-                        (void) printf ("(Locally modified %s moved to %s)\n",
-                                       finfo->file, bakname);
-                    xfree (bakname);
+			retval = 0;
+            if (toss_local_changes)
+            {
+                char *bakname;
+                bakname = backup_file (finfo->file, vers->vn_user);
+                /* This behavior is sufficiently unexpected to
+                    justify overinformativeness, I think. */
+                if ((! really_quiet) && (! server_active))
+                    (void) printf ("(Locally modified %s moved to %s)\n",
+                                    finfo->file, bakname);
+                xfree (bakname);
 
-                    /* The locally modified file is still present, but
-                       it will be overwritten by the repository copy
-                       after this. */
-                    status = T_CHECKOUT;
-                    retval = checkout_file (finfo, vers, 0, 0, 1, 0, 0);
-                }
-                else 
+                /* The locally modified file is still present, but
+                    it will be overwritten by the repository copy
+                    after this. */
+                status = T_CHECKOUT;
+                retval = checkout_file (finfo, vers, 0, 0, 1, 0, 0, NULL, NULL);
+            }
+            else 
+            {
+                if (vers->ts_conflict)
                 {
-                    if (vers->ts_conflict)
+                    char *filestamp;
+                    int retcode;
+
+                    /*
+                        * If the timestamp has changed and no
+                        * conflict indicators are found, it isn't a
+                        * 'C' any more.
+                        */
+
+                    if (server_active)
+                        retcode = vers->ts_conflict[0] != '=';
+                    else 
                     {
-                        char *filestamp;
-                        int retcode;
-
-                        /*
-                         * If the timestamp has changed and no
-                         * conflict indicators are found, it isn't a
-                         * 'C' any more.
-                         */
-
-                        if (server_active)
-                            retcode = vers->ts_conflict[0] != '=';
-                        else 
-                        {
-                            filestamp = time_stamp (finfo->file);
-                            retcode = strcmp (vers->ts_conflict, filestamp);
-                            xfree (filestamp);
-                        }
-
-                        if (retcode)
-                        {
-                            /* The timestamps differ.  But if there
-                               are conflict markers print 'C' anyway.  */
-                            retcode = !file_has_markers (finfo);
-                        }
-
-                        if (!retcode)
-                        {
-                            write_letter (finfo, 'C');
-                            retval = 1;
-                        }
-                        else
-                        {
-                            /* Reregister to clear conflict flag. */
-                            Register (finfo->entries, finfo->file, 
-                                      vers->vn_rcs, vers->ts_rcs,
-                                      vers->options, vers->tag,
-                                      vers->date, (char *)0, NULL, NULL);
-                        }
+                        filestamp = time_stamp (finfo->file, 0);
+                        retcode = strcmp (vers->ts_conflict, filestamp);
+                        xfree (filestamp);
                     }
-                    if (!retval)
+
+                    if (retcode)
                     {
-                        write_letter (finfo, 'M');
-                        retval = 0;
+                        /* The timestamps differ.  But if there
+                            are conflict markers print 'C' anyway.  */
+                        retcode = !file_has_markers (finfo);
+                    }
+
+                    if (!retcode)
+                    {
+                        write_letter (finfo, 'C');
+                        retval = 1;
+                    }
+                    else
+                    {
+                        /* Reregister to clear conflict flag. */
+                        Register (finfo->entries, finfo->file, 
+                                    vers->vn_rcs, vers->ts_rcs,
+                                    vers->options, vers->tag,
+                                    vers->date, (char *)0, NULL, NULL, vers->tt_rcs);
                     }
                 }
-		break;
+                if (!retval)
+                {
+                    write_letter (finfo, 'M');
+                    retval = 0;
+                }
+            }
+	break;
 	    case T_PATCH:		/* needs patch */
 #ifdef SERVER_SUPPORT
 		if (patches)
@@ -745,12 +791,29 @@ static int update_fileproc (void *callerdat, struct file_info *finfo)
 		   and applying patches.  */
 		/* Fall through.  */
 	    case T_CHECKOUT:		/* needs checkout */
-		retval = checkout_file (finfo, vers, 0, 0, 1, is_rcs, is_rcs);
+		retval = checkout_file (finfo, vers, 0, 0, 1, is_rcs, is_rcs, NULL, NULL);
 		break;
 	    case T_RESURRECT:		/* needs resurrection */
-		retval = checkout_file (finfo, vers, 0, 0, 1, 1, is_rcs);
+		retval = checkout_file (finfo, vers, 0, 0, 1, 1, is_rcs, NULL, NULL);
 		break;
 	    case T_ADDED:		/* added but not committed */
+		/* Regegister to take into account new options/tags */
+		if(!is_rcs)
+		{
+			if(vers->tag && isdigit(vers->tag[0]))
+				error(1,0,"Numeric revision '%s' illegal for new file",vers->tag);
+			Register(finfo->entries, finfo->file, "0", vers->ts_user,
+				  vers->options, vers->tag, NULL, NULL, NULL, NULL, (time_t)-1);
+#ifdef SERVER_SUPPORT
+			if (server_active)
+			{
+				/* We need to update the entries line on the client side.
+				It is possible we will later update it again via
+				server_updated or some such, but that is OK.  */
+				server_update_entries(finfo->file, finfo->update_dir, finfo->repository, SERVER_UPDATED);
+			}
+#endif
+		}
 		write_letter (finfo, 'A');
 		retval = 0;
 		break;
@@ -771,7 +834,7 @@ static int update_fileproc (void *callerdat, struct file_info *finfo)
 
     /* only try to join if things have gone well thus far */
     if (retval == 0 && join_rev1)
-	join_file (finfo, vers);
+		join_file (finfo, vers);
 
     /* if this directory has an ignore list, add this file to it */
     if (ignlist && (status != T_UNKNOWN || vers->ts_user == NULL))
@@ -865,11 +928,12 @@ update_filesdone_proc (callerdat, err, repository, update_dir, entries)
     char *update_dir;
     List *entries;
 {
-    if (rewrite_tag)
-    {
-	WriteTag (NULL, tag, date, nonbranch, update_dir, repository);
-	rewrite_tag = 0;
-    }
+
+	if(rewrite_tag)
+	{
+		WriteTag (NULL, tag, date, nonbranch, update_dir, repository, NULL);
+		rewrite_tag = 0;
+	}
 
     /* if this directory has an ignore list, process it then free it */
     if (ignlist)
@@ -897,6 +961,104 @@ update_filesdone_proc (callerdat, err, repository, update_dir, entries)
     return (err);
 }
 
+/* Called before the directory is opened.  We reset the sticky directory version here. */
+static int update_predirent_proc (void *callerdat, char *dir, char *repository, char *update_dir, List *entries, const char *virtual_repository, Dtype hint)
+{
+	char *olddir_vers;
+	List *ent;
+
+	if(ignore_directory(update_dir))
+		return R_SKIP_ALL;
+	if(!isdir(dir))
+	{
+		if(!update_build_dirs || (!server_active && !isdir (repository)) || noexec)
+			return R_SKIP_ALL;
+
+	    /* otherwise, create the dir and appropriate adm files */
+
+	    /* If no tag or date were specified on the command line,
+               and we're not using -A, we want the subdirectory to use
+               the tag and date, if any, of the current directory.
+               That way, update -d will work correctly when working on
+               a branch.
+
+	       We use TAG_UPDATE_DIR to undo the tag setting in
+	       update_dirleave_proc.  If we did not do this, we would
+	       not correctly handle a working directory with multiple
+	       tags (and maybe we should prohibit such working
+	       directories, but they work now and we shouldn't make
+	       them stop working without more thought).  */
+
+		if ((tag == NULL && date == NULL) && ! aflag)
+	    {
+			ParseTag(&tag,&date,&nonbranch,NULL); /* Was olddir_vers...? */
+			if (tag != NULL || date != NULL)
+				tag_update_dir = xstrdup (update_dir);
+	    }
+
+	    make_directory (dir);
+	    Create_Admin (dir, update_dir, virtual_repository, tag, date,
+			  /* This is a guess.  We will rewrite it later
+			     via WriteTag.  */
+			  0,
+			  0,
+			  dotemplate);
+	    rewrite_tag = 1;
+	    nonbranch = 0;
+	    Subdir_Register (entries, (char *) NULL, dir);
+		/* Wipe the current directory version as we're updating */
+		WriteTag(dir, tag, date, nonbranch, update_dir, repository, "_H_");
+	}
+	else
+	{
+		if (!(aflag || tag || date))
+		{
+			ParseTag_Dir(dir,&tag,&date,&nonbranch,&olddir_vers);
+			if (tag != NULL || date != NULL)
+				tag_update_dir = xstrdup (update_dir);
+		}
+		else
+		{
+			nonbranch = 0;
+			rewrite_tag = 1;
+			ParseTag_Dir(dir,NULL,NULL,NULL,&olddir_vers);
+		}
+		/* Wipe the current directory version as we're updating */
+		WriteTag(dir, tag, date, nonbranch, update_dir, repository, "_H_");
+
+		if(!current_parsed_root->isremote 
+#ifdef SERVER_SUPPORT
+			|| server_active
+#endif
+			)
+		{
+			/* This should be made more efficient.  FIXME */
+			open_directory(repository,dir,tag,date,nonbranch,olddir_vers,0);
+			open_directory(repository,dir,tag,date,nonbranch,"_H_",0);
+
+			ent = Entries_Open_Dir(0,dir,NULL);
+			upgrade_entries(repository,dir,&ent, &renamed_file_list);
+			Entries_Close_Dir(ent,dir);
+
+			close_directory();
+			close_directory();
+		}
+
+		xfree(olddir_vers);
+	}
+	return 0;
+}
+
+static int send_client_rename(Node *p, void *callerdat)
+{
+	error(0,0,"%s has been renamed to %s",p->key,p->data);
+#ifdef SERVER_SUPPORT
+	if(server_active)
+		server_rename_file(p->key,p->data);
+#endif
+	return 0;
+}
+
 /*
  * update_dirent_proc () is called back by the recursion processor before a
  * sub-directory is processed for update.  In this case, update_dirent proc
@@ -905,13 +1067,7 @@ update_filesdone_proc (callerdat, err, repository, update_dir, entries)
  * processed by the recursion code.  A return of non-zero indicates the
  * recursion code should skip this directory.
  */
-static Dtype
-update_dirent_proc (callerdat, dir, repository, update_dir, entries)
-    void *callerdat;
-    char *dir;
-    char *repository;
-    char *update_dir;
-    List *entries;
+static Dtype update_dirent_proc (void *callerdat, char *dir, char *repository, char *update_dir, List *entries, const char *virtual_repository, Dtype hint)
 {
     if (ignore_directory (update_dir))
     {
@@ -955,6 +1111,8 @@ update_dirent_proc (callerdat, dir, repository, update_dir, entries)
 	}
 	else
 	{
+		/* This probably won't ever be called any more... just here for boilerplate.  See predirentproc, above. */
+
 	    /* otherwise, create the dir and appropriate adm files */
 
 	    /* If no tag or date were specified on the command line,
@@ -971,13 +1129,13 @@ update_dirent_proc (callerdat, dir, repository, update_dir, entries)
 	       them stop working without more thought).  */
 	    if ((tag == NULL && date == NULL) && ! aflag)
 	    {
-		ParseTag (&tag, &date, &nonbranch);
-		if (tag != NULL || date != NULL)
-		    tag_update_dir = xstrdup (update_dir);
+			ParseTag(&tag,&date,&nonbranch,NULL); /* Was olddir_vers...? */
+			if (tag != NULL || date != NULL)
+				tag_update_dir = xstrdup (update_dir);
 	    }
 
 	    make_directory (dir);
-	    Create_Admin (dir, update_dir, repository, tag, date,
+	    Create_Admin (dir, update_dir, virtual_repository, tag, date,
 			  /* This is a guess.  We will rewrite it later
 			     via WriteTag.  */
 			  0,
@@ -991,25 +1149,25 @@ update_dirent_proc (callerdat, dir, repository, update_dir, entries)
     /* Do we need to check noexec here? */
     else if (!pipeout)
     {
-	char *cvsadmdir;
+		char *cvsadmdir;
 
-	/* The directory exists.  Check to see if it has a CVS
-	   subdirectory.  */
+		/* The directory exists.  Check to see if it has a CVS
+		subdirectory.  */
 
-	cvsadmdir = xmalloc (strlen (dir) + 80);
-	strcpy (cvsadmdir, dir);
-	strcat (cvsadmdir, "/");
-	strcat (cvsadmdir, CVSADM);
+		cvsadmdir = xmalloc (strlen (dir) + 80);
+		strcpy (cvsadmdir, dir);
+		strcat (cvsadmdir, "/");
+		strcat (cvsadmdir, CVSADM);
 
-	if (!isdir (cvsadmdir))
-	{
-	    /* We cannot successfully recurse into a directory without a CVS
-	       subdirectory.  Generally we will have already printed
-	       "? foo".  */
-	    xfree (cvsadmdir);
-	    return R_SKIP_ALL;
-	}
-	xfree (cvsadmdir);
+		if (!isdir (cvsadmdir))
+		{
+			/* We cannot successfully recurse into a directory without a CVS
+			subdirectory.  Generally we will have already printed
+			"? foo".  */
+			xfree (cvsadmdir);
+			return R_SKIP_ALL;
+		}
+		xfree (cvsadmdir);
     }
 
     /*
@@ -1034,12 +1192,18 @@ update_dirent_proc (callerdat, dir, repository, update_dir, entries)
 	}
 
 	/* keep the CVS/Tag file current with the specified arguments */
-	if (aflag || tag || date)
+	if (!(aflag || tag || date))
 	{
-	    WriteTag (dir, tag, date, 0, update_dir, repository);
-	    rewrite_tag = 1;
-	    nonbranch = 0;
+		ParseTag_Dir(dir,&tag,&date,&nonbranch,NULL);
 	}
+	else
+	{
+		nonbranch = 0;
+		rewrite_tag = 1;
+	}
+
+	/* Put the new directory version in place */
+	WriteTag (dir, tag, date, nonbranch, update_dir, repository, NULL);
 
 	/* initialize the ignore list for this directory */
 	ignlist = getlist ();
@@ -1054,6 +1218,13 @@ update_dirent_proc (callerdat, dir, repository, update_dir, entries)
 		else
 #endif
 			error (0, 0, "Updating %s", client_where(update_dir));
+	}
+
+	if(renamed_file_list)
+	{
+		if(server_active)
+			walklist(renamed_file_list,send_client_rename, NULL);
+		dellist(&renamed_file_list);
 	}
 
     return (R_PROCESS);
@@ -1075,7 +1246,7 @@ update_dirleave_proc (callerdat, dir, err, update_dir, entries)
 {
     /* Delete the ignore list if it hasn't already been done.  */
     if (ignlist)
-	dellist (&ignlist);
+		dellist (&ignlist);
 
     /* If we set the tag or date for a new subdirectory in
        update_dirent_proc, and we're now done with that subdirectory,
@@ -1083,19 +1254,10 @@ update_dirleave_proc (callerdat, dir, err, update_dir, entries)
        date were both originally NULL in this case.  */
     if (tag_update_dir != NULL && strcmp (update_dir, tag_update_dir) == 0)
     {
-	if (tag != NULL)
-	{
 	    xfree (tag);
-	    tag = NULL;
-	}
-	if (date != NULL)
-	{
 	    xfree (date);
-	    date = NULL;
-	}
-	nonbranch = 0;
-	xfree (tag_update_dir);
-	tag_update_dir = NULL;
+		nonbranch = 0;
+		xfree (tag_update_dir);
     }
 
     if (strchr (dir, '/') == NULL)
@@ -1175,7 +1337,7 @@ int isemptydir (const char *dir, int might_not_exist)
 		    error_exit ();
 
 		if (CVS_CHDIR (dir) < 0)
-		    error (1, errno, "cannot change directory to %s", dir);
+		    error (1, errno, "cannot change directory to %s", fn_root(dir));
 		l = Entries_Open (0, NULL);
 		files_removed = walklist (l, isremoved, 0);
 		Entries_Close (l);
@@ -1254,7 +1416,7 @@ scratch_file (finfo, vers)
  * Check out a file.
  */
 static int checkout_file (struct file_info *finfo, Vers_TS *vers_ts, int adding,
-    int merging, int update_server, int resurrect, int is_rcs)
+    int merging, int update_server, int resurrect, int is_rcs, const char *merge_rev1, const char *merge_rev2)
 {
     char *backup;
 	char *vn_rcs;
@@ -1263,21 +1425,25 @@ static int checkout_file (struct file_info *finfo, Vers_TS *vers_ts, int adding,
     int file_is_dead;
     struct buffer *revbuf;
 	mode_t mode=0666;
+	char *xfile = finfo->file;
 
     backup = NULL;
     revbuf = NULL;
+
+	if(vers_ts && vers_ts->filename)
+		xfile = vers_ts->filename;
 
     /* Don't screw with backup files if we're going to stdout, or if
        we are the server.  */
     if (!is_rcs && !pipeout && ! server_active	)
     {
-	backup = xmalloc (strlen (finfo->file)
+	backup = xmalloc (strlen (xfile)
 			  + sizeof (CVSADM)
 			  + sizeof (CVSPREFIX)
 			  + 10);
-	(void) sprintf (backup, "%s/%s%s", CVSADM, CVSPREFIX, finfo->file);
-	if (isfile (finfo->file))
-	    rename_file (finfo->file, backup);
+	(void) sprintf (backup, "%s/%s%s", CVSADM, CVSPREFIX, xfile);
+	if (isfile (xfile))
+	    rename_file (xfile, backup);
 	else
 	{
 	    /* If -f/-t wrappers are being used to wrap up a directory,
@@ -1300,22 +1466,9 @@ static int checkout_file (struct file_info *finfo, Vers_TS *vers_ts, int adding,
 		Node *p = findnode(finfo->rcs->versions, vers_ts->vn_rcs);
 		RCSVers *vers = (RCSVers *) p->data;
 
-		do
-		{
-			/* if there is a next version, find the node */
-			if (vers->next != NULL)
-				p = findnode (finfo->rcs->versions, vers->next);
-			else
-				p = (Node *) NULL;
-			if(p)
-				vers = (RCSVers *) p->data;
-		} while(p && vers->dead);
-		if(p)
-		{
-			file_is_dead = 0;
-			adding = 1;
-			vn_rcs = vers->version;
-		}
+		file_is_dead = 0;
+		adding = 1;
+		vn_rcs = vers->version;
 	}
 	else
 		vn_rcs = vers_ts->vn_rcs;
@@ -1348,8 +1501,7 @@ VERS: ", 0);
 	if (update_server
 	    && server_active
 	    && ! pipeout
-	    && ! joining ()
-	    && ! wrap_name_has (finfo->file, WRAP_FROMCVS))
+	    && ! joining ())
 	{
 	    revbuf = buf_nonio_initialize ((BUFMEMERRPROC) NULL);
 	    status = RCS_checkout (vers_ts->srcfile, (char *) NULL,
@@ -1380,7 +1532,7 @@ VERS: ", 0);
 		else
 		{
 		    status = RCS_checkout (vers_ts->srcfile,
-				   pipeout ? NULL : finfo->file,
+				   pipeout ? NULL : xfile,
 				   vn_rcs, vers_ts->vn_tag,
 				   vers_ts->options, RUN_TTY,
 				   (RCSCHECKOUTPROC) NULL, (void *) NULL, &mode);
@@ -1396,30 +1548,31 @@ VERS: ", 0);
 		if (!is_rcs
 		&& cvswrite
 		&& !file_is_dead
-		&& !fileattr_get (finfo->file, "_watched")
+		&& !fileattr_get (xfile, "_watched")
+		&& !(RCS_get_kflags(vers_ts->options,0).flags&KFLAG_RESERVED_EDIT)
 		&& verify_write (finfo->repository,vers_ts->vn_tag))
 		{
 			if (revbuf == NULL)
-				xchmod (finfo->file, 1);
+				xchmod (xfile, 1);
 
 			/* We know that we are the server here, so
 						although xchmod checks umask, we don't bother.  */
-			mode |= (((mode & S_IRUSR) ? S_IWUSR : 0)
-					| ((mode & S_IRGRP) ? S_IWGRP : 0)
-					| ((mode & S_IROTH) ? S_IWOTH : 0));
+			/* No need to set group/world... these will be set if required by
+			   permission preservation */
+			mode |= ((mode & S_IRUSR) ? S_IWUSR : 0);
+//					| ((mode & S_IRGRP) ? S_IWGRP : 0)
+//					| ((mode & S_IROTH) ? S_IWOTH : 0));
 		}
 
 		/* set the time from the RCS file iff it was unknown before */
-		set_time =
+		set_time = force_checkout_time ||
 		(!noexec
 		&& (vers_ts->vn_user == NULL ||
 			strncmp (vers_ts->ts_rcs, "Initial", 7) == 0)
 		&& !file_is_dead);
 
-		wrap_fromcvs_process_file (finfo->file);
-
 		xvers_ts = Version_TS (finfo, options, tag, date, 
-				force_tag_match, set_time);
+				force_tag_match, set_time, 0);
 		if (strcmp (xvers_ts->options, "-V4") == 0)
 			xvers_ts->options[0] = '\0';
 
@@ -1454,7 +1607,7 @@ VERS: ", 0);
 				"warning: %s is not (any longer) pertinent",
  				fn_root(finfo->fullname));
 			}
-			Scratch_Entry (finfo->entries, finfo->file);
+			Scratch_Entry (finfo->entries, xfile);
 #ifdef SERVER_SUPPORT
 			if (server_active && xvers_ts->ts_user == NULL)
 				server_scratch_entry_only ();
@@ -1464,7 +1617,7 @@ VERS: ", 0);
 			vers_ts->ts_user is non-NULL.  Then there would be no
 			need to ignore an existence_error (for example, if the
 			user removes the file while we are running).  */
-			if (unlink_file (finfo->file) < 0 && ! existence_error (errno))
+			if (unlink_file (xfile) < 0 && ! existence_error (errno))
 			{
 				error (0, errno, "cannot remove %s", fn_root(finfo->fullname));
 			}
@@ -1472,11 +1625,11 @@ VERS: ", 0);
 		else
 		{
 			if(!is_rcs)
-			  Register (finfo->entries, finfo->file,
+			  Register(finfo->entries, xfile,
 				adding ? "0" : xvers_ts->vn_rcs,
 				xvers_ts->ts_user, xvers_ts->options,
 				xvers_ts->tag, xvers_ts->date,
-				(char *)0, NULL, NULL); /* Clear conflict flag on fresh checkout */
+				(char *)0, merge_rev1, merge_rev2, xvers_ts->tt_rcs); /* Clear conflict flag on fresh checkout */
 		}
 
 		/* fix up the vers structure, in case it is used by join */
@@ -1492,7 +1645,7 @@ VERS: ", 0);
 
 		/* If this is really Update and not Checkout, recode history */
 		if (strcmp (command_name, "update") == 0)
-			history_write ('U', finfo->update_dir, xvers_ts->vn_rcs, finfo->file,
+			history_write ('U', finfo->update_dir, xvers_ts->vn_rcs, xfile,
 				finfo->repository);
 
 		freevers_ts (&xvers_ts);
@@ -1514,7 +1667,7 @@ VERS: ", 0);
 	{
 		if (backup != NULL)
 		{
-			rename_file (backup, finfo->file);
+			rename_file (backup, xfile);
 			xfree (backup);
 			backup = NULL;
 		}
@@ -1599,6 +1752,7 @@ patch_file (finfo, vers_ts, docheckout, file_info, checksum)
     FILE *e;
     struct patch_file_data data;
 	kflag kf;
+    mode_t mode;
 
     *docheckout = 0;
 
@@ -1610,8 +1764,8 @@ patch_file (finfo, vers_ts, docheckout, file_info, checksum)
 
     /* If this file has been marked as being binary, then never send a
        patch.  */
-	kf=RCS_get_kflags(vers_ts->options);
-    if (kf&KFLAG_BINARY)
+	kf=RCS_get_kflags(vers_ts->options, 1);
+    if (kf.flags&KFLAG_BINARY)
     {
 		*docheckout = 1;
 		return 0;
@@ -1689,7 +1843,7 @@ patch_file (finfo, vers_ts, docheckout, file_info, checksum)
     retcode = RCS_checkout (vers_ts->srcfile, (char *) NULL,
 			    vers_ts->vn_user, (char *) NULL,
 			    vers_ts->options, RUN_TTY,
-			    patch_file_write, (void *) &data, NULL);
+			    patch_file_write, (void *) &data, &mode);
 
     if (fclose (e) < 0)
 	error (1, errno, "cannot close %s", file1);
@@ -1712,7 +1866,7 @@ patch_file (finfo, vers_ts, docheckout, file_info, checksum)
 	retcode = RCS_checkout (vers_ts->srcfile, (char *) NULL,
 				vers_ts->vn_rcs, vers_ts->vn_tag,
 				vers_ts->options, RUN_TTY,
-				patch_file_write, (void *) &data, NULL);
+				patch_file_write, (void *) &data, &mode);
 
 	if (fclose (e) < 0)
 	    error (1, errno, "cannot close %s", file2);
@@ -1766,21 +1920,18 @@ patch_file (finfo, vers_ts, docheckout, file_info, checksum)
 	}
 	else
 	{
+	    
 #define BINARY "Binary"
 	    char buf[sizeof BINARY];
 	    unsigned int c;
 
-	    /* Stat the original RCS file, and then adjust it the way
-	       that RCS_checkout would.  FIXME: This is an abstraction
-	       violation.  */
-	    if (CVS_STAT (vers_ts->srcfile->path, file_info) < 0)
-		error (1, errno, "could not stat %s", vers_ts->srcfile->path);
 	    if (chmod (finfo->file,
-		       file_info->st_mode & ~(S_IWRITE | S_IWGRP | S_IWOTH))
+		       mode & ~(S_IWRITE | S_IWGRP | S_IWOTH))
 		< 0)
-		error (0, errno, "cannot change mode of file %s", finfo->file);
+		error (0, errno, "cannot change mode of file %s", fn_root(finfo->file));
 	    if (cvswrite
 		&& !fileattr_get (finfo->file, "_watched")
+		&& !(kf.flags&KFLAG_RESERVED_EDIT)
 		&& verify_write (finfo->repository,vers_ts->vn_tag))
 		xchmod (finfo->file, 1);
 
@@ -1808,13 +1959,13 @@ patch_file (finfo, vers_ts, docheckout, file_info, checksum)
         /* This stuff is just copied blindly from checkout_file.  I
 	   don't really know what it does.  */
         xvers_ts = Version_TS (finfo, options, tag, date,
-			       force_tag_match, 0);
+			       force_tag_match, 0, 0);
 	if (strcmp (xvers_ts->options, "-V4") == 0)
 	    xvers_ts->options[0] = '\0';
 
 	Register (finfo->entries, finfo->file, xvers_ts->vn_rcs,
 		  xvers_ts->ts_user, xvers_ts->options,
-		  xvers_ts->tag, xvers_ts->date, NULL, NULL, NULL);
+		  xvers_ts->tag, xvers_ts->date, NULL, NULL, NULL, xvers_ts->tt_rcs);
 
 	if (CVS_STAT (finfo->file, file_info) < 0)
 	    error (1, errno, "could not stat %s", finfo->file);
@@ -1938,10 +2089,7 @@ static void write_letter (struct file_info *finfo, int letter)
 /*
  * Do all the magic associated with a file which needs to be merged
  */
-static int
-merge_file (finfo, vers)
-    struct file_info *finfo;
-    Vers_TS *vers;
+static int merge_file (struct file_info *finfo, Vers_TS *vers)
 {
     char *backup;
     int status;
@@ -1965,8 +2113,8 @@ merge_file (finfo, vers)
     copy_file (finfo->file, backup, 1, 1);
     xchmod (finfo->file, 1);
 
-	kf=RCS_get_kflags(vers->options);
-    if ((kf&KFLAG_BINARY)
+	kf=RCS_get_kflags(vers->options, 1);
+    if ((kf.flags&KFLAG_BINARY)
 		|| wrap_merge_is_copy (finfo->file)
 		|| special_file_mismatch (finfo, NULL, vers->vn_rcs))
     {
@@ -1991,7 +2139,7 @@ merge_file (finfo, vers)
 			      finfo->repository, backup);
 #endif
 
-	status = checkout_file (finfo, vers, 0, 1, 1, 0, is_rcs);
+	status = checkout_file (finfo, vers, 0, 1, 1, 0, is_rcs, NULL, NULL);
 
 	/* Is there a better term than "nonmergeable file"?  What we
 	   really mean is, not something that CVS cannot or does not
@@ -2010,8 +2158,8 @@ merge_file (finfo, vers)
     }
 
     status = RCS_merge(finfo->rcs, vers->srcfile->path, finfo->file,
-		       vers->options, vers->vn_user, vers->vn_rcs);
-    if (status != 0 && status != 1)
+		       vers->options, vers->vn_user, vers->vn_rcs, conflict_3way);
+    if (status != 0 && status != 1 && status != 3)
     {
 	error (0, status == -1 ? errno : 0,
 	       "could not merge revision %s of %s", vers->vn_user, fn_root(finfo->fullname));
@@ -2031,14 +2179,14 @@ merge_file (finfo, vers)
     {
 	char *cp = 0;
 
-	if (status)
+	if (status == 1)
 	{
 	    (void) time (&last_register_time);
-	    cp = time_stamp (finfo->file);
+	    cp = time_stamp (finfo->file, 0);
 	}
 	Register (finfo->entries, finfo->file, vers->vn_rcs,
 		  "Result of merge", vers->options, vers->tag,
-		  vers->date, cp, NULL, NULL);
+		  vers->date, cp, NULL, NULL, vers->tt_rcs);
 	if (cp)
 	    xfree (cp);
     }
@@ -2185,14 +2333,38 @@ static char *getmergepoint(RCSNode *rcs, char *baserev, char *headrev, char *mer
         return xstrdup(mp);
 }
 
+static char *branchpoint_of(RCSNode *rcs, const char *tag)
+{
+	char *ver, *p;
+
+	if(!tag || !*tag)
+		return NULL;
+
+	/* Techincally this shouldn't happen */
+	if(!RCS_isbranch(rcs,tag))
+		return NULL;
+
+	ver = RCS_tag2rev(rcs, tag);
+	if(!ver)
+		return NULL;
+
+	p=strrchr(ver,'.');
+	if(!p)
+	{
+		xfree(ver);
+		return NULL;
+	}
+	*p='\0';
+	p=strrchr(ver,'.');
+	*p='\0';
+	return ver;
+}
+
 /*
  * Do all the magic associated with a file which needs to be joined
  * (-j option)
  */
-static void
-join_file (finfo, vers)
-    struct file_info *finfo;
-    Vers_TS *vers;
+static void join_file (struct file_info *finfo, Vers_TS *vers)
 {
     char *backup;
     char *t_options;
@@ -2207,7 +2379,7 @@ join_file (finfo, vers)
     char *jdate2;
 
 	TRACE(1,"join_file(%s, %s%s%s%s, %s, %s)",
-		finfo->file,
+		PATCH_NULL(fn_root(finfo->file)),
 		vers->tag ? vers->tag : "",
 		vers->tag ? " (" : "",
 		vers->vn_rcs ? vers->vn_rcs : "",
@@ -2221,11 +2393,8 @@ join_file (finfo, vers)
     jdate2 = date_rev2;
 
     /* Determine if we need to do anything at all.  */
-    if (vers->srcfile == NULL ||
-	vers->srcfile->path == NULL)
-    {
-	return;
-    }
+    if (vers->srcfile == NULL || vers->srcfile->path == NULL)
+		return;
 
     /* If only one join revision is specified, it becomes the second
        revision.  */
@@ -2248,37 +2417,46 @@ join_file (finfo, vers)
 	rev1 = RCS_getversion (vers->srcfile, jrev1, jdate1, 1, (int *) NULL);
     else
     {
-	/* Note that we use vn_rcs here, since vn_user may contain a
-           special string such as "-nn".  */
-	if (vers->vn_rcs == NULL)
-	    rev1 = NULL;
-	else if (rev2 == NULL)
-	{
-	    /* This means that the file never existed on the branch.
-               It does not mean that the file was removed on the
-               branch: that case is represented by a dead rev2.  If
-               the file never existed on the branch, then we have
-               nothing to merge, so we just return.  */
-	    return;
-	}
-	else
-	{
-	    char *rev_tmp = gca (vers->vn_rcs, rev2);
-
-		if(merge_from_branchpoint)
-			rev1 = rev_tmp;
+		/* Note that we use vn_rcs here, since vn_user may contain a
+			special string such as "-nn".  */
+		if (vers->vn_rcs == NULL)
+			rev1 = NULL;
+		else if (rev2 == NULL)
+		{
+			/* This means that the file never existed on the branch.
+				It does not mean that the file was removed on the
+				branch: that case is represented by a dead rev2.  If
+				the file never existed on the branch, then we have
+				nothing to merge, so we just return.  */
+			return;
+		}
 		else
 		{
-			/* We found the branchpoint, now find the highest mergepoint with this prefix */
-            char *rev1_tmp;
-            rev1_tmp = getmergepoint(vers->srcfile, rev_tmp, vers->vn_rcs, rev2);
-            TRACE(3,"getmergepoint(%s, %s, %s)=%s",rev_tmp,vers->vn_rcs,rev2,rev1_tmp);
-			rev1 = getmergepoint(vers->srcfile, rev1_tmp, rev2, vers->vn_rcs);
-			TRACE(3,"getmergepoint(%s, %s, %s)=%s", rev1_tmp,rev2,vers->vn_rcs,rev1);
-			xfree(rev1_tmp);
-			xfree(rev_tmp);
+			char *rev_tmp = gca (vers->vn_rcs, rev2);
+			char *branchpoint = branchpoint_of(vers->srcfile, vers->tag);
+			char *target_branchpoint = branchpoint_of(vers->srcfile, jrev2);
+
+			/* Special case if we're at the branchpoint and/or there are no revisions on the branch */
+			if(merge_from_branchpoint || (branchpoint && !strcmp(vers->vn_rcs, branchpoint)) || (target_branchpoint && !strcmp(rev2, target_branchpoint)))
+			{
+				rev1 = rev_tmp;
+				xfree(branchpoint);
+				xfree(target_branchpoint);
+			}
+			else
+			{
+				/* We found the branchpoint, now find the highest mergepoint with this prefix */
+				char *rev1_tmp;
+				rev1_tmp = getmergepoint(vers->srcfile, rev_tmp, vers->vn_rcs, rev2);
+				TRACE(3,"getmergepoint(%s, %s, %s)=%s",PATCH_NULL(rev_tmp),PATCH_NULL(vers->vn_rcs),PATCH_NULL(rev2),PATCH_NULL(rev1_tmp));
+				rev1 = getmergepoint(vers->srcfile, rev1_tmp, rev2, vers->vn_rcs);
+				TRACE(3,"getmergepoint(%s, %s, %s)=%s", PATCH_NULL(rev1_tmp),PATCH_NULL(rev2),PATCH_NULL(vers->vn_rcs),PATCH_NULL(rev1));
+				xfree(rev1_tmp);
+				xfree(rev_tmp);
+				xfree(branchpoint);
+				xfree(target_branchpoint);
+			}
 		}
-	}
     }
 
     /* Handle a nonexistent or dead merge target.  */
@@ -2292,7 +2470,7 @@ join_file (finfo, vers)
 	/* If the first revision doesn't exist either, then there is
            no change between the two revisions, so we don't do
            anything.  */
-	if (rev1 == NULL || RCS_isdead (vers->srcfile, rev1))
+	if (jrev1 && (rev1 == NULL || RCS_isdead (vers->srcfile, rev1)))
 	{
 	    if (rev1 != NULL)
 		xfree (rev1);
@@ -2413,7 +2591,7 @@ join_file (finfo, vers)
 	}
 #endif
 	Register (finfo->entries, finfo->file, mrev, vers->ts_rcs,
-			vers->options, vers->tag, vers->date, vers->ts_conflict, join_rev2?rev1:rev2, join_rev2?rev2:NULL);
+			vers->options, vers->tag, vers->date, vers->ts_conflict, join_rev2?rev1:rev2, join_rev2?rev2:NULL, vers->tt_rcs);
 	xfree (mrev);
 	/* We need to check existence_error here because if we are
            running as the server, and the file is up to date in the
@@ -2453,7 +2631,7 @@ join_file (finfo, vers)
 			char *saved_options = options;
 			Vers_TS *xvers;
 
-			xvers = Version_TS (finfo, vers->options, jrev2, jdate2, 1, 0);
+			xvers = Version_TS (finfo, vers->options, jrev2, jdate2, 1, 0, 0);
 
 			/* Reset any keyword expansion option.  Otherwise, when a
 			command like `cvs update -kk -jT1 -jT2' creates a new file
@@ -2464,7 +2642,7 @@ join_file (finfo, vers)
 
 			/* FIXME: If checkout_file fails, we should arrange to
 				return a non-zero exit status.  */
-			status = checkout_file (finfo, xvers, 1, 0, 1, 0, is_rcs);
+			status = checkout_file(finfo, xvers, 1, 0, 1, 0, is_rcs, jrev1?rev1:rev2, jrev1?rev2:NULL);
 			options = saved_options;
 
 			freevers_ts (&xvers);
@@ -2568,7 +2746,7 @@ join_file (finfo, vers)
     xchmod (finfo->file, 1);
 
     t_options = vers->options;
-	kf=RCS_get_kflags(t_options);
+	kf=RCS_get_kflags(t_options, 1);
 
     /* If the source of the merge is the same as the working file
        revision, then we can just RCS_checkout the target (no merging
@@ -2583,36 +2761,35 @@ join_file (finfo, vers)
 	/* This is because of the worry below about $Name.  If that
 	   isn't a problem, I suspect this code probably works for
 	   text files too.  */
-	&& ((kf&KFLAG_BINARY)
-	    || wrap_merge_is_copy (finfo->file)))
+	&& ((kf.flags&KFLAG_BINARY) || wrap_merge_is_copy (finfo->file)))
     {
-	/* FIXME: what about nametag?  What does RCS_merge do with
-	   $Name?  */
-	if (RCS_checkout (finfo->rcs, finfo->file, rev2, NULL, t_options,
-			  RUN_TTY, (RCSCHECKOUTPROC)0, NULL, NULL) != 0)
-	    status = 2;
-	else
-	    status = 0;
+		/* FIXME: what about nametag?  What does RCS_merge do with
+		$Name?  */
+		if (RCS_checkout (finfo->rcs, finfo->file, rev2, NULL, t_options,
+				RUN_TTY, (RCSCHECKOUTPROC)0, NULL, NULL) != 0)
+			status = 2;
+		else
+			status = 0;
 
-	/* OK, this is really stupid.  RCS_checkout carefully removes
-	   write permissions, and we carefully put them back.  But
-	   until someone gets around to fixing it, that seems like the
-	   easiest way to get what would seem to be the right mode.
-	   I don't check CVSWRITE or _watched; I haven't thought about
-	   that in great detail, but it seems like a watched file should
-	   be checked out (writable) after a merge.  */
-	xchmod (finfo->file, 1);
+		/* OK, this is really stupid.  RCS_checkout carefully removes
+		write permissions, and we carefully put them back.  But
+		until someone gets around to fixing it, that seems like the
+		easiest way to get what would seem to be the right mode.
+		I don't check CVSWRITE or _watched; I haven't thought about
+		that in great detail, but it seems like a watched file should
+		be checked out (writable) after a merge.  */
+		xchmod (finfo->file, 1);
 
-	/* Traditionally, the text file case prints a whole bunch of
-	   scary looking and verbose output which fails to tell the user
-	   what is really going on (it gives them rev1 and rev2 but doesn't
-	   indicate in any way that rev1 == vn_user).  I think just a
-	   simple "U foo" is good here; it seems analogous to the case in
-	   which the file was added on the branch in terms of what to
-	   print.  */
-	write_letter (finfo, 'U');
+		/* Traditionally, the text file case prints a whole bunch of
+		scary looking and verbose output which fails to tell the user
+		what is really going on (it gives them rev1 and rev2 but doesn't
+		indicate in any way that rev1 == vn_user).  I think just a
+		simple "U foo" is good here; it seems analogous to the case in
+		which the file was added on the branch in terms of what to
+		print.  */
+		write_letter (finfo, 'U');
     }
-    else if ((kf&KFLAG_BINARY)
+    else if ((kf.flags&KFLAG_BINARY)
 	     || wrap_merge_is_copy (finfo->file)
 	     || special_file_mismatch (finfo, rev1, rev2))
     {
@@ -2653,9 +2830,9 @@ join_file (finfo, vers)
     }
     else
 	status = RCS_merge (finfo->rcs, vers->srcfile->path, finfo->file,
-			t_options, rev1?rev1:"0", rev2);
+			t_options, rev1?rev1:"0", rev2, conflict_3way);
 
-    if (status != 0 && status != 1)
+    if (status != 0 && status != 1 && status != 3)
     {
 	error (0, status == -1 ? errno : 0,
 	       "could not merge revision %s of %s", rev2, fn_root(finfo->fullname));
@@ -2679,17 +2856,18 @@ join_file (finfo, vers)
        RCS_checkout above, and we aren't running as the server.
        However, that is not the normal case, and calling Register
        again won't cost much in that case.  */
+	if(status != 3)
     {
 	char *cp = 0;
 
 	if (status)
 	{
 	    (void) time (&last_register_time);
-	    cp = time_stamp (finfo->file);
+	    cp = time_stamp (finfo->file, 0);
 	}
 	Register (finfo->entries, finfo->file,
 		  vers->vn_rcs ? vers->vn_rcs : "0", "Result of merge",
-		  vers->options, vers->tag, vers->date, cp, join_rev2?rev1:rev2, join_rev2?rev2:NULL);
+		  vers->options, vers->tag, vers->date, cp, join_rev2?rev1:rev2, join_rev2?rev2:NULL, vers->tt_rcs);
 	if (cp)
 	    xfree(cp);
     }
@@ -2773,7 +2951,7 @@ special_file_mismatch (finfo, rev1, rev2)
     {
 	    if (CVS_LSTAT (finfo->file, &sb) < 0)
 		error (1, errno, "could not get file information for %s",
-		       finfo->file);
+		       fn_root(finfo->file));
 	    rev2_mode = sb.st_mode;
 	}
     else
@@ -2802,7 +2980,7 @@ special_file_mismatch (finfo, rev1, rev2)
 	    (rev1_mode & 0111) != (rev2_mode & 0111))
 	{
 	    error (0, 0, "%s: permission mismatch between %s and %s",
-		   finfo->file,
+		   fn_root(finfo->file),
 		   (rev1 == NULL ? "working file" : rev1),
 		   (rev2 == NULL ? "working file" : rev2));
 	    result = 0;
@@ -2817,3 +2995,12 @@ joining ()
 {
     return (join_rev1 != NULL);
 }
+
+void set_global_update_options(int _merge_from_branchpoint, int _conflict_3way, int _case_sensitive, int _force_checkout_time)
+{
+	force_checkout_time=_merge_from_branchpoint;
+	conflict_3way=_conflict_3way;
+	case_sensitive=_case_sensitive;
+	force_checkout_time=_force_checkout_time;
+}
+

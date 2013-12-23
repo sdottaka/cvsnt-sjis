@@ -116,6 +116,7 @@ am__quote = @am__quote@
 
 cvs_config_dir = @cvs_config_dir@
 cvs_library_dir = @cvs_library_dir@
+cvs_target_name = @cvs_target_name@
 install_sh = @install_sh@
 
 AUTOMAKE_OPTIONS = 1.6
@@ -134,7 +135,7 @@ AUTOMAKE_OPTIONS = 1.6
 
 # All other subdirs:
 SUBDIRS = $(ZLIB_SUBDIR) lib libltdl diff $(CVSGUI_SUBDIR) windows-NT \
-	  protocols src $(LOCKSERVER_SUBDIR) $(RCSTOOLS_SUBDIR) man contrib
+	  protocols cvsdelta src $(LOCKSERVER_SUBDIR) $(RCSTOOLS_SUBDIR) man contrib
 
 
 EXTRA_DIST = \
@@ -158,7 +159,7 @@ subdir = .
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 mkinstalldirs = $(SHELL) $(top_srcdir)/mkinstalldirs
 CONFIG_HEADER = config.h $(top_builddir)/src/options.h
-CONFIG_CLEAN_FILES = zlib/Makefile
+CONFIG_CLEAN_FILES = zlib/Makefile redhat/cvsnt.spec
 DIST_SOURCES =
 
 RECURSIVE_TARGETS = info-recursive dvi-recursive install-info-recursive \
@@ -166,11 +167,11 @@ RECURSIVE_TARGETS = info-recursive dvi-recursive install-info-recursive \
 	install-exec-recursive installdirs-recursive install-recursive \
 	uninstall-recursive check-recursive installcheck-recursive
 DIST_COMMON = README AUTHORS COPYING ChangeLog INSTALL Makefile.am \
-	Makefile.in NEWS acinclude.m4 aclocal.m4 compile config.guess \
+	Makefile.in NEWS acinclude.m4 aclocal.m4 config.guess \
 	config.h.in config.sub configure configure.in depcomp \
 	install-sh ltmain.sh missing mkinstalldirs
-DIST_SUBDIRS = zlib lib libltdl diff cvsgui windows-NT protocols src \
-	lockservice rcs man contrib
+DIST_SUBDIRS = zlib lib libltdl diff cvsgui windows-NT protocols \
+	cvsdelta src lockservice rcs man contrib
 all: config.h
 	$(MAKE) $(AM_MAKEFLAGS) all-recursive
 
@@ -209,6 +210,8 @@ $(srcdir)/config.h.in: @MAINTAINER_MODE_TRUE@ $(top_srcdir)/configure.in $(ACLOC
 distclean-hdr:
 	-rm -f config.h stamp-h1
 zlib/Makefile: $(top_builddir)/config.status $(top_srcdir)/zlib/Makefile.in
+	cd $(top_builddir) && $(SHELL) ./config.status $@
+redhat/cvsnt.spec: $(top_builddir)/config.status $(top_srcdir)/redhat/cvsnt.spec.in
 	cd $(top_builddir) && $(SHELL) ./config.status $@
 
 mostlyclean-libtool:
@@ -523,9 +526,12 @@ spec: $(srcdir)/redhat/cvsnt.spec.in $(top_srcdir)/configure.in
 realclean: maintainer-clean
 
 install-exec-local:
-@INSTALL_SERVER_TRUE@	$(mkinstalldirs) $(cvs_config_dir)
-@INSTALL_SERVER_TRUE@	$(INSTALL_DATA) $(top_builddir)/doc/PServer.example $(cvs_config_dir)
-@INSTALL_SERVER_TRUE@	$(INSTALL_DATA) $(top_builddir)/ca.pem $(cvs_library_dir)
+@INSTALL_SERVER_TRUE@	$(mkinstalldirs) ${DESTDIR}$(cvs_config_dir)
+@INSTALL_SERVER_TRUE@	$(INSTALL_DATA) $(top_srcdir)/doc/PServer.example ${DESTDIR}$(cvs_config_dir)
+@INSTALL_SERVER_TRUE@	$(INSTALL_DATA) $(top_srcdir)/ca.pem ${DESTDIR}$(cvs_library_dir)
+
+testkey:
+	sh $(top_srcdir)/contrib/genkey
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.
 .NOEXPORT:

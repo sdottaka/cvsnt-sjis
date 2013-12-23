@@ -42,7 +42,7 @@ cvs_config_dir=@cvs_config_dir@
 
 # All other subdirs:
 SUBDIRS = $(ZLIB_SUBDIR) lib libltdl diff $(CVSGUI_SUBDIR) windows-NT \
-	  protocols src $(LOCKSERVER_SUBDIR) $(RCSTOOLS_SUBDIR) man contrib
+	  protocols cvsdelta src $(LOCKSERVER_SUBDIR) $(RCSTOOLS_SUBDIR) man contrib
 
 EXTRA_DIST = \
 	.cvsignore \
@@ -82,7 +82,11 @@ realclean: maintainer-clean
 
 install-exec-local:
 if INSTALL_SERVER
-	$(mkinstalldirs) $(cvs_config_dir)
-	$(INSTALL_DATA) $(top_builddir)/doc/PServer.example $(cvs_config_dir)
-	$(INSTALL_DATA) $(top_builddir)/ca.pem $(cvs_library_dir)
+	$(mkinstalldirs) ${DESTDIR}$(cvs_config_dir)
+	$(INSTALL_DATA) $(top_srcdir)/doc/PServer.example ${DESTDIR}$(cvs_config_dir)
+	$(INSTALL_DATA) $(top_srcdir)/ca.pem ${DESTDIR}$(cvs_library_dir)
 endif
+
+testkey:
+	sh $(top_srcdir)/contrib/genkey
+

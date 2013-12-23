@@ -8,7 +8,6 @@
 
 #include "cvs.h"
 #include "getline.h"
-#include <assert.h>
 
 extern char *logHistory;
 
@@ -34,10 +33,6 @@ int Parse_Info(const char *infofile, const char *repository, CALLPROC callproc, 
     int regex_err;
 	regex_t reg;
 	char *xrepository = xstrdup(repository);
-	
-	cp = strstr(xrepository,CVSCOPY);
-	if(cp)
-		strcpy(cp,cp+strlen(CVSCOPY));
 	
     if (current_parsed_root == NULL)
     {
@@ -66,7 +61,7 @@ int Parse_Info(const char *infofile, const char *repository, CALLPROC callproc, 
     /* strip off the CVSROOT if xrepository was absolute */
     srepos = Short_Repository (xrepository);
 
-	TRACE(1,"ParseInfo(%s, %s, %s)", infopath, srepos, all ? "ALL": "not ALL");
+	TRACE(1,"ParseInfo(%s, %s, %s)", PATCH_NULL(infopath), PATCH_NULL(srepos), all ? "ALL": "not ALL");
 
     /* search the info file for lines that match */
     callback_done = line_number = 0;
@@ -154,11 +149,10 @@ int Parse_Info(const char *infofile, const char *repository, CALLPROC callproc, 
 	    continue;
 
 	/* see if the xrepository matched this regular expression */
-#ifdef FILENAMES_CASE_INSENSITIVE
-	regex_err = regcomp(&reg, exp, REG_ICASE|REG_EXTENDED|REG_NOSUB);
-#else
-	regex_err = regcomp(&reg, exp, REG_EXTENDED|REG_NOSUB);
-#endif
+	if(filenames_case_insensitive)
+		regex_err = regcomp(&reg, exp, REG_ICASE|REG_EXTENDED|REG_NOSUB);
+	else
+		regex_err = regcomp(&reg, exp, REG_EXTENDED|REG_NOSUB);
 	if (regex_err)
 	{
 		char buf[1024];
@@ -175,7 +169,7 @@ int Parse_Info(const char *infofile, const char *repository, CALLPROC callproc, 
 	/* it did, so do the callback and note that we did one */
 	if (expanded_value != NULL)
 	{
-		TRACE(1,"%s:Parse_Info(%s,%s)",infofile,xrepository,expanded_value);
+		TRACE(1,"%s:Parse_Info(%s,%s)",PATCH_NULL(infofile),PATCH_NULL(xrepository),PATCH_NULL(expanded_value));
 	    err += callproc (xrepository, expanded_value);
 	}
 	else
@@ -192,7 +186,7 @@ int Parse_Info(const char *infofile, const char *repository, CALLPROC callproc, 
     {
 	if (default_value != &bad)
 	{
-		TRACE(1,"%s:Parse_Info(%s,%s)",infofile,xrepository,expanded_value);
+		TRACE(1,"%s:Parse_Info(%s,%s)",PATCH_NULL(infofile),PATCH_NULL(xrepository),PATCH_NULL(expanded_value));
 		err += callproc (xrepository, default_value)?1:0;
 	}
 	else
@@ -367,9 +361,9 @@ parse_config (cvsroot)
 	}
 	else if (strcasecmp (line, "LockServer") == 0)
 	{
-	    if (lock_server != NULL)
-			xfree (lock_server);
-	    lock_server = xstrdup (p);
+	    xfree (lock_server);
+	    if (strcasecmp (p, "none"))
+	    	lock_server = xstrdup (p);
 	}
 	else if (strcasecmp (line, "LogHistory") == 0)
 	{
@@ -403,6 +397,18 @@ parse_config (cvsroot)
 			goto error_return;
 	    }
 	}
+	else if (strcasecmp (line, "CVSNTSJIS2.0.14CompatibleMode") == 0)
+	{
+	    if (strcasecmp (p, "no") == 0)
+		compat_2_0_14 = 0;
+	    else if (strcasecmp (p, "yes") == 0)
+		compat_2_0_14 = 1;
+	    else
+	    {
+		error (0, 0, "unrecognized value '%s' for CVSNTSJIS2.0.14CompatibleMode", p);
+		goto error_return;
+	    }
+	}
 	else
 	{
 	    /* We may be dealing with a keyword which was added in a
@@ -423,23 +429,20 @@ parse_config (cvsroot)
     }
     if (ferror (fp_info))
     {
-	error (0, errno, "E cannot read %s", infopath);
-	goto error_return;
+		error (0, errno, "E cannot read %s", infopath);
+		goto error_return;
     }
     if (fclose (fp_info) < 0)
     {
-	error (0, errno, "E cannot close %s", infopath);
-	goto error_return;
+		error (0, errno, "E cannot close %s", infopath);
+		goto error_return;
     }
     xfree (infopath);
-    if (line != NULL)
 	xfree (line);
     return 0;
 
  error_return:
-    if (infopath != NULL)
 	xfree (infopath);
-    if (line != NULL)
 	xfree (line);
     return -1;
 }

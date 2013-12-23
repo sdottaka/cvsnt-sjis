@@ -8,27 +8,28 @@
 #include <tchar.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <process.h>
+#include <shellapi.h>
 
 #include "../cvsservice/ServiceMsg.h"
 #include "../version_no.h"
 #include "../version_fu.h"
+#include "resource.h"
 
 #include "LockService.h"
 
 #define SERVICE_NAME "CVSLock"
 #define DISPLAY_NAME "CVSNT Locking Service"
+#define NTSERVICE_VERSION_STRING "CVSNT Locking Service " CVSNT_PRODUCTVERSION_STRING
 
-namespace 
-{
-const char ntservice_version_string[] = 
-    "CVSNT Locking Service " CVSNT_PRODUCTVERSION_STRING "\n";
-}
+#define TRAY_MESSAGE (WM_APP+123)
 
 static void CALLBACK ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv);
 static void CALLBACK ServiceHandler(DWORD fdwControl);
 static char* basename(const char* str);
 static LPCTSTR GetErrorString();
 static void AddEventSource(LPCTSTR szService, LPCTSTR szModule);
+static void systray(void*);
 
 void ReportError(BOOL bError, LPCTSTR szError, ...);
 BOOL NotifySCM(DWORD dwState, DWORD dwWin32ExitCode, DWORD dwProgress);
@@ -38,6 +39,7 @@ static SERVICE_STATUS_HANDLE  g_hService;
 extern bool g_bStop;
 bool g_bTestMode = false;
 static int lockserver_port = 2402;
+static int local_only = 1;
 
 int main(int argc, char* argv[])
 {
@@ -57,7 +59,7 @@ int main(int argc, char* argv[])
 			return 0;
 	}
 
-	if(argc!=2 || (strcmp(argv[1],"-i") && strcmp(argv[1],"-u") && strcmp(argv[1],"-test") && strcmp(argv[1],"-v") ))
+	if(argc!=2 || (strcmp(argv[1],"-i") && strcmp(argv[1],"-u") && strcmp(argv[1],"-test") && strcmp(argv[1],"-v") && strcmp(argv[1],"-systray") ))
 	{
 		fprintf(stderr, "NT CVS Service Handler\n\n"
                         "Arguments:\n"
@@ -65,15 +67,17 @@ int main(int argc, char* argv[])
                         "\t%s -u\tUninstall\n"
                         "\t%s -test\tInteractive run"
                         "\t%s -v\tReport version number",
+						"\t%s -systray\tShow in system tray",
                         basename(argv[0]),basename(argv[0]),
-                        basename(argv[0]), basename(argv[0]) 
+                        basename(argv[0]), basename(argv[0]), 
+						basename(argv[0])
                         );
 		return -1;
 	}
 
     if (!strcmp(argv[1],"-v"))
 	{
-        puts(ntservice_version_string);
+        puts(NTSERVICE_VERSION_STRING);
         return 0;
        }
 
@@ -94,12 +98,21 @@ int main(int argc, char* argv[])
 
 		GetModuleFileName(NULL,szImagePath,MAX_PATH);
 		if ((hService = CreateService(hSCManager,SERVICE_NAME,DISPLAY_NAME,
-						STANDARD_RIGHTS_REQUIRED, SERVICE_WIN32_OWN_PROCESS,
-						SERVICE_AUTO_START, SERVICE_ERROR_IGNORE,
+						STANDARD_RIGHTS_REQUIRED|SERVICE_CHANGE_CONFIG, SERVICE_WIN32_OWN_PROCESS,
+						SERVICE_AUTO_START, SERVICE_ERROR_NORMAL,
 						szImagePath, NULL, NULL, NULL, NULL, NULL)) == NULL)
 		{
 			fprintf(stderr,"CreateService Failed: %s\n",GetErrorString());
 			return -1;
+		}
+		{
+			BOOL (WINAPI *pChangeServiceConfig2)(SC_HANDLE,DWORD,LPVOID);
+			pChangeServiceConfig2=(BOOL (WINAPI *)(SC_HANDLE,DWORD,LPVOID))GetProcAddress(GetModuleHandle("advapi32"),"ChangeServiceConfig2A");
+			if(pChangeServiceConfig2)
+			{
+				SERVICE_DESCRIPTION sd = { NTSERVICE_VERSION_STRING };
+				pChangeServiceConfig2(hService,SERVICE_CONFIG_DESCRIPTION,&sd);
+			}
 		}
 		CloseServiceHandle(hService);
 		CloseServiceHandle(hSCManager);
@@ -133,6 +146,11 @@ int main(int argc, char* argv[])
 	}	
 	else if(!strcmp(argv[1],"-test"))
 	{
+		ServiceMain(999,NULL);
+	}
+	else if(!strcmp(argv[1],"-systray"))
+	{
+		_beginthread(systray,0,NULL);
 		ServiceMain(999,NULL);
 	}
 	return 0;
@@ -239,14 +257,15 @@ void CALLBACK ServiceHandler(DWORD fdwControl)
 	{      
 	case SERVICE_CONTROL_STOP:
 		OutputDebugString(SERVICE_NAME": Stop\n");
-		NotifySCM(SERVICE_STOP_PENDING, 0, 1);
+		NotifySCM(SERVICE_STOP_PENDING, 0, 0);
 		g_bStop=TRUE;
+		return;
+	case SERVICE_CONTROL_INTERROGATE:
+	default:
 		break;
-    case SERVICE_CONTROL_INTERROGATE:
-		OutputDebugString(SERVICE_NAME": Interrogate\n");
-		NotifySCM(g_dwCurrentState, 0, 0);
-		break;
-   }
+	}
+	OutputDebugString(SERVICE_NAME": Interrogate\n");
+	NotifySCM(g_dwCurrentState, 0, 0);
 }
 
 BOOL NotifySCM(DWORD dwState, DWORD dwWin32ExitCode, DWORD dwProgress)
@@ -271,7 +290,9 @@ void CALLBACK ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv)
 	int seq=1;
 	HKEY hk;
 	DWORD dwTmp,dwType;
-	char szTmp[64];
+	char szTmp[1024];
+
+	HANDLE hSem = CreateSemaphore(NULL,0,1,"CVSNT_Lockserver");
 
 	if(dwArgc!=999)
 	{
@@ -291,22 +312,131 @@ void CALLBACK ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv)
 	{
 		ReportError(TRUE,"WSAStartup failed... aborting - Error %d\n",WSAGetLastError());
 		if(!g_bTestMode)
-			NotifySCM(SERVICE_STOPPED,0,1);
+			NotifySCM(SERVICE_STOPPED,0,0);
 		return;
 	}
 
 	if(!RegOpenKeyEx(HKEY_LOCAL_MACHINE,"Software\\CVS\\Pserver",NULL,KEY_QUERY_VALUE,&hk))
 	{
-		dwTmp=sizeof(DWORD);
-		if(!RegQueryValueEx(hk,"LockServerPort",NULL,&dwType,(BYTE*)szTmp,&dwTmp))
+		dwTmp=sizeof(szTmp);
+		if(!RegQueryValueEx(hk,"LockServer",NULL,&dwType,(BYTE*)szTmp,&dwTmp))
 		{
-			lockserver_port=*(DWORD*)szTmp;
+			char *p = strchr(szTmp,':');
+			if(p)
+				lockserver_port=atoi(p+1);
+		}
+		dwTmp=sizeof(szTmp);
+		if(!RegQueryValueEx(hk,"LockServerLocal",NULL,&dwType,(BYTE*)szTmp,&dwTmp))
+		{
+			if(dwType==REG_DWORD)
+				local_only = *(DWORD*)szTmp;
 		}
 		RegCloseKey(hk);
 	}
 
-    run_server(lockserver_port, seq);
+    run_server(lockserver_port, seq, local_only);
 
-	NotifySCM(SERVICE_STOPPED, 0, 0);
+	CloseHandle(hSem);
+
+	if(!g_bTestMode)
+		NotifySCM(SERVICE_STOPPED, 0, 0);
 	ReportError(FALSE,SERVICE_NAME" stopped successfully");
+
+}
+
+static void ShowContextMenu(HWND hWnd)
+{
+	HINSTANCE hInst = (HINSTANCE)GetModuleHandle(NULL);
+	HMENU hMenu;
+	POINT pt;
+
+	hMenu = LoadMenu(hInst,MAKEINTRESOURCE(IDR_MENU1));
+	SetForegroundWindow(hWnd);
+	GetCursorPos(&pt);
+	HMENU hSubMenu = GetSubMenu(hMenu,0);
+	TrackPopupMenu(hSubMenu,TPM_BOTTOMALIGN|TPM_CENTERALIGN|TPM_LEFTBUTTON,pt.x,pt.y,NULL,hWnd,NULL);
+}
+
+static LRESULT CALLBACK TrayWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+	switch(uMsg)
+	{
+	case TRAY_MESSAGE:
+		switch(lParam)
+		{
+		case WM_LBUTTONDBLCLK:
+			break;
+		case WM_RBUTTONDOWN:
+		case WM_CONTEXTMENU:
+			ShowContextMenu(hWnd);
+			break;
+		}
+		break;
+	case WM_COMMAND:
+		switch(wParam)
+		{
+		case ID_QUIT:
+			PostQuitMessage(0);
+			break;
+		case ID_SHOWDEBUG:
+			{
+				char newtitle[1024];
+				HWND hConsole;
+
+				/* Can't use GetConsoleWindow otherwise we lose Win9x support */
+				_snprintf(newtitle,sizeof(newtitle),"foo_%08x",GetCurrentProcessId());
+				SetConsoleTitle(newtitle);
+				do
+				{
+					Sleep(40);
+					hConsole = FindWindow(NULL,newtitle);
+				} while(!hConsole);
+				SetConsoleTitle("CVSNT Lockserver debug window");
+
+				/* For some reason this doesn't 'take' the first time around, so
+				   we do it twice */
+				ShowWindow(hConsole,SW_SHOW);
+				Sleep(40);
+				ShowWindow(hConsole,SW_SHOW);
+				break;
+			}
+		}
+		break;
+	}
+
+	return DefWindowProc(hWnd,uMsg,wParam,lParam);
+}
+
+void systray(void*)
+{
+	HINSTANCE hInst = (HINSTANCE)GetModuleHandle(NULL);
+
+	WNDCLASS wc = {0};
+	wc.lpfnWndProc=TrayWndProc;
+	wc.lpszClassName="systray";
+	wc.hInstance=hInst;
+	if(!RegisterClass(&wc))
+		return;
+
+	HWND hWnd = CreateWindowEx(0,"systray",0,WS_OVERLAPPED,1,1,1,1,NULL,NULL,hInst,NULL);
+	if(!hWnd)
+		return;
+
+	NOTIFYICONDATA nid = { sizeof(NOTIFYICONDATA) };
+	nid.uFlags=NIF_ICON|NIF_MESSAGE|NIF_TIP;
+	nid.uCallbackMessage=TRAY_MESSAGE;
+	nid.hIcon=LoadIcon(hInst,MAKEINTRESOURCE(IDI_CVSLOCK));
+	nid.uID=IDI_CVSLOCK;
+	_tcscpy(nid.szTip,_T("CVSNT Lock server"));
+	nid.hWnd=hWnd;
+	Shell_NotifyIcon(NIM_ADD,&nid);
+
+	MSG msg;
+	while(GetMessage(&msg,NULL,0,0))
+	{
+		TranslateMessage(&msg);
+		DispatchMessage(&msg);
+	}
+	g_bStop = TRUE;
+	Shell_NotifyIcon(NIM_DELETE,&nid);
 }

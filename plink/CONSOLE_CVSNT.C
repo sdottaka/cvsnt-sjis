@@ -3,18 +3,11 @@
  * the console PuTTY tools
  */
 
-#define VC_EXTRALEAN
-#define STRICT
-#include <windows.h>
+#include "putty/putty.h"
+#include "putty/storage.h"
+#include "putty/ssh.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdarg.h>
 #include <process.h>
-
-#include "putty.h"
-#include "storage.h"
-#include "ssh.h"
 
 #include "plink_cvsnt.h"
 
@@ -43,19 +36,17 @@ void cleanup_exit(int code)
      */
     sk_cleanup();
 
-    if (cfg.protocol == PROT_SSH) {
-   random_save_seed();
+    random_save_seed();
 #ifdef MSCRYPTOAPI
-   crypto_wrapup();
+    crypto_wrapup();
 #endif
-    }
 
 	fatal_exit = TRUE;
 	fatal_exit_code = code?code:-1;
 	_endthreadex(code);
 }
 
-void verify_ssh_host_key(char *host, int port, char *keytype,
+void verify_ssh_host_key(void *frontend, char *host, int port, char *keytype,
           char *keystr, char *fingerprint)
 {
     int ret;
@@ -106,7 +97,7 @@ void verify_ssh_host_key(char *host, int port, char *keytype,
    "Cancel. Cancel is the ONLY guaranteed safe choice.";
 
     static const char mbtitle[] = "Security Alert";
-    
+
     char message[160 +
                  /* sensible fingerprint max size */
                  (sizeof(absentmsg) > sizeof(wrongmsg) ?
@@ -146,10 +137,10 @@ void verify_ssh_host_key(char *host, int port, char *keytype,
  * below the configured 'warn' threshold).
  * cs: 0 = both ways, 1 = client->server, 2 = server->client
  */
-void askcipher(char *ciphername, int cs)
+void askcipher(void *frontend, char *ciphername, int cs)
 {
    static const char mbtitle[] = "Security Alert";
-   
+
    static const char msg[] =
    "The first %.35scipher supported by the server\n"
    "is %.64s, which is below the configured\n"
@@ -158,12 +149,12 @@ void askcipher(char *ciphername, int cs)
 
    /* guessed cipher name + type max length */
    char message[100 + sizeof(msg)];
-  
+
    sprintf(message, msg,
            (cs == 0) ? "" :
            (cs == 1) ? "client-to-server " : "server-to-client ",
            ciphername);
-  
+
 	switch(callbacks->yesno(message,mbtitle,0))
 	{
 		case 0:
@@ -176,23 +167,23 @@ void askcipher(char *ciphername, int cs)
  * Ask whether to wipe a session log file before writing to it.
  * Returns 2 for wipe, 1 for append, 0 for cancel (don't log).
  */
-int askappend(char *filename)
+int askappend(void *frontend, Filename filename)
 {
     static const char mbtitle[] = "Log to File";
-  
+
     static const char msgtemplate[] =
-    "The session log file \"%.*s\" already exists.\n"
-    "You can overwrite it with a new session log,\n"
-    "append your session log to the end of it,\n"
-    "or disable session logging for this session.\n"
-    "Hit Yes to wipe the file, No to append to it,\n"
-    "or Cancel to disable logging.";
-    char message[sizeof(msgtemplate) + FILENAME_MAX];
-    if (cfg.logxfovr != LGXF_ASK) {
-       return ((cfg.logxfovr == LGXF_OVR) ? 2 : 1);
-    }
+	"The session log file \"%.*s\" already exists.\n"
+	"You can overwrite it with a new session log,\n"
+	"append your session log to the end of it,\n"
+	"or disable session logging for this session.\n"
+	"Enter \"y\" to wipe the file, \"n\" to append to it,\n"
+	"or just press Return to disable logging.\n"
+	"Wipe the log file? (y/n, Return cancels logging) ";
+
+	char message[sizeof(msgtemplate) + FILENAME_MAX];
+
     sprintf(message, msgtemplate, FILENAME_MAX, filename);
- 
+
 	switch(callbacks->yesno(message,mbtitle,1))
 	{
 		case 0: /* No */
@@ -225,7 +216,7 @@ void old_keyfile_warning(void)
    callbacks->yesno(message,mbtitle,0);
 }
 
-void logevent(char *string)
+void logevent(void *backend, const char *string)
 {
 }
 
@@ -329,4 +320,16 @@ int putty_prompt(const char *message, const char *title, int withcancel)
 			return 0;
 		}
 	}
+}
+
+void frontend_keypress(void *handle)
+{
+    /*
+     * This is nothing but a stub, in console code.
+     */
+    return;
+}
+
+void update_specials_menu(void *frontend)
+{
 }

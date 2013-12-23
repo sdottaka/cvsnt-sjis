@@ -12,6 +12,7 @@
 #include "cvs.h"
 #include "getline.h"
 #include "library.h"
+#include "savecwd.h"
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -21,8 +22,6 @@
 #include <unistd.h>
 #include <netdb.h>
 #endif
-
-char *CVSroot_prefix = NULL;    /* Prefix for CVSroot if supplied on cmdline */
 
 #ifndef DEBUG
 
@@ -98,7 +97,11 @@ Name_Root (dir, update_dir)
 
     if (
 #ifdef CLIENT_SUPPORT
-	(strchr (root, ':') == NULL) &&
+#ifdef SJIS
+		(strchr (root, ':') == NULL) && (_mbschr((unsigned char *)root, '@') == NULL) &&
+#else
+		(strchr (root, ':') == NULL) && (strchr(root, '@') == NULL) &&
+#endif
 #endif
     	! isabsolute (root))
     {
@@ -111,26 +114,25 @@ Name_Root (dir, update_dir)
     }
 
     {
-    char *tmp = xmalloc(strlen(root)+strlen(CVSroot_prefix?CVSroot_prefix:"")+1);
-    if(CVSroot_prefix)
-      sprintf(tmp,"%s%s",CVSroot_prefix,root);
-    else
-      strcpy(tmp,root); 
+		const char *tmp;
+		
+		if(!server_active || !root_allow_ok(root,&tmp))
+			tmp = root;
 #ifdef CLIENT_SUPPORT
-    if ((strchr (root, ':') == NULL) && !isdir (tmp))
+#ifdef SJIS
+	    if ((strchr (root, ':') == NULL) && (_mbschr((unsigned char *)root, '@') == NULL) && !isdir (tmp))
+#else
+	    if ((strchr (root, ':') == NULL) && (strchr(root, '@') == NULL) && !isdir (tmp))
+#endif
 #else /* ! CLIENT_SUPPORT */
-    if (!isdir (tmp))
+		if (!isdir (tmp))
 #endif /* CLIENT_SUPPORT */
-    {
-	error (0, 0, "in directory %s:", xupdate_dir);
-	error (0, 0,
-	       "ignoring %s because it specifies a non-existent repository %s",
-	       CVSADM_ROOT, root);
-	ret = NULL;
-	xfree(tmp);
-	goto out;
-    }
-    xfree(tmp);
+		{
+			error (0, 0, "in directory %s:", xupdate_dir);
+			error (0, 0, "ignoring %s because it specifies a non-existent repository %s", CVSADM_ROOT, root);
+			ret = NULL;
+			goto out;
+		}
     }
 
     /* allocate space to return and fill it in */
@@ -149,10 +151,7 @@ Name_Root (dir, update_dir)
  * and/or the -d option to cvs will be validated or not necessary for
  * future work.
  */
-void
-Create_Root (dir, rootdir)
-    char *dir;
-    char *rootdir;
+void Create_Root (char *dir, char *rootdir)
 {
     FILE *fout;
     char *tmp;
@@ -188,90 +187,85 @@ Create_Root (dir, rootdir)
    directories.  Then we can check against them when a remote user
    hands us a CVSROOT directory.  */
 
+typedef struct
+{
+	const char *root;
+	const char *name;
+} root_allow_struct;
+
 int root_allow_count;
-static char **root_allow_vector;
+static root_allow_struct *root_allow_vector;
 static int root_allow_size;
 
-void
-root_allow_add (arg)
-    char *arg;
+void root_allow_add(const char *root, const char *name)
 {
-    char *p;
-
     if (root_allow_size <= root_allow_count)
     {
-	if (root_allow_size == 0)
-	{
-	    root_allow_size = 1;
-	    root_allow_vector =
-		(char **) xmalloc (root_allow_size * sizeof (char *));
-	}
-	else
-	{
-	    root_allow_size *= 2;
-	    root_allow_vector =
-		(char **) xrealloc(root_allow_vector,
-				   root_allow_size * sizeof (char *));
-	}
+		if (root_allow_size == 0)
+		{
+			root_allow_size = 1;
+			root_allow_vector = (root_allow_struct *) xmalloc (root_allow_size * sizeof (root_allow_struct));
+		}
+		else
+		{
+			root_allow_size *= 2;
+			root_allow_vector = (root_allow_struct *) xrealloc(root_allow_vector,  root_allow_size * sizeof (root_allow_struct));
+		}
 
-	if (root_allow_vector == NULL)
-	{
-	no_memory:
-	    /* Strictly speaking, we're not supposed to output anything
-	       now.  But we're about to exit(), give it a try.  */
-	    printf ("E Fatal server error, aborting.\n\
-error ENOMEM Virtual memory exhausted.\n");
+		if (root_allow_vector == NULL)
+		{
+	//	no_memory:
+			/* Strictly speaking, we're not supposed to output anything
+			now.  But we're about to exit(), give it a try.  */
+			printf ("E Fatal server error, aborting.\nerror ENOMEM Virtual memory exhausted.\n");
 
-	    /* I'm doing this manually rather than via error_exit ()
-	       because I'm not sure whether we want to call server_cleanup.
-	       Needs more investigation....  */
+			/* I'm doing this manually rather than via error_exit ()
+			because I'm not sure whether we want to call server_cleanup.
+			Needs more investigation....  */
 
 #ifdef SYSTEM_CLEANUP
-	    /* Hook for OS-specific behavior, for example socket
-	       subsystems on NT and OS2 or dealing with windows
-	       and arguments on Mac.  */
-	    SYSTEM_CLEANUP ();
+			/* Hook for OS-specific behavior, for example socket
+			subsystems on NT and OS2 or dealing with windows
+			and arguments on Mac.  */
+			SYSTEM_CLEANUP ();
 #endif
 
-	    exit (EXIT_FAILURE);
-	}
+			exit (EXIT_FAILURE);
+		}
     }
-    p = xmalloc (strlen (arg) + 1);
-    if (p == NULL)
-	goto no_memory;
-    strcpy (p, arg);
-    root_allow_vector[root_allow_count++] = p;
+    root_allow_vector[root_allow_count].root = xstrdup(root);
+    root_allow_vector[root_allow_count++].name = xstrdup(name);
 }
 
-void
-root_allow_free ()
+void root_allow_free ()
 {
+	int n;
+
     if (root_allow_vector != NULL)
-	free_names (&root_allow_count, root_allow_vector);
-    root_allow_size = 0;
+	{
+		for(n=0; n<root_allow_count; n++)
+		{
+			xfree(root_allow_vector[n].root);
+			xfree(root_allow_vector[n].name);
+		}
+		xfree(root_allow_vector);
+	}
+    root_allow_size = root_allow_count = 0;
 }
 
 int pathcmp(const char *a, const char *b)
 {
-#ifdef SJIS
-	if(isalpha((unsigned char)a[0]) && a[1]==':' && isslash((unsigned char)b[0]) && isslash((unsigned char)b[2]) && isslash((unsigned char)b[3]) && path_equal(a[0],b[1]))
-#else
-	if(isalpha(a[0]) && a[1]==':' && isslash(b[0]) && isslash(b[2]) && isslash(b[3]) && path_equal(a[0],b[1]))
-#endif
+	if(isalpha((int)(unsigned char)a[0]) && a[1]==':' && ISDIRSEP(b[0]) && ISDIRSEP(b[2]) && ISDIRSEP(b[3]) && FN_CHAR_EQUAL(a[0],b[1]))
 	{
 		a+=2;
 		b+=3;
 	}
-#ifdef SJIS
-	if(isalpha((unsigned char)b[0]) && b[1]==':' && isslash(a[0]) && isslash(a[2]) && isslash(a[3]) && path_equal(b[0],a[1]))
-#else
-	if(isalpha(b[0]) && b[1]==':' && isslash(a[0]) && isslash(a[2]) && isslash(a[3]) && path_equal(b[0],a[1]))
-#endif
+	if(isalpha((int)(unsigned char)b[0]) && b[1]==':' && ISDIRSEP(a[0]) && ISDIRSEP(a[2]) && ISDIRSEP(a[3]) && FN_CHAR_EQUAL(b[0],a[1]))
 	{
 		a+=4;
 		b+=2;
 	}
-	while(*a && *b && (path_equal(*a,*b) || (isslash(*a) && isslash(*b))))
+	while(*a && *b && (FN_CHAR_EQUAL(*a,*b)))
 	{
 #ifdef SJIS
 		a=_mbsinc(a);
@@ -282,43 +276,28 @@ int pathcmp(const char *a, const char *b)
 #endif
 	}
 	// Strip trailing spaces
-#ifdef SJIS
-	while(*a && isspace((unsigned char)*a))
+	while(*a && isspace((int)(unsigned char)*a))
 		a++;
-	while(*b && isspace((unsigned char)*b))
+	while(*b && isspace((int)(unsigned char)*b))
 		b++;
-#else
-	while(*a && isspace(*a))
-		a++;
-	while(*b && isspace(*b))
-		b++;
-#endif
 	return (*a)-(*b);
 }
 
 int pathncmp(const char *a, const char *b, size_t len, const char **endpoint)
 {
-#ifdef SJIS
-	if(isalpha((unsigned char)a[0]) && a[1]==':' && isslash(b[0]) && isslash(b[2]) && isslash(b[3]) && path_equal(a[0],b[1]))
-#else
-	if(isalpha(a[0]) && a[1]==':' && isslash(b[0]) && isslash(b[2]) && isslash(b[3]) && path_equal(a[0],b[1]))
-#endif
+	if(isalpha((int)(unsigned char)a[0]) && a[1]==':' && ISDIRSEP(b[0]) && ISDIRSEP(b[2]) && ISDIRSEP(b[3]) && FN_CHAR_EQUAL(a[0],b[1]))
 	{
 		a+=2;
 		b+=3;
 		len-=3;
 	}
-#ifdef SJIS
-	if(isalpha((unsigned char)b[0]) && b[1]==':' && isslash(a[0]) && isslash(a[2]) && isslash(a[3]) && path_equal(b[0],a[1]))
-#else
-	if(isalpha(b[0]) && b[1]==':' && isslash(a[0]) && isslash(a[2]) && isslash(a[3]) && path_equal(b[0],a[1]))
-#endif
+	if(isalpha((int)(unsigned char)b[0]) && b[1]==':' && ISDIRSEP(a[0]) && ISDIRSEP(a[2]) && ISDIRSEP(a[3]) && FN_CHAR_EQUAL(b[0],a[1]))
 	{
 		a+=3;
 		b+=2;
 		len-=2;
 	}
-	while(len && *a && *b && (path_equal(*a,*b) || (isslash(*a) && isslash(*b))))
+	while(len && *a && *b && FN_CHAR_EQUAL(*a,*b))
 	{
 #ifdef SJIS
 		if (_ismbblead(*a))
@@ -338,17 +317,10 @@ int pathncmp(const char *a, const char *b, size_t len, const char **endpoint)
 #endif
 	}
 	// Strip trailing spaces
-#ifdef SJIS
-	while(len && *a && isspace((unsigned char)*a))
+	while(len && *a && isspace((int)(unsigned char)*a))
 		a++;
-	while(len && *b && isspace((unsigned char)*b))
+	while(len && *b && isspace((int)(unsigned char)*b))
 		{ b++; len--; }
-#else
-	while(len && *a && isspace(*a))
-		a++;
-	while(len && *b && isspace(*b))
-		{ b++; len--; }
-#endif
 
 	if(endpoint)
 		*endpoint = a;
@@ -359,58 +331,26 @@ int pathncmp(const char *a, const char *b, size_t len, const char **endpoint)
 	return (*a)-(*b);
 }
 
-#ifdef _WIN32
-void win32ize_root(char *arg)
-{
-	char *p;
-
-	if(isslash(arg[0]) && isslash(arg[2]) && isslash(arg[3]))
-	{
-		strcpy(arg,arg+1);
-		arg[1]=':';
-	}
-#ifdef SJIS
-	for(p=arg; *p; p = _mbsinc(p))
-#else
-	for(p=arg; *p; p++)
-#endif
-		if (*p=='\\')
-			*p='/';
-}
-#endif
-
-int
-root_allow_ok (arg)
-    char *arg;
+int root_allow_ok (const char *root, const char **real_root)
 {
     int i;
+    for (i = 0; i < root_allow_count; ++i)
+		if(!pathcmp(root_allow_vector[i].name, root))
+		{
+			if(real_root) *real_root=root_allow_vector[i].root;
+			break;
+		}
 
-    if (root_allow_count == 0)
-    {
-	/* Probably someone upgraded from CVS before 1.9.10 to 1.9.10
-	   or later without reading the documentation about
-	   --allow-root.  Printing an error here doesn't disclose any
-	   particularly useful information to an attacker because a
-	   CVS server configured in this way won't let *anyone* in.  */
-
-	/* Note that we are called from a context where we can spit
-	   back "error" rather than waiting for the next request which
-	   expects responses.  */
-	printf ("error 0 No valid repository roots defined.  Aborting.\n");
-	error_exit ();
-    }
-
+    if(i==root_allow_count)
+      return 0;
 #ifndef _WIN32
-    for (i = 0; i < root_allow_count; ++i)
-	if (strcmp (root_allow_vector[i], arg) == 0)
-	    return 1;
-#else
-    for (i = 0; i < root_allow_count; ++i)
-		if(!pathcmp(root_allow_vector[i], arg))
-			return 1;
+    if(chroot_done && chroot_base && real_root)
+    {
+      if(!fnncmp(*real_root,chroot_base,strlen(chroot_base)) && strlen(chroot_base)<=strlen(*real_root))
+	*real_root+=strlen(chroot_base);
+    }
 #endif
-
-    return 0;
+    return 1;
 }
 
 
@@ -461,6 +401,7 @@ new_cvsroot_t (void)
     newroot->hostname = NULL;
     newroot->port = NULL;
     newroot->directory = NULL;
+	newroot->mapped_directory = NULL;
 	newroot->unparsed_directory = NULL;
 	newroot->optional_1 = NULL;
 	newroot->optional_2 = NULL;
@@ -487,6 +428,9 @@ new_cvsroot_t (void)
 /* Dispose of a cvsroot_t and its component parts */
 void free_cvsroot_t (cvsroot_t *root)
 {
+	if(!root)
+		return;
+
 	xfree (root->original);
 	xfree (root->username);
 	/* I like to be paranoid */
@@ -510,6 +454,7 @@ void free_cvsroot_t (cvsroot_t *root)
 	xfree(root->proxyprotocol);
 	xfree(root->proxyuser);
 	xfree(root->proxypassword);
+	xfree(root->mapped_directory);
     xfree (root);
 }
 
@@ -636,6 +581,13 @@ static int parse_keyword(char *keyword, char **p, cvsroot_t *newroot)
 		if(*value)
 			newroot->proxypassword = xstrdup(value);
 	}
+#ifdef SJIS
+	else if(!strcasecmp(keyword,"mencoding") || !strcasecmp(keyword,"message_encoding"))
+	{
+		if(*value)
+			newroot->message_encoding = xstrdup(value);
+	}
+#endif
 #ifdef CLIENT_SUPPORT
 	else if(client_protocol && client_protocol->validate_keyword)
 	{
@@ -673,6 +625,7 @@ parse_cvsroot (char *root_in)
 
     /* allocate some space */
     newroot = new_cvsroot_t();
+	memset(newroot,0,sizeof(cvsroot_t));
 
     /* save the original string */
     newroot->original = xstrdup (root_in);
@@ -713,9 +666,13 @@ parse_cvsroot (char *root_in)
 		goto new_root_ok;
 	}
 
-    if (*cvsroot_copy == ':')
+#ifdef SJIS
+	if (*cvsroot_copy == ':' || (!isabsolute(cvsroot_copy) && _mbschr((unsigned char *)cvsroot_copy,'@')))
+#else
+	if (*cvsroot_copy == ':' || (!isabsolute(cvsroot_copy) && strchr(cvsroot_copy,'@')))
+#endif
     {
-		char *method = ++cvsroot_copy;
+		char *method;
 		char in_quote,escape;
 
 		/* Access method specified, as in
@@ -727,33 +684,39 @@ parse_cvsroot (char *root_in)
 		* rest of it.
 		*/
 
-		p=method;
-		in_quote=0;
-		escape=0;
-		while((in_quote || *p!=':') && *p)
+		if(cvsroot_copy[0]==':')
 		{
-			if(escape)
+			method=++cvsroot_copy;
+			p=method;
+			in_quote=0;
+			escape=0;
+			while((in_quote || *p!=':') && *p)
 			{
-				escape=0;
+				if(escape)
+				{
+					escape=0;
+					p++;
+					continue;
+				}
+				if(in_quote == *p)
+					in_quote=0;
+				else if(!in_quote && (*p=='"' || *p=='\''))
+					in_quote=*p;
+				else if(!in_quote && *p=='\\')
+					escape=1;
 				p++;
-				continue;
 			}
-			if(in_quote == *p)
-				in_quote=0;
-			else if(!in_quote && (*p=='"' || *p=='\''))
-				in_quote=*p;
-			else if(!in_quote && *p=='\\')
-				escape=1;
-			p++;
+			if (!*p)
+			{
+				error (0, 0, "bad CVSroot: %s", root_in);
+				xfree (cvsroot_save);
+				goto error_exit;
+			}
+			*p = '\0';
+			cvsroot_copy = ++p;
 		}
-		if (!*p)
-		{
-			error (0, 0, "bad CVSroot: %s", root_in);
-			xfree (cvsroot_save);
-			goto error_exit;
-		}
-		*p = '\0';
-		cvsroot_copy = ++p;
+		else
+			method="ext";
 
 		/* Process extra parameters */
 		if((p=strchr(method,';'))!=NULL)
@@ -986,30 +949,37 @@ parse_cvsroot (char *root_in)
     }
 
     /* parse the path for all methods */
-    if (CVSroot_prefix == NULL)
-    {
-        newroot->directory = xstrdup (cvsroot_copy);
-    }
-    else
-    {
-      /* If a prefix is supplied, then put it before the actual
-           directory. */
-        newroot->directory = (char*)xmalloc (strlen(cvsroot_copy)
-                                   + strlen(CVSroot_prefix)
-                                   + 1);
-        if (newroot->directory != NULL)
-        {
-            strcpy(newroot->directory, CVSroot_prefix);
-            strcat(newroot->directory, cvsroot_copy);
-        }
-    }
+	if(newroot->isremote)
+		newroot->directory = xstrdup (cvsroot_copy);
+	else
+	{
+		const char *tmp;
+		if(!root_allow_ok(cvsroot_copy,&tmp))
+			tmp = cvsroot_copy;
+		newroot->directory = xstrdup(tmp);
+	}
 
 new_root_ok:
-#if defined(_WIN32)
-	win32ize_root(newroot->directory);
-#endif
+	if(!newroot->isremote)
+		newroot->directory = normalize_path(newroot->directory);
     newroot->unparsed_directory = xstrdup(cvsroot_copy);
     xfree (cvsroot_save);
+
+	/* Get mapped directory, so that we're always talking the root as understood by the 
+	   client, not the server */
+	if(!newroot->isremote)
+	{
+	    struct saved_cwd cwd;
+		save_cwd(&cwd);
+		CVS_CHDIR(newroot->directory);
+		newroot->mapped_directory = xgetwd();
+		if(!fncmp(newroot->mapped_directory,newroot->directory))
+			xfree(newroot->mapped_directory); /* Saves a step if there's no mapping required */
+		else
+			TRACE(3,"mapping %s -> %s",PATCH_NULL(newroot->mapped_directory),PATCH_NULL(newroot->directory));
+		restore_cwd(&cwd, NULL);
+		free_cwd(&cwd);
+	}
 
 	/* If we are local, set CVS_Username for later */
 	if(!newroot->method)
@@ -1179,38 +1149,31 @@ char *normalize_cvsroot (const cvsroot_t *root)
 
 /* allocate and return a cvsroot_t structure set up as if we're using the local
  * repository DIR.  */
-cvsroot_t *
-local_cvsroot (dir)
-    char *dir;
+cvsroot_t *local_cvsroot (const char *dir, const char *real_dir)
 {
     cvsroot_t *newroot = new_cvsroot_t();
 
     newroot->original = xstrdup(dir);
     newroot->method = NULL;
 
-    if (CVSroot_prefix == NULL)
-    {
-        newroot->directory = xstrdup (dir);
-    }
-    else
-    {
-      /* If a prefix is supplied, then put it before the actual
-           directory. */
-        newroot->directory = xmalloc (strlen(dir)
-                                  + strlen(CVSroot_prefix)
-                                  + 1);
-        if (newroot->directory != NULL)
-        {
-            strcpy(newroot->directory, CVSroot_prefix);
-            strcat(newroot->directory, dir);
-        }
-    }
+    newroot->directory = xstrdup(real_dir);
 
     newroot->unparsed_directory = xstrdup(dir);
-#ifdef _WIN32
-	win32ize_root(newroot->directory);
-	win32ize_root(newroot->original);
-#endif
+	newroot->directory = normalize_path(newroot->directory);
+	newroot->original = normalize_path(newroot->original);
+
+    {
+		struct saved_cwd cwd;
+		save_cwd(&cwd);
+		if(CVS_CHDIR(newroot->directory)<0)
+		   error(1,errno,"Couldn't chdir to working directory %s",newroot->directory);
+		newroot->mapped_directory = xgetwd();
+		if(!fncmp(newroot->mapped_directory,newroot->directory))
+			xfree(newroot->mapped_directory); /* Saves a step if there's no mapping required */
+		else
+			TRACE(3,"mapping %s -> %s",PATCH_NULL(newroot->mapped_directory),PATCH_NULL(newroot->directory));
+		restore_cwd(&cwd, NULL);
+    }
 
     return newroot;
 }
@@ -1243,7 +1206,7 @@ int
 isabsolute (dir)
     const char *dir;
 {
-    return (dir && (isslash(*dir) || (*(dir+1)==':'));
+    return (dir && (ISDIRSEP(*dir) || (*(dir+1)==':'));
 }
 
 void

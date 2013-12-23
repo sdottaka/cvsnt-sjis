@@ -14,6 +14,9 @@
 #include <windows.h>
 #include <stdio.h>
 #include <string>
+#include <vector>
+#include <tchar.h>
+#include <direct.h>
 
 //{{AFX_INSERT_LOCATION}}
 
