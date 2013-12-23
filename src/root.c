@@ -582,10 +582,17 @@ static int parse_keyword(char *keyword, char **p, cvsroot_t *newroot)
 			newroot->proxypassword = xstrdup(value);
 	}
 #ifdef SJIS
-	else if(!strcasecmp(keyword,"mencoding") || !strcasecmp(keyword,"message_encoding"))
+	else if(!strcasecmp(keyword,"menc") || !strcasecmp(keyword,"mencoding") || !strcasecmp(keyword,"message_encoding") || !strcasecmp(keyword,"message-encoding") || !strcasecmp(keyword,"messageencoding"))
 	{
 		if(*value)
+		{
+			if(!is_valid_encoding(value))
+			{
+				error(0,0,"Bad CVSROOT: Unknown encoding '%s'",value);
+				return -1;
+			}
 			newroot->message_encoding = xstrdup(value);
+		}
 	}
 #endif
 #ifdef CLIENT_SUPPORT

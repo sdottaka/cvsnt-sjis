@@ -708,14 +708,16 @@ make_message_rcslegal (message)
     }
 
 #ifdef SJIS
-	if (!server_active && dst && current_parsed_root->message_encoding
-		&& (strcmp(current_parsed_root->message_encoding, "EUC-JP") == 0
-			|| strcmp(current_parsed_root->message_encoding, "euc-jp") == 0))
+	if (!server_active && dst && current_parsed_root->message_encoding)
 	{
-		extern char * k_to_euc PROTO ((char *));
+		char *pbuf;
+		size_t len;
 		if (trace)
 			(void) fprintf (stderr, "kanji convert\n");
-		dst = k_to_euc(dst);
+		transcode_buffer(get_local_charset(), 
+			current_parsed_root->message_encoding, dst, 0, &pbuf, &len);
+		xfree(dst);
+		dst = pbuf;
 	}
 #endif
 

@@ -3048,22 +3048,35 @@ handle_m (args, len)
        stdout and stderr.  But I'm not sure).  */
     fflush (stderr);
 #ifdef SJIS
-	if (current_parsed_root->message_encoding && (strcmp(command_name, "log") == 0 || strcmp(command_name, "rlog") == 0)
-		&& (strcmp(current_parsed_root->message_encoding, "EUC-JP") == 0
-			|| strcmp(current_parsed_root->message_encoding, "euc-jp") == 0))
-	{ 
-        extern char * k_to_sjis PROTO((char *));
+	{
+    char *pbuf;
+    if (current_parsed_root->message_encoding && (strcmp(command_name, "log") == 0 || strcmp(command_name, "rlog") == 0) && (strncmp(args, "RCS file:", 9) != 0 && strncmp(args, "Working file:", 13) != 0))
+    {
         if (trace)
             (void) fprintf (stderr, "kanji convert to MS-Kanji\n");
-        args = k_to_sjis(args);
+        transcode_buffer(current_parsed_root->message_encoding,
+            get_local_charset(), args, 0, &pbuf, &len);
     }
+	else
+		pbuf = args;
+#ifdef CVSGUI_PIPE
+    cvs_output(pbuf, len);
+    cvs_output("\n", 1);
+#else
+    fwrite (pbuf, len, sizeof (*pbuf), stdout);
+    putc ('\n', stdout);
+    if (args != pbuf)
+		xfree(pbuf);
 #endif
+    }
+#else
 #ifdef CVSGUI_PIPE
     cvs_output(args, len);
     cvs_output("\n", 1);
 #else
     fwrite (args, len, sizeof (*args), stdout);
     putc ('\n', stdout);
+#endif
 #endif
 }
 

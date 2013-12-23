@@ -105,6 +105,7 @@ Source: sysfiles\msvcr71.dll; DestDir: {sys}; Flags: uninsneveruninstall sharedf
 Source: sysfiles\msvcp71.dll; DestDir: {sys}; Flags: uninsneveruninstall sharedfile onlyifdoesntexist; Check: isadmin
 Source: sysfiles\msvcp71.dll; DestDir: {app}
 Source: sysfiles\msvcr71.dll; DestDir: {app}
+Source: sysfiles\iconv.dll; DestDir: {app}; Flags: ignoreversion; Components: Commandline win95
 Source: sysfiles\secur32_nt4.dll; DestDir: {sys}; DestName: secur32.dll; Flags: uninsneveruninstall sharedfile onlyifdoesntexist; MinVersion: 0,4.0.1381sp6; OnlyBelowVersion: 0,5.0.2195
 Source: sysfiles\secur32_w98.dll; DestDir: {sys}; DestName: secur32.dll; Flags: uninsneveruninstall sharedfile onlyifdoesntexist; MinVersion: 4.0.950,0; OnlyBelowVersion: 0,0
 Source: ssh_protocol.dll; DestDir: {app}; Flags: ignoreversion; Components: Protocols\ssh

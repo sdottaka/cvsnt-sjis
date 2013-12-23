@@ -361,7 +361,7 @@ static int check_fileproc (void *callerdat, struct file_info *finfo)
                     {
                         case 'M':
                         {
-							if(fnncmp(editors+2,finfo->file,strchr(editors+2,'\t')-(editors+2)))
+							if(fnncmp(editors+2,finfo->fullname,strchr(editors+2,'\t')-(editors+2)))
 								break;
 
 							v = Version_TS(finfo, NULL, NULL, NULL, 0, 0, 0);

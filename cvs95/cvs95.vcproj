@@ -53,7 +53,7 @@
 			<Tool
 				Name="VCLinkerTool"
 				AdditionalOptions="/MACHINE:I386"
-				AdditionalDependencies="netapi32.lib mpr.lib wsock32.lib"
+				AdditionalDependencies="iconv.lib wsock32.lib netapi32.lib mpr.lib ole32.lib"
 				OutputFile="..\WinDebug\cvs95.exe"
 				LinkIncremental="2"
 				SuppressStartupBanner="TRUE"
@@ -136,7 +136,7 @@
 			<Tool
 				Name="VCLinkerTool"
 				AdditionalOptions="/MACHINE:I386"
-				AdditionalDependencies="wsock32.lib netapi32.lib mpr.lib"
+				AdditionalDependencies="iconv.lib wsock32.lib netapi32.lib mpr.lib ole32.lib"
 				OutputFile="..\WinRel\cvs95.exe"
 				LinkIncremental="1"
 				SuppressStartupBanner="TRUE"
@@ -213,7 +213,7 @@
 			<Tool
 				Name="VCLinkerTool"
 				AdditionalOptions="/MACHINE:I386"
-				AdditionalDependencies="netapi32.lib mpr.lib wsock32.lib"
+				AdditionalDependencies="iconv.lib wsock32.lib netapi32.lib mpr.lib ole32.lib"
 				OutputFile="..\WinDebug\cvs95.exe"
 				LinkIncremental="2"
 				SuppressStartupBanner="TRUE"
@@ -537,6 +537,9 @@
 				RelativePath="..\src\unicode_stuff.c">
 			</File>
 			<File
+				RelativePath="..\unicodeapi\unicodeapi.c">
+			</File>
+			<File
 				RelativePath="..\src\update.c">
 			</File>
 			<File
@@ -700,132 +703,6 @@
 			</File>
 			<File
 				RelativePath="..\cvsgui\URI_encode.h">
-			</File>
-		</Filter>
-		<Filter
-			Name="ack139">
-			<File
-				RelativePath="..\ack139\ackstring.h">
-			</File>
-			<File
-				RelativePath="..\ack139\codetoeuc.c">
-				<FileConfiguration
-					Name="Release|Win32">
-					<Tool
-						Name="VCCLCompilerTool"
-						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
-				</FileConfiguration>
-			</File>
-			<File
-				RelativePath="..\ack139\codetojis.c">
-				<FileConfiguration
-					Name="Release|Win32">
-					<Tool
-						Name="VCCLCompilerTool"
-						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
-				</FileConfiguration>
-			</File>
-			<File
-				RelativePath="..\ack139\codetosjis.c">
-				<FileConfiguration
-					Name="Release|Win32">
-					<Tool
-						Name="VCCLCompilerTool"
-						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
-				</FileConfiguration>
-			</File>
-			<File
-				RelativePath="..\ack139\codetozen.c">
-				<FileConfiguration
-					Name="Release|Win32">
-					<Tool
-						Name="VCCLCompilerTool"
-						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
-				</FileConfiguration>
-			</File>
-			<File
-				RelativePath="..\ack139\euctocode.c">
-				<FileConfiguration
-					Name="Release|Win32">
-					<Tool
-						Name="VCCLCompilerTool"
-						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
-				</FileConfiguration>
-			</File>
-			<File
-				RelativePath="..\ack139\fileio.c">
-				<FileConfiguration
-					Name="Release|Win32">
-					<Tool
-						Name="VCCLCompilerTool"
-						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
-				</FileConfiguration>
-			</File>
-			<File
-				RelativePath="..\ack139\kanjicheck.c">
-				<FileConfiguration
-					Name="Release|Win32">
-					<Tool
-						Name="VCCLCompilerTool"
-						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
-				</FileConfiguration>
-			</File>
-			<File
-				RelativePath="..\ack139\kanjicode.h">
-			</File>
-			<File
-				RelativePath="..\ack139\kanjisub.c">
-				<FileConfiguration
-					Name="Release|Win32">
-					<Tool
-						Name="VCCLCompilerTool"
-						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
-				</FileConfiguration>
-			</File>
-			<File
-				RelativePath="..\ack139\kanjixcheck.c">
-				<FileConfiguration
-					Name="Release|Win32">
-					<Tool
-						Name="VCCLCompilerTool"
-						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
-				</FileConfiguration>
-			</File>
-			<File
-				RelativePath="..\ack139\kmain.c">
-				<FileConfiguration
-					Name="Release|Win32">
-					<Tool
-						Name="VCCLCompilerTool"
-						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
-				</FileConfiguration>
-			</File>
-			<File
-				RelativePath="..\ack139\lcode.c">
-				<FileConfiguration
-					Name="Release|Win32">
-					<Tool
-						Name="VCCLCompilerTool"
-						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
-				</FileConfiguration>
-			</File>
-			<File
-				RelativePath="..\ack139\sjistocode.c">
-				<FileConfiguration
-					Name="Release|Win32">
-					<Tool
-						Name="VCCLCompilerTool"
-						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
-				</FileConfiguration>
-			</File>
-			<File
-				RelativePath="..\ack139\string.c">
-				<FileConfiguration
-					Name="Release|Win32">
-					<Tool
-						Name="VCCLCompilerTool"
-						PreprocessorDefinitions="ONLY_CONVERT_FUNC"/>
-				</FileConfiguration>
 			</File>
 		</Filter>
 	</Files>

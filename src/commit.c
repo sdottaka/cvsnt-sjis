@@ -505,14 +505,17 @@ commit (argc, argv)
 	/* FIXME: is that true?  There seems to be some code in do_editor
 	   which can leave the message NULL.  */
 #ifdef SJIS
-	if (saved_message && current_parsed_root->message_encoding
-		&& (strcmp(current_parsed_root->message_encoding, "EUC-JP") == 0
-			|| strcmp(current_parsed_root->message_encoding, "euc-jp") == 0))
+	if (saved_message && current_parsed_root->message_encoding)
 	{
-		extern char * k_to_euc PROTO ((char *));
+		char *pbuf;
+		size_t len;
 		if (trace)
 			(void) fprintf (stderr, "kanji convert\n");
-		saved_message = k_to_euc(saved_message);
+		transcode_buffer(get_local_charset(), 
+			current_parsed_root->message_encoding,
+			saved_message, 0, &pbuf, &len);
+		xfree(saved_message);
+		saved_message = pbuf;
 	}
 #endif
 	option_with_arg ("-m", saved_message);

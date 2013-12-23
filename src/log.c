@@ -1834,14 +1834,16 @@ log_version (log_data, revlist, rcs, ver, trunk)
 	/* FIXME: Technically, the log message could contain a null
            byte.  */
 #ifdef SJIS
-	if (!server_active && current_parsed_root->message_encoding
-		&& (strcmp(current_parsed_root->message_encoding, "EUC-JP") == 0
-			|| strcmp(current_parsed_root->message_encoding, "euc-jp") == 0))
+	if (!server_active && current_parsed_root->message_encoding)
 	{
-		extern char * k_to_sjis PROTO ((char *));
+		char *pbuf;
+		size_t len;
 		if (trace)
 			(void) fprintf (stderr, "kanji convert\n");
-		p->data = k_to_sjis(p->data);
+		transcode_buffer(current_parsed_root->message_encoding, 
+			get_local_charset(), p->data, 0, &pbuf, &len);
+		xfree(p->data);
+		p->data = pbuf;
 	}
 #endif
 	cvs_output (p->data, 0);

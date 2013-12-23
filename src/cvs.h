@@ -1092,6 +1092,7 @@ extern char *runas_user;
 extern int allow_trace;
 
 #include "unicode_stuff.h"
+#include "../unicodeapi/unicodeapi.h"
 #include "mapping.h"
 
 /* cvs/entries client/server markers.  Were '=','M' and 'D'.  Changed to avoid

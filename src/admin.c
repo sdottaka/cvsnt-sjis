@@ -447,19 +447,17 @@ admin (argc, argv)
 	{
 		if (strncmp(admin_data.av[i], "-m", 2) == 0)
 		{
-			if (current_parsed_root->message_encoding
-				&& (strcmp(current_parsed_root->message_encoding, "EUC-JP") == 0
-					|| strcmp(current_parsed_root->message_encoding, "euc-jp") == 0))
+			if (current_parsed_root->message_encoding)
 			{
-				char *buf;
-				extern char * k_to_euc PROTO ((char *));
+				char *pbuf;
+				size_t len;
 				if (trace)
 					(void) fprintf (stderr, "kanji convert\n");
-				buf = xmalloc(strlen(admin_data.av[i]) * 2 + 1);
-				strcpy(buf, admin_data.av[i]);
-				buf = k_to_euc(buf);
-				send_arg (buf);
-				xfree(buf);
+				transcode_buffer(get_local_charset(), 
+					current_parsed_root->message_encoding, 
+					admin_data.av[i], 0, &pbuf, &len);
+				send_arg (pbuf);
+				xfree(pbuf);
 			}
 			else
 			{
