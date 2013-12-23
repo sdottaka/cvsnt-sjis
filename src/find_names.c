@@ -311,7 +311,11 @@ static int find_dirs (char *dir, List *list, int checkadm, List *entries)
        a normal directory name.  */
     if (isabsolute (dir)
 	&& fnncmp (dir, current_parsed_root->directory, strlen (current_parsed_root->directory)) == 0
+#ifdef SJIS
+	&& (ISDIRSEP (dir[strlen (current_parsed_root->directory)]) && !_ismbstrail(dir, dir + strlen (current_parsed_root->directory)))
+#else
 	&& ISDIRSEP (dir[strlen (current_parsed_root->directory)])
+#endif
 	&& fncmp (dir + strlen (current_parsed_root->directory) + 1, CVSROOTADM) == 0)
 	skip_emptydir = 1;
 

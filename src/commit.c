@@ -875,11 +875,19 @@ check_fileproc (callerdat, finfo)
     }
 
     if (strncmp (finfo->repository, current_parsed_root->directory, cvsroot_len) == 0
+#ifdef SJIS
+	&& (ISDIRSEP (finfo->repository[cvsroot_len]) && !_ismbstrail(finfo->repository, finfo->repository + cvsroot_len))
+#else
 	&& ISDIRSEP (finfo->repository[cvsroot_len])
+#endif
 	&& strncmp (finfo->repository + cvsroot_len + 1,
 		    CVSROOTADM,
 		    sizeof (CVSROOTADM) - 1) == 0
+#ifdef SJIS
+	&& (ISDIRSEP (finfo->repository[cvsroot_len + sizeof (CVSROOTADM)]) && !_ismbstrail(finfo->repository, finfo->repository + cvsroot_len + sizeof (CVSROOTADM))) 
+#else
 	&& ISDIRSEP (finfo->repository[cvsroot_len + sizeof (CVSROOTADM)])
+#endif
 	&& strcmp (finfo->repository + cvsroot_len + sizeof (CVSROOTADM) + 1,
 		   CVSNULLREPOS) == 0
 	)

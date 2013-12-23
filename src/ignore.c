@@ -214,7 +214,15 @@ static char *next_token(const char **line)
 	{
 		if(!esc)
 		{
+#ifdef SJIS
+			if(_ismbblead(*cp))
+			{
+				*(np++)=*(cp++);
+			}
+			else if(*cp=='\\')
+#else
 			if(*cp=='\\')
+#endif
 			{
 				esc=1;
 				continue;

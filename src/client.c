@@ -158,6 +158,12 @@ arg_should_not_be_sent_to_server (arg)
 	/* Calculate "dirname arg" */
 	for (t = arg + strlen (arg) - 1; t >= arg; t--)
 	{
+#ifdef SJIS
+	    if(_ismbstrail(arg, t)) {
+		t--;
+		continue;
+	    }
+#endif
 	    if (ISDIRSEP(*t))
 		break;
 	}
@@ -2426,7 +2432,11 @@ process_prune_candidates ()
 			char *dir = xstrdup(p->dir),*qq,*dirnm;
 
 			for(qq=dir+strlen(dir)-1; qq>dir; qq--)
+#ifdef SJIS
+				if(isslashmb(dir, qq))
+#else
 				if(isslash(*qq))
+#endif
 					break;
 			if(qq>dir)
 			{
@@ -2536,6 +2546,14 @@ send_repository (dir, repos, update_dir)
 	while (*p != '\0')
 	{
 	    assert (*p != '\012');
+#if defined(SJIS) && !defined(JP_SERVEUCPATH)
+	    if(_ismbblead(*p)) {
+		buf[0] = *p++;
+		send_to_server (buf, 1);
+		buf[0] = *p;
+		send_to_server (buf, 1);
+	    } else
+#endif
 	    if (ISDIRSEP (*p))
 	    {
 		buf[0] = '/';
@@ -4418,7 +4436,11 @@ send_file_names (argc, argv, flags)
 
     for (i = 0; i < argc; ++i)
     {
+#if defined(SJIS) && !defined(JP_SERVEUCPATH)
+	char buf[2];
+#else
 	char buf[1];
+#endif
 	char *p = argv[i];
 	char *line = NULL;
 
@@ -4478,6 +4500,14 @@ send_file_names (argc, argv, flags)
 	    {
 		send_to_server ("\012Argumentx ", 0);
 	    }
+#if defined(SJIS) && !defined(JP_SERVEUCPATH)
+	    else if( _ismbblead(*p))
+	    {
+		buf[0] = *p++;
+		buf[1] = *p;
+		send_to_server (buf, 2);
+	    }
+#endif
 	    else if (ISDIRSEP (*p))
 	    {
 		buf[0] = '/';

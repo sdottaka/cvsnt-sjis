@@ -786,7 +786,11 @@ static int logfile_write (const char *repository, const char *filter, const char
 	    /* The percent has a set of characters following it. */
 
 	    fmt_begin = fmt_percent + 2;
+#ifdef SJIS
+	    fmt_end = _mbschr (fmt_begin, '}');
+#else
 	    fmt_end = strchr (fmt_begin, '}');
+#endif
 	    if (fmt_end)
 	    {
 		/* Skip over the '}' character. */

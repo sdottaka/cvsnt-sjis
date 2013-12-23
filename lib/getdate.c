@@ -1796,7 +1796,11 @@ LookupWord(buff)
 	}
 
     /* Military timezones. */
+#ifdef SJIS
+    if (buff[1] == '\0' && isalpha((unsigned char)*buff)) {
+#else
     if (buff[1] == '\0' && isalpha(*buff)) {
+#endif
 	for (tp = MilitaryTable; tp->name; tp++)
 	    if (strcmp(buff, tp->name) == 0) {
 		yylval.Number = tp->value;
@@ -1851,8 +1855,13 @@ yylex()
 		yylval.Number = -yylval.Number;
 	    return sign ? tSNUMBER : tUNUMBER;
 	}
+#ifdef SJIS
+	if (isalpha((unsigned char)c)) {
+	    for (p = buff; isalpha((unsigned char)(c = *yyInput++)) || c == '.'; )
+#else
 	if (isalpha(c)) {
 	    for (p = buff; isalpha(c = *yyInput++) || c == '.'; )
+#endif
 		if (p < &buff[sizeof buff - 1])
 		    *p++ = c;
 	    *p = '\0';

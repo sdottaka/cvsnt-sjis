@@ -27,7 +27,7 @@
 				OptimizeForProcessor="2"
 				OptimizeForWindowsApplication="TRUE"
 				AdditionalIncludeDirectories="..\windows-NT,..\src,..\lib,..\diff,..\zlib,..\cvs95,..\cvsgui"
-				PreprocessorDefinitions="_WINDLL;_DEBUG;_WINDOWS;CVS95_EXPORTS;CVS95;WIN32;HAVE_CONFIG_H;POSIX;CVSGUI;CVSGUI_PIPE"
+				PreprocessorDefinitions="WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM;SJIS;_WINDLL;_DEBUG;_WINDOWS;CVS95_EXPORTS;CVS95;WIN32;HAVE_CONFIG_H;POSIX;CVSGUI;CVSGUI_PIPE"
 				MinimalRebuild="TRUE"
 				BasicRuntimeChecks="3"
 				RuntimeLibrary="3"
@@ -104,7 +104,7 @@
 				OptimizeForProcessor="2"
 				OptimizeForWindowsApplication="TRUE"
 				AdditionalIncludeDirectories="..\windows-NT,..\src,..\lib,..\diff,..\zlib,..\cvs95,..\cvsgui"
-				PreprocessorDefinitions="_WINDLL;NDEBUG;_WINDOWS;CVS95_EXPORTS;CVS95;WIN32;HAVE_CONFIG_H;POSIX;CVSGUI;CVSGUI_PIPE"
+				PreprocessorDefinitions="WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM;SJIS;_WINDLL;NDEBUG;_WINDOWS;CVS95_EXPORTS;CVS95;WIN32;HAVE_CONFIG_H;POSIX;CVSGUI;CVSGUI_PIPE"
 				StringPooling="TRUE"
 				RuntimeLibrary="2"
 				EnableFunctionLevelLinking="FALSE"
@@ -177,7 +177,7 @@
 				OptimizeForProcessor="2"
 				OptimizeForWindowsApplication="TRUE"
 				AdditionalIncludeDirectories="..\windows-NT,..\src,..\lib,..\diff,..\zlib,..\cvs95,..\cvsgui"
-				PreprocessorDefinitions="_WINDLL;_DEBUG;_WINDOWS;CVS95_EXPORTS;CVS95;WIN32;HAVE_CONFIG_H;POSIX;CVSGUI;CVSGUI_PIPE"
+				PreprocessorDefinitions="WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM;SJIS;_WINDLL;_DEBUG;_WINDOWS;CVS95_EXPORTS;CVS95;WIN32;HAVE_CONFIG_H;POSIX;CVSGUI;CVSGUI_PIPE"
 				MinimalRebuild="TRUE"
 				BasicRuntimeChecks="0"
 				RuntimeLibrary="3"
@@ -516,6 +516,9 @@
 				RelativePath="..\lib\sighandle.c">
 			</File>
 			<File
+				RelativePath="..\windows-NT\sjispath.c">
+			</File>
+			<File
 				RelativePath="..\windows-NT\sockerror.c">
 			</File>
 			<File
@@ -676,6 +679,12 @@
 			</File>
 			<File
 				RelativePath="..\cvsgui\cvsgui_wire.h">
+			</File>
+			<File
+				RelativePath="..\cvsgui\URI_encode.cpp">
+			</File>
+			<File
+				RelativePath="..\cvsgui\URI_encode.h">
 			</File>
 		</Filter>
 	</Files>

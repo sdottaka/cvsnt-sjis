@@ -21,6 +21,10 @@ and this notice must be preserved on all copies.  */
 
 #include "diff.h"
 
+#ifdef SJIS
+#include <mbstring.h>
+#endif
+
 struct group
 {
   struct file_data const *file;
@@ -396,12 +400,20 @@ scan_char_literal (lit, intptr)
 	    value = 8 * value + digit;
 	  }
 	digits = p - lit - 2;
+#ifdef SJIS
+	if ((! (1 <= digits && digits <= 3)) || value > 0xFF)
+#else
 	if (! (1 <= digits && digits <= 3))
+#endif
 	  return 0;
 	break;
 
       default:
 	value = c;
+#ifdef SJIS
+	if(_ismbblead(value))
+		value = (c<<8)|(*p++);
+#endif
 	if (*p++ != '\'')
 	  return 0;
 	break;

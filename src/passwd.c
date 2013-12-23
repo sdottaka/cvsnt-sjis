@@ -413,7 +413,11 @@ int passwd (int argc, char **argv)
 		{
 			username = user;
 #if defined(_WIN32)
+#ifdef SJIS
+			if(_mbschr(username,'\\') && !isDomainMember())
+#else
 			if(strchr(username,'\\') && !isDomainMember())
+#endif
 			{
 				error(1,0,"CVS server is not acting as a domain member - cannot specify domains");
 			}

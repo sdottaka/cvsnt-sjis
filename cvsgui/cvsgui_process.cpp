@@ -669,9 +669,16 @@ static void cvs_process_destroy(CvsProcess* cvs_process)
 	\return The built command string
 	\note Tries to quote things appropriately
 */
+#ifdef WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM
+#include "URI_encode.h"
+#endif // WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM
 static char* build_command(int argc, char* const* argv)
 {
 	int len;
+#ifdef WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM
+	char* tmp_p = 0;
+	bool commandline_URI_encode = false;
+#endif // WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM
 
 	/* Compute the total length the command will have.	*/
 	{
@@ -684,6 +691,21 @@ static char* build_command(int argc, char* const* argv)
 
 			len += 2;  /* for the double quotes */
 
+#ifdef WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM
+			if(!commandline_URI_encode && strcmp(argv[i], "--cvsgui-cmdline-encoded") == 0)
+			{
+				commandline_URI_encode = true;
+				len += strlen("--cvsgui-cmdline-encoded");
+			}
+			else if(i >= 4 && commandline_URI_encode)
+			{
+				tmp_p = URI_encode(argv[i], URI_ENCODER_COMPACTSUBSET);
+				len += strlen(tmp_p);
+				free(tmp_p);
+			}
+			else
+			{ /* @@ ---> */
+#endif // WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM
 			for(p = argv[i]; *p; p++)
 			{
 				if( *p == '"' )
@@ -691,6 +713,9 @@ static char* build_command(int argc, char* const* argv)
 				else
 					len++;
 			}
+#ifdef WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM
+			} /* ---> @@ */
+#endif // WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM
 
 			len++;	/* for the space or the '\0'  */
 		}
@@ -717,6 +742,18 @@ static char* build_command(int argc, char* const* argv)
 		{
 			char* a;
 			*p++ = '"';
+#ifdef WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM
+			if(commandline_URI_encode && i >= 4 && strcmp(argv[i], "--cvsgui-cmdline-encoded") != 0)
+			{
+				tmp_p = URI_encode(argv[i], URI_ENCODER_COMPACTSUBSET);
+				len = strlen(tmp_p);
+				memcpy(p, tmp_p, len);
+				p += len;
+				free(tmp_p);
+			}
+			else
+			{ /* !! ---> */
+#endif // WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM
 			for(a = argv[i]; *a; a++)
 			{
 				if( *a == '"' )
@@ -724,6 +761,9 @@ static char* build_command(int argc, char* const* argv)
 				else
 					*p++ = *a;
 			}
+#ifdef WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM
+			} /* ---> !! */
+#endif // WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM
 
 			*p++ = '"';
 			*p++ = ' ';

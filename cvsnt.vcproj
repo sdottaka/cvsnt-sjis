@@ -32,7 +32,7 @@
 				OptimizeForProcessor="2"
 				OptimizeForWindowsApplication="TRUE"
 				AdditionalIncludeDirectories=".\windows-NT,.\src,.\lib,.\diff,.\zlib,.\cvsgui"
-				PreprocessorDefinitions="NDEBUG,_CONSOLE,WIN32,HAVE_CONFIG_H,POSIX,CVSGUI,CVSGUI_PIPE"
+				PreprocessorDefinitions="WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM,SJIS,NDEBUG,_CONSOLE,WIN32,HAVE_CONFIG_H,POSIX,CVSGUI,CVSGUI_PIPE"
 				StringPooling="TRUE"
 				RuntimeLibrary="2"
 				EnableFunctionLevelLinking="FALSE"
@@ -102,7 +102,7 @@
 				OptimizeForProcessor="2"
 				OptimizeForWindowsApplication="TRUE"
 				AdditionalIncludeDirectories=".\windows-NT,.\src,.\lib,.\diff,.\zlib,.\cvsgui"
-				PreprocessorDefinitions="_DEBUG,_CONSOLE,WIN32,HAVE_CONFIG_H,POSIX,CVSGUI,CVSGUI_PIPE"
+				PreprocessorDefinitions="WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM,SJIS,_DEBUG,_CONSOLE,WIN32,HAVE_CONFIG_H,POSIX,CVSGUI,CVSGUI_PIPE"
 				MinimalRebuild="TRUE"
 				BasicRuntimeChecks="3"
 				RuntimeLibrary="3"
@@ -174,7 +174,7 @@
 				OptimizeForProcessor="2"
 				OptimizeForWindowsApplication="TRUE"
 				AdditionalIncludeDirectories=".\windows-NT,.\src,.\lib,.\diff,.\zlib,.\cvsgui"
-				PreprocessorDefinitions="_DEBUG,_CONSOLE,WIN32,HAVE_CONFIG_H,POSIX,CVSGUI,CVSGUI_PIPE"
+				PreprocessorDefinitions="WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM,SJIS,_DEBUG,_CONSOLE,WIN32,HAVE_CONFIG_H,POSIX,CVSGUI,CVSGUI_PIPE"
 				MinimalRebuild="TRUE"
 				BasicRuntimeChecks="0"
 				RuntimeLibrary="3"
@@ -310,27 +310,6 @@
 				RelativePath="src\cvsrcs.c">
 			</File>
 			<File
-				RelativePath=".\diff\diff.c">
-				<FileConfiguration
-					Name="Release|Win32">
-					<Tool
-						Name="VCCLCompilerTool"
-						ObjectFile=".\WinRel\1/"/>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Debug|Win32">
-					<Tool
-						Name="VCCLCompilerTool"
-						ObjectFile=".\WinDebug\1/"/>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Purify|Win32">
-					<Tool
-						Name="VCCLCompilerTool"
-						ObjectFile=".\WinDebug\2/"/>
-				</FileConfiguration>
-			</File>
-			<File
 				RelativePath=".\src\diff.c">
 				<FileConfiguration
 					Name="Release|Win32">
@@ -349,6 +328,27 @@
 					<Tool
 						Name="VCCLCompilerTool"
 						ObjectFile=".\WinDebug\1/"/>
+				</FileConfiguration>
+			</File>
+			<File
+				RelativePath=".\diff\diff.c">
+				<FileConfiguration
+					Name="Release|Win32">
+					<Tool
+						Name="VCCLCompilerTool"
+						ObjectFile=".\WinRel\1/"/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Debug|Win32">
+					<Tool
+						Name="VCCLCompilerTool"
+						ObjectFile=".\WinDebug\1/"/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Purify|Win32">
+					<Tool
+						Name="VCCLCompilerTool"
+						ObjectFile=".\WinDebug\2/"/>
 				</FileConfiguration>
 			</File>
 			<File
@@ -530,6 +530,9 @@
 			</File>
 			<File
 				RelativePath=".\lib\sighandle.c">
+			</File>
+			<File
+				RelativePath="windows-NT\sjispath.c">
 			</File>
 			<File
 				RelativePath=".\windows-NT\sockerror.c">
@@ -779,6 +782,12 @@
 			</File>
 			<File
 				RelativePath=".\cvsgui\cvsgui_wire.h">
+			</File>
+			<File
+				RelativePath=".\cvsgui\URI_encode.cpp">
+			</File>
+			<File
+				RelativePath=".\cvsgui\URI_encode.h">
 			</File>
 		</Filter>
 		<File

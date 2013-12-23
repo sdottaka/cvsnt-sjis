@@ -26,7 +26,7 @@
 				OmitFramePointers="FALSE"
 				OptimizeForProcessor="2"
 				OptimizeForWindowsApplication="TRUE"
-				PreprocessorDefinitions="WIN32,_DEBUG,_WINDOWS"
+				PreprocessorDefinitions="SJIS,WIN32,_DEBUG,_WINDOWS"
 				MinimalRebuild="TRUE"
 				BasicRuntimeChecks="3"
 				RuntimeLibrary="3"
@@ -101,7 +101,7 @@
 				OmitFramePointers="TRUE"
 				OptimizeForProcessor="2"
 				OptimizeForWindowsApplication="TRUE"
-				PreprocessorDefinitions="WIN32,NDEBUG,_WINDOWS"
+				PreprocessorDefinitions="SJIS,WIN32,NDEBUG,_WINDOWS"
 				StringPooling="TRUE"
 				RuntimeLibrary="2"
 				EnableFunctionLevelLinking="FALSE"
@@ -173,7 +173,7 @@
 				OmitFramePointers="FALSE"
 				OptimizeForProcessor="2"
 				OptimizeForWindowsApplication="TRUE"
-				PreprocessorDefinitions="WIN32,_DEBUG,_WINDOWS"
+				PreprocessorDefinitions="SJIS,WIN32,_DEBUG,_WINDOWS"
 				MinimalRebuild="TRUE"
 				BasicRuntimeChecks="0"
 				RuntimeLibrary="3"
@@ -239,9 +239,6 @@
 			Name="Source Files"
 			Filter="cpp;c;cxx;rc;def;r;odl;idl;hpj;bat">
 			<File
-				RelativePath=".\postinst.cpp">
-			</File>
-			<File
 				RelativePath=".\StdAfx.cpp">
 				<FileConfiguration
 					Name="Debug|Win32">
@@ -261,6 +258,9 @@
 						Name="VCCLCompilerTool"
 						UsePrecompiledHeader="1"/>
 				</FileConfiguration>
+			</File>
+			<File
+				RelativePath=".\postinst.cpp">
 			</File>
 		</Filter>
 		<Filter

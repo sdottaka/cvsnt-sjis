@@ -3,6 +3,10 @@
 
 #include "stdafx.h"
 
+#ifdef SJIS
+#include <mbstring.h>
+#endif
+
 using namespace std;
 
 static void MigrateCvsPass();
@@ -31,7 +35,12 @@ static string GetHomeDirectory()
     else
 		path="";
 	
+#ifdef SJIS
+	const unsigned char *cpath = (const unsigned char *)path.c_str();
+	if(path.size() && ((path[path.size()-1]=='\\' && !_ismbstrail(cpath, cpath + path.size()-1)) || path[path.size()-1]=='//'))
+#else
 	if(path.size() && (path[path.size()-1]=='\\' || path[path.size()-1]=='//'))
+#endif
 		path.resize(path.size()-1);
 	return path;
 }

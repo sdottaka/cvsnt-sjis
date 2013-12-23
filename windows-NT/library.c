@@ -57,7 +57,11 @@ static void get_cvs_dir()
 		{
 			char *p;
 			GetShortPathNameA(cvs_dir,cvs_dir,sizeof(cvs_dir));
+#ifdef SJIS
+			p = _mbsrchr(cvs_dir, '\\');
+#else
 			p = strrchr(cvs_dir, '\\');
+#endif
 			strcpy(cvs_command,cvs_dir);
 			if(p)
 				p[1] = '\0';

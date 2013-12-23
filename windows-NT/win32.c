@@ -306,7 +306,11 @@ int win32_valid_user(char *username, char *password, char *domain, user_handle_t
 
 	if(!domain)       /* No domain specified, look for one in username */
 	{
+#ifdef SJIS
+      ptr=_mbschr(username, '\\');
+#else
       ptr=strchr(username, '\\');
+#endif
       if (ptr) 
       {
 		/* Use repository password file domain */
@@ -404,7 +408,11 @@ struct passwd *win32getpwnam(const char *name)
     // only fetch a domain controller if the machine is a domain member
 	if(isDomainMember())
 	{
+#ifdef SJIS
+		ptr=_mbschr(name, '\\');
+#else
 		ptr=strchr(name, '\\');
+#endif
   		if (ptr)
   		{
  			int numchars;
@@ -435,7 +443,11 @@ struct passwd *win32getpwnam(const char *name)
   	}
   	else
 	{
+#ifdef SJIS
+		if(_mbschr(name,'\\'))
+#else
 		if(strchr(name,'\\'))
+#endif
 		{
 			fprintf(stderr,"error 0 Invalid username - cannot specify domain as server is not acting as a domain member\n");
 			fflush(stderr);
@@ -574,6 +586,10 @@ char *win32getfileowner(const char *file)
 
 	while(*p)
 	{
+#ifdef SJIS
+		if(_ismbblead(*p))
+			p++;
+#endif
 		if(*p=='\\' || *p=='/')
 			name=p+1;
 		p++;
@@ -753,7 +769,11 @@ int win32_isadmin()
 		// only fetch a domain controller if the machine is a domain member
 		if(isDomainMember())
 		{
+#ifdef SJIS
+  			ptr=_mbschr(CVS_Username, '\\');
+#else
   			ptr=strchr(CVS_Username, '\\');
+#endif
   			if (ptr)
   			{
  				int numchars;

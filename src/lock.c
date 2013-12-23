@@ -242,18 +242,30 @@ static int do_lock_server(const char *object, const char *flags)
 		case 2:
 			{
 				char *owner, *host, *path;
+#ifdef SJIS
+				owner = _mbschr(line,'|');
+#else
 				owner = strchr(line,'|');
+#endif
 				if(owner)
 				{
 					*(owner++)='\0';
+#ifdef SJIS
+					host = _mbschr(owner,'|');
+#else
 					host = strchr(owner,'|');
+#endif
 				}
 				else
 					host = NULL;
 				if(host)
 				{
 					*(host++)='\0';
+#ifdef SJIS
+					path = _mbschr(host,'|');
+#else
 					path = strchr(host,'|');
+#endif
 				}
 				else
 					path = NULL;
@@ -496,7 +508,11 @@ lock_name (repository, name)
 	if (pathcmp (repository, current_parsed_root->directory) == 0)
 	    short_repos = ".";
 	else
+#ifdef SJIS
+	    assert (isslashmb(repository, short_repos-1));
+#else
 	    assert (isslash(short_repos[-1]));
+#endif
 
 	retval = xmalloc (strlen (lock_dir)
 			  + strlen (short_repos)
@@ -551,13 +567,27 @@ lock_name (repository, name)
 	while (1)
 	{
 	    while (!ISDIRSEP (*p) && *p != '\0')
+#ifdef SJIS
+	    {
+		if(_ismbblead(*p))
+			p++;
+		p++;
+	    }
+#else
 		++p;
+#endif
 	    if (ISDIRSEP (*p))
 	    {
 		strncpy (q, short_repos, p - short_repos);
 		q[p - short_repos] = '\0';
+#ifdef SJIS
+		if (!_ismbstrail(q, q + (p - short_repos - 1))
+		    && ISDIRSEP (q[p - short_repos - 1])
+		    && CVS_MKDIR (retval, new_mode) < 0)
+#else
 		if (!ISDIRSEP (q[p - short_repos - 1])
 		    && CVS_MKDIR (retval, new_mode) < 0)
+#endif
 		{
 		    int saved_errno = errno;
 		    if (saved_errno != EEXIST)

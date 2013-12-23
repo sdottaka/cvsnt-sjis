@@ -246,7 +246,11 @@ mydbm_load_file (fp, list)
 	    cp = &line[line_length - 1];
 	else
 	    cp = line;
+#ifdef SJIS
+	if (*cp == '\\' && !_ismbstrail(line, cp))
+#else
 	if (*cp == '\\')
+#endif
 	{
 	    cont = 1;
 	    *cp = '\0';

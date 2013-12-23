@@ -774,7 +774,11 @@ history_write (type, update_dir, revs, name, repository)
 
     if (logoff)			/* History is turned off by cmd line switch */
 	return;
+#ifdef SJIS
+    if ( _mbschr(logHistory, type) == NULL )	
+#else
     if ( strchr(logHistory, type) == NULL )	
+#endif
 	return;
     fname = xmalloc (strlen (current_parsed_root->directory) + sizeof (CVSROOTADM)
 		     + sizeof (CVSROOTADM_HISTORY) + 3);
@@ -1066,12 +1070,22 @@ expand_modules ()
  * 
  */
 
+#ifdef SJIS
+#define NEXT_BAR(here) do { \
+	while (isspace((unsigned char)*line)) line++; \
+	hr->here = line; \
+	while (*line && (*line != '|' || _ismbstrail(hr->here, line))) line++; \
+	if (!*line) return; \
+	*line++ = '\0'; \
+	} while (0)
+#else
 #define NEXT_BAR(here) do { \
 	while (isspace(*line)) line++; \
 	hr->here = line; \
 	while ((c = *line++) && c != '|') ; \
 	if (!c) return; line[-1] = '\0'; \
 	} while (0)
+#endif
 
 static void
 fill_hrec (line, hr)
@@ -1172,9 +1186,26 @@ read_hrecs (fname)
 
     for (;;)
     {
+#ifdef SJIS
+	for (nl = cp; nl < cpend && *nl != '\n'; nl++)
+	{
+	    if (_ismbblead(*nl))
+	    {
+		nl++;
+		if (nl >= cpend || *nl == '\n' || *nl == '\0')
+		    *(nl-1) = ' ';
+		else if (!_ismbbtrail(*nl))
+		{
+		    *(nl-1) = ' ';
+		    *nl = ' ';
+		}
+	    }
+	    else if (!_ismbcprint(*nl)) *nl = ' ';
+	}
+#else
 	for (nl = cp; nl < cpend && *nl != '\n'; nl++)
 	    if (!isprint(*nl)) *nl = ' ';
-
+#endif
 	if (nl >= cpend)
 	{
 	    if (nl - cp >= STAT_BLOCKSIZE(st_buf))

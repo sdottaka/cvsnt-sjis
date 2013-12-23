@@ -3393,7 +3393,11 @@ escape_keyword_value (value, free_value)
 	c = *s;
 	if (c == '\t'
 	    || c == '\n'
+#ifdef SJIS
+	    || (c == '\\' && !_ismbstrail(value, s))
+#else
 	    || c == '\\'
+#endif
 	    || c == ' '
 	    || c == '$')
 	{
@@ -3412,6 +3416,14 @@ escape_keyword_value (value, free_value)
 
     for (s = value, t = ret; *s != '\0'; s++, t++)
     {
+#ifdef SJIS
+	if (_ismbblead(*s))
+	{
+	    *t++ = *s++;
+	    *t = *s;
+	    continue;
+	}
+#endif
 	switch (*s)
 	{
 	default:
@@ -7019,9 +7031,22 @@ RCS_deltas (rcs, fp, rcsbuf, version, op, text, len, log, loglen)
 		    if (prvers == NULL)
 			prvers = vers;
 
+#ifdef SJIS
+		    if (strlen(prvers->author) > 8 && 
+		        _ismbslead(prvers->author, prvers->author + 7)) {
+			    sprintf (buf, "%-12s (%-7.7s  ",
+				     prvers->version,
+				     prvers->author);
+		    } else {
+			    sprintf (buf, "%-12s (%-8.8s ",
+				     prvers->version,
+				     prvers->author);
+		}
+#else
 		    sprintf (buf, "%-12s (%-8.8s ",
 			     prvers->version,
 			     prvers->author);
+#endif
 		    cvs_output (buf, 0);
 
 		    /* Now output the date.  */

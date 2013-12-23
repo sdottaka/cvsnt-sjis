@@ -371,7 +371,11 @@ static int find_perms (const char *dir, char *perm, char *username, const char *
 			if(name[0]=='{')
 			{
 				namebra = name+1;
+#ifdef SJIS
+				name=_mbschr(name,'}')+1;
+#else
 				name=strchr(name,'}')+1;
+#endif
 			}
 			else
 				namebra=NULL;
@@ -443,9 +447,17 @@ static int verify_perm (const char *dir, char perm, const char *tag)
 
     /* The whole cvs code assumes any directory called 'EmptyDir'
 	   is invalid wherever it is. */
+#ifdef SJIS
+    for(p=dir+strlen(dir)-1; p>dir && !isslashmb(dir,p); p--)
+#else
     for(p=dir+strlen(dir)-1; p>dir && !isslash(*p); p--)
+#endif
 		;
+#ifdef SJIS
+	if(isslashmb(dir,p))
+#else
 	if(isslash(*p))
+#endif
 		p++;
 	if(!fncmp(p,CVSNULLREPOS))
 		return 1; // Don't do a verify on CVSROOT/Emptydir
@@ -588,7 +600,7 @@ int copy_perms_from_parent(const char *dir)
 {
 	char *parent = xmalloc(strlen(dir)+strlen(PERMS_FILE)+1);
 	char *child = xmalloc(strlen(dir)+strlen(PERMS_FILE)+1);
-	strcpy(parent,dir);
+	strcpy(parent,dir);	
 	strcpy(child,dir);
 	if(strrchr(parent,'/'))
 	{
@@ -816,7 +828,11 @@ list_perms (dir)
 	 cvs_output ("  ", 0);
 	 if(*permptr=='{')
 	 {
+#ifdef SJIS
+		 char *braptr=_mbschr(permptr,'}');
+#else
 		 char *braptr=strchr(permptr,'}');
+#endif
 		 if(braptr)
 		 {
 			cvs_output(braptr+1, 0);

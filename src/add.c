@@ -119,6 +119,11 @@ add (argc, argv)
 	    p = argv[i];
 	    while (*p != '\0')
 	    {
+#ifdef SJIS
+		if(_ismbblead(*p))
+			p++;
+		else
+#endif
 		if (ISDIRSEP (*p))
 		{
 		    found_slash = 1;
@@ -230,11 +235,19 @@ add (argc, argv)
 
 		/* don't add stuff to Emptydir */
 		if (strncmp (repository, current_parsed_root->directory, cvsroot_len) == 0
+#ifdef SJIS
+		    && (ISDIRSEP (repository[cvsroot_len]) && !_ismbstrail(repository, repository + cvsroot_len))
+#else
 		    && ISDIRSEP (repository[cvsroot_len])
+#endif
 		    && strncmp (repository + cvsroot_len + 1,
 				CVSROOTADM,
 				sizeof CVSROOTADM - 1) == 0
+#ifdef SJIS
+		    && (ISDIRSEP (repository[cvsroot_len + sizeof CVSROOTADM]) && !_ismbstrail(repository, repository + cvsroot_len + sizeof CVSROOTADM))
+#else
 		    && ISDIRSEP (repository[cvsroot_len + sizeof CVSROOTADM])
+#endif
 		    && strcmp (repository + cvsroot_len + sizeof CVSROOTADM + 1,
 			       CVSNULLREPOS) == 0)
 		    error (1, 0, "cannot add to %s", repository);
@@ -332,11 +345,19 @@ add (argc, argv)
 
 	/* don't add stuff to Emptydir */
 	if (strncmp (repository, current_parsed_root->directory, cvsroot_len) == 0
+#ifdef SJIS
+	    && (ISDIRSEP (repository[cvsroot_len]) && !_ismbstrail(repository, repository + cvsroot_len)) 
+#else
 	    && ISDIRSEP (repository[cvsroot_len])
+#endif
 	    && strncmp (repository + cvsroot_len + 1,
 			CVSROOTADM,
 			sizeof CVSROOTADM - 1) == 0
+#ifdef SJIS
+	    && (ISDIRSEP (repository[cvsroot_len + sizeof CVSROOTADM]) && !_ismbstrail(repository, repository + cvsroot_len + sizeof CVSROOTADM))
+#else
 	    && ISDIRSEP (repository[cvsroot_len + sizeof CVSROOTADM])
+#endif
 	    && strcmp (repository + cvsroot_len + sizeof CVSROOTADM + 1,
 		       CVSNULLREPOS) == 0)
 	    error (1, 0, "cannot add to %s", repository);

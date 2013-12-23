@@ -941,8 +941,18 @@ last_component (char *path)
     char *last = 0;
 
     for (scan = path; *scan; scan++)
+#ifdef SJIS
+    {
+	if (_ismbblead(*scan)) {
+	    scan++;
+	    continue;
+	}
+#endif
         if (ISDIRSEP (*scan))
 	    last = scan;
+#ifdef SJIS
+    }
+#endif
 
     if (last && (last != path))
         return last + 1;
@@ -985,6 +995,10 @@ char *stripslash(char *path)
 	char *p=path+strlen(path)-1;
 	if(!*path)
 		return path; // null string, just in case
+#ifdef SJIS
+	if(_ismbstrail(path, p))
+		return path;
+#endif
 	if(*p=='\\' || *p=='/')
 		*p='\0';
 	return path;
@@ -1054,7 +1068,11 @@ expand_wild (argc, argv, pargc, pargv)
            filenames -- check for both. */
 	     
 	last_forw_slash = strrchr (argv[i], '/');
+#ifdef SJIS
+	last_back_slash = _mbsrchr (argv[i], '\\');
+#else
 	last_back_slash = strrchr (argv[i], '\\');
+#endif
 
 #define cvs_max(x,y) ((x >= y) ? (x) : (y))
 

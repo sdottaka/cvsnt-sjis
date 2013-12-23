@@ -5,6 +5,9 @@
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
+#ifdef SJIS
+#include <mbstring.h>
+#endif
 #include "putty.h"
 #include "storage.h"
 
@@ -166,7 +169,11 @@ void save_settings(char *section, int do_host, Config * cfg)
 	while (*q) {
 	    while (*q) {
 		int c = *q++;
+#ifdef SJIS
+		if (c == '=' || c == ',' || (c == '\\' && !_ismbstrail(buf, q-1)))
+#else
 		if (c == '=' || c == ',' || c == '\\')
+#endif
 		    *p++ = '\\';
 		if (c == '\t')
 		    c = '=';
@@ -291,7 +298,11 @@ void save_settings(char *section, int do_host, Config * cfg)
 	while (*q) {
 	    while (*q) {
 		int c = *q++;
+#ifdef SJIS
+		if (c == '=' || c == ',' || (c == '\\' && !_ismbstrail(buf, q-1)))
+#else
 		if (c == '=' || c == ',' || c == '\\')
+#endif
 		    *p++ = '\\';
 		if (c == '\t')
 		    c = '=';
@@ -385,7 +396,11 @@ void load_settings(char *section, int do_host, Config * cfg)
 		int c = *p++;
 		if (c == '=')
 		    c = '\t';
+#ifdef SJIS
+		if (c == '\\' || !_ismbstrail(buf, p-1))
+#else
 		if (c == '\\')
+#endif
 		    c = *p++;
 		*q++ = c;
 	    }
@@ -560,7 +575,11 @@ void load_settings(char *section, int do_host, Config * cfg)
 		int c = *p++;
 		if (c == '=')
 		    c = '\t';
+#ifdef SJIS
+		if (c == '\\' || !_ismbstrail(buf, p-1))
+#else
 		if (c == '\\')
+#endif
 		    c = *p++;
 		*q++ = c;
 	    }

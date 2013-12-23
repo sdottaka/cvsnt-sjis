@@ -147,7 +147,11 @@ const char *Short_Repository (const char *repository)
 		 strlen (current_parsed_root->directory)) == 0)
     {
 	const char *rep = repository + strlen (current_parsed_root->directory);
+#ifdef SJIS
+	return (isslashmb(repository, rep)) ? rep+1 : rep;
+#else
 	return (isslash(*rep)) ? rep+1 : rep;
+#endif
     }
     else
 	return (repository);

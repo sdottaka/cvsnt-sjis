@@ -89,7 +89,13 @@ BOOL CSslSettingPage::OnApply()
 void CSslSettingPage::OnBnClickedSslcert()
 {
 	TCHAR fn[4096];
-	OPENFILENAME ofn = { sizeof(OPENFILENAME), m_hWnd, NULL, _T("PEM Private key files\0*.pem\0"), NULL, 0, 0, fn, sizeof(fn), NULL, 0, NULL, NULL, OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_HIDEREADONLY, 0, 0, _T("pem") };
+#ifdef JP_STRING
+	OPENFILENAME ofn = { sizeof(OPENFILENAME), m_hWnd, NULL, _T("PEM 証明書 ファイル\0*.pem\0"), NULL, 0, 0, fn, sizeof(fn), NULL, 0, NULL, NULL, OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|
+OFN_HIDEREADONLY, 0, 0, _T("pem") };
+#else
+	OPENFILENAME ofn = { sizeof(OPENFILENAME), m_hWnd, NULL, _T("PEM Private key files\0*.pem\0"), NULL, 0, 0, fn, sizeof(fn), NULL, 0, NULL, NULL, OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|
+OFN_HIDEREADONLY, 0, 0, _T("pem") };
+#endif
 
 	m_edCertificateFile.GetWindowText(fn,sizeof(fn));
 	if(GetOpenFileName(&ofn))
@@ -102,7 +108,11 @@ void CSslSettingPage::OnBnClickedSslcert()
 void CSslSettingPage::OnBnClickedPrivatekey()
 {
 	TCHAR fn[4096]={0};
+#ifdef JP_STRING
+	OPENFILENAME ofn = { sizeof(OPENFILENAME), m_hWnd, NULL, _T("PEM 秘密鍵 ファイル\0*.pem\0"), NULL, 0, 0, fn, sizeof(fn), NULL, 0, NULL, NULL, OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_HIDEREADONLY, 0, 0, _T("pem") };
+#else
 	OPENFILENAME ofn = { sizeof(OPENFILENAME), m_hWnd, NULL, _T("PEM Private key files\0*.pem\0"), NULL, 0, 0, fn, sizeof(fn), NULL, 0, NULL, NULL, OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_HIDEREADONLY, 0, 0, _T("pem") };
+#endif
 
 	m_edPrivateKeyFile.GetWindowText(fn,sizeof(fn));
 	if(GetOpenFileName(&ofn))

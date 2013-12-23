@@ -467,7 +467,11 @@ void read_global_server_config(void)
 	if(!get_global_config_data("PServer","NoReverseDns",buffer,sizeof(buffer)))
 		no_reverse_dns = atoi(buffer);
 
+#ifdef SJIS
+	if(CVSroot_prefix && isslashmb(CVSroot_prefix,CVSroot_prefix+strlen(CVSroot_prefix)-1))
+#else
 	if(CVSroot_prefix && isslash(CVSroot_prefix[strlen(CVSroot_prefix)-1]))
+#endif
 		CVSroot_prefix[strlen(CVSroot_prefix)-1]='\0';
 
 	n=0;
@@ -476,7 +480,11 @@ void read_global_server_config(void)
 		if(!strncasecmp(token,"Repository",10) && strcasecmp(token,"RepositoryPrefix"))
 		{
 			const char *endp;
+#ifdef SJIS
+			if(*buffer && isslashmb(buffer, buffer+strlen(buffer)-1))
+#else
 			if(*buffer && isslash(buffer[strlen(buffer)-1]))
+#endif
 				buffer[strlen(buffer)-1]='\0';
 			endp = buffer;
 			if(*buffer && (!CVSroot_prefix || (strlen(buffer)>strlen(CVSroot_prefix) && !pathncmp(buffer,CVSroot_prefix,strlen(CVSroot_prefix),&endp))))

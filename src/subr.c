@@ -19,6 +19,9 @@
 #include <io.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#ifdef SJIS
+#include <mbstring.h>
+#endif
 #else
 #include <netdb.h>
 #endif
@@ -230,7 +233,11 @@ pathname_levels (path)
     {
 #ifdef _WIN32
 	q1 = strchr (p, '/');
+#ifdef SJIS
+	q2 = _mbschr(p, '\\');
+#else
 	q2 = strchr (p, '\\');
+#endif
 	if(q1!=NULL && (q1<q2))
 		q=q1;
 	else if(q1==NULL && (q1>q2))
@@ -295,11 +302,22 @@ void line2argv (int *pargc, char ***argv, const char *line, const char *sepchars
   for(p=line;*p;p++)
   {
     while(strchr(sepchars,*p))
-		p++;
+#ifdef SJIS
+      p=(char *)_mbsinc((const unsigned char*)p);
+#else
+      p++;
+#endif
 
 	qstart=q=(char*)xstrdup(p);
     for(;*p;p++)
     {
+#ifdef SJIS
+      if (_ismbblead((unsigned char)*p)) {
+        *(q++)=*p++;
+        *(q++)=*p;
+        continue;
+      }
+#endif
       *(q++)=*p;
       if(!in_quote)
       {
@@ -943,7 +961,11 @@ char *shell_escape(char *buf, const char *str)
 
     for (;;)
     {
+#ifdef SJIS
+	p = _mbspbrk(str, meta); 
+#else
 	p = strpbrk(str, meta);
+#endif
 	if (!p) p = str + strlen(str);
 	if (p > str)
 	{
@@ -1270,7 +1292,11 @@ char *cvs_strtok(char *buffer, const char *tokens)
 
 	p=buffer;
 	while(*p && !strchr(tokens,*p))
+#ifdef SJIS
+		p=(char *)_mbsinc((const unsigned char*)p);
+#else
 		p++;
+#endif
 	if(*p)
 	{
 		*p='\0';
@@ -1566,7 +1592,11 @@ char *fullpathname(const char *name, const char **shortname)
 	{
 		char *p = path;
 		*shortname = p;
+#ifdef SJIS
+		for(;*p;p=_mbsinc(p))
+#else
 		for(;*p;p++)
+#endif
 			if(isslash(*p))
 				*shortname = p+1;
 	}
@@ -1579,7 +1609,11 @@ char *find_rcs_filename(const char *path)
 	char *tmp=xmalloc(strlen(path)+32);
 	const char *p = strrchr(path,'/');
 #ifdef _WIN32
+#ifdef SJIS
+	const char *q = _mbsrchr(path,'\\');
+#else
 	const char *q = strrchr(path,'\\');
+#endif
 	if(q>p)
 		p=q;
 #endif

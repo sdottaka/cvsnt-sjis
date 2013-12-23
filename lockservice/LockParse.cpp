@@ -17,6 +17,10 @@
 #include <string>
 #include <map>
 
+#ifdef SJIS
+#include <mbstring.h>
+#endif
+
 #include "LockService.h"
 
 #ifdef _WIN32
@@ -77,7 +81,11 @@ static char *lock_strchr(const char *s, int ch)
 {
 	if(!*s)
 		return NULL;
+#ifdef SJIS
+	char *p=(char *)_mbschr((unsigned char *)s,ch);
+#else
 	char *p=strchr(s,ch);
+#endif
 	if(p)
 		return p;
 	return (char*)s+strlen(s);
@@ -88,8 +96,13 @@ int pathcmp(const char *a, const char *b)
 {
 	while(*a && *b && (path_equal(*a,*b) || (isslash(*a) && isslash(*b))))
 	{
+#ifdef SJIS
+		a=(char *)_mbsinc((const unsigned char *)a);
+		b=(char *)_mbsinc((const unsigned char *)b);
+#else
 		a++;
 		b++;
+#endif
 	}
 	return (*a)-(*b);
 }
@@ -98,9 +111,24 @@ int pathncmp(const char *a, const char *b, size_t len)
 {
 	while(len && *a && *b && (path_equal(*a,*b) || (isslash(*a) && isslash(*b))))
 	{
+#ifdef SJIS
+		if(_ismbblead(*a))
+		{
+			a+=2;
+			b+=2;
+			len-=2;
+		}
+		else
+		{
+			a++;
+			b++;
+			len--;
+		}
+#else
 		a++;
 		b++;
 		len--;
+#endif
 	}
 
 	if(!len)
@@ -293,7 +321,11 @@ bool DoClient(SOCKET s, char *param)
 		sock_printf(s,"001 FAIL Unexpected 'Client' command\n");
 		return false;
 	}
+#ifdef SJIS
+	root = (char *)_mbschr((unsigned char *)param,'|');
+#else
 	root = strchr(param,'|');
+#endif
 	if(!root)
 	{
 		sock_printf(s,"001 FAIL Client command expects <user>|<root>[|<client host>]\n");
@@ -301,10 +333,18 @@ bool DoClient(SOCKET s, char *param)
 	}
 	*(root++)='\0';
 
+#ifdef SJIS
+	host = (char *)_mbschr((unsigned char *)root,'|');
+#else
 	host = strchr(root,'|');
+#endif
 	if(host)
 	{
+#ifdef SJIS
+		if(_mbschr((unsigned char *)host+1,'|'))
+#else
 		if(strchr(host+1,'|'))
+#endif
 		{
 			sock_printf(s,"001 FAIL Client command expects <user>|<root>[|<client host>]\n");
 			return false;
@@ -338,8 +378,13 @@ bool DoLock(SOCKET s, char *param)
 		sock_printf(s,"001 FAIL Unexpected 'Lock' command\n");
 		return false;
 	}
+#ifdef SJIS
+	path = (char *)_mbschr((unsigned char *)param,'|');
+	if(!path || _mbschr((unsigned char *)path+1,'|'))
+#else
 	path = strchr(param,'|');
 	if(!path || strchr(path+1,'|'))
+#endif
 	{
 		sock_printf(s,"001 FAIL Lock command expects <flags>|<path>\n");
 		return false;

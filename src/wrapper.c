@@ -408,8 +408,22 @@ void wrap_add (char *line, int isTemp, int isRemote)
 	if(!*line)
 	    break;
 
+#ifdef SJIS
+	for(temp=++line;;++line) {
+	    if(!*line)
+	    	break;
+	    if(_ismbblead(*line)) {
+		line+=2;
+		if(*line == '\'') {
+		    break;
+		}
+	    } else if(*line == '\'' && line[-1]!='\\')
+	    	break;
+	}
+#else
 	for(temp=++line;*line && (*line!='\'' || line[-1]=='\\');++line)
 	    ;
+#endif
 
 	/* This used to "break;" (ignore the option) if there was a
 	   single character between the single quotes (I'm guessing

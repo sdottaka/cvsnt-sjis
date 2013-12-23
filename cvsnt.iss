@@ -10,19 +10,19 @@ AppUpdatesURL=http://www.cvsnt.org
 DefaultDirName={pf}\cvsnt
 DefaultGroupName=CVSNT
 AllowNoIcons=true
-LicenseFile=D:\cvsbin\COPYING
+LicenseFile=c:\cvsnt-sjis\cvsnt-2.0.14\COPYING
 DisableStartupPrompt=true
 PrivilegesRequired=none
 UninstallDisplayIcon={app}\cvs.exe
 UninstallDisplayName=CVSNT
-OutputDir=D:\cvsbin
+OutputDir=c:\cvsnt-sjis\bin
 Compression=bzip
 FlatComponentsList=false
-OutputBaseFilename=cvsnt_install
+OutputBaseFilename=cvsnt_sjis_install
 AppID=CVSNT
 MinVersion=4.0.1111,4.0.1381sp6
 ShowTasksTreeLines=false
-SourceDir=D:\cvsbin
+SourceDir=c:\cvsnt-sjis\bin
 SolidCompression=true
 AllowUNCPath=false
 ShowLanguageDialog=auto
@@ -37,29 +37,29 @@ Use7zip=false
 LanguageID=$0809
 
 [Types]
-Name: typical; Description: Typical installation
-Name: full; Description: Full installation
-Name: custom; Description: Custom installation; Flags: iscustom
+Name: typical; Description: 標準インストール
+Name: full; Description: フルインストール
+Name: custom; Description: カスタムインストール; Flags: iscustom
 
 [Components]
-Name: Commandline; Description: Command line client; Types: custom typical full
-Name: Server; Description: Server Components; Types: custom full typical; MinVersion: 0,4.00.1381sp6; Check: isadmin
-Name: win95; Description: Windows 95 support; Types: custom full
-Name: RCS; Description: RCS emulation components; Types: custom full typical; MinVersion: 0,4.0.1381sp6
-Name: Protocols; Description: Protocols; Types: custom typical full
-Name: Protocols\Pserver; Description: Password Server (:pserver:) Protocol; Types: custom typical full
-Name: Protocols\NTServer; Description: Named Pipe (:ntserver:) Protocol; Types: custom full; MinVersion: 0,4.00.1381sp6
-Name: Protocols\Ext; Description: External Command (:ext:) Protocol; Types: custom typical full
-Name: Protocols\Fork; Description: Fork (:fork:) Protocol (for testing only)
-Name: Protocols\GSSAPI\gssapi_ad; Description: GSSAPI (:gserver:) for Active Directory; Types: custom typical full; MinVersion: 0,5.00.2195
-Name: Protocols\GSSAPI\gssapi_mit; Description: GSSAPI (:gserver:) for MIT Kerberos; Types: custom full
-Name: Protocols\SSPI; Description: SSPI (:sspi:) protocol; Types: typical full custom
-Name: Protocols\server; Description: RSH Client (:server:) protocol; Types: custom full typical
-Name: Protocols\ssh; Description: SSH Client (:ssh:) protocol; Types: custom full typical
-Name: Protocols\sserver; Description: SSL (:sserver) protocol; Types: custom full typical
-Name: Protocols\sserver\CA; Description: Common CA certificates; Types: custom full typical
-Name: Development; Description: Plugin development; Types: custom full
-Name: readme; Description: Readme and help; Types: custom typical full
+Name: Commandline; Description: コマンドラインクライアント; Types: custom typical full
+Name: Server; Description: サーバー コンポーネント; Types: custom full typical; MinVersion: 0,4.00.1381sp6; Check: isadmin
+Name: win95; Description: Windows 95 サポート; Types: custom full
+Name: RCS; Description: RCS エミュレーション コンポーネント; Types: custom full typical; MinVersion: 0,4.0.1381sp6
+Name: Protocols; Description: プロトコル; Types: custom typical full
+Name: Protocols\Pserver; Description: パスワードサーバー (:pserver:) プロトコル; Types: custom typical full
+Name: Protocols\NTServer; Description: 名前つきパイプ (:ntserver:) プロトコル; Types: custom full; MinVersion: 0,4.00.1381sp6
+Name: Protocols\Ext; Description: 外部コマンド (:ext:) プロトコル; Types: custom typical full
+Name: Protocols\Fork; Description: Fork (:fork:) プロトコル (for testing only)
+Name: Protocols\GSSAPI\gssapi_ad; Description: GSSAPI (:gserver:) Active Directory用; Types: custom typical full; MinVersion: 0,5.00.2195
+Name: Protocols\GSSAPI\gssapi_mit; Description: GSSAPI (:gserver:) MIT Kerberos用; Types: custom full
+Name: Protocols\SSPI; Description: SSPI (:sspi:) プロトコル; Types: typical full custom
+Name: Protocols\server; Description: RSH クライアント (:server:) プロトコル; Types: custom full typical
+Name: Protocols\ssh; Description: SSH クライアント (:ssh:) プロトコル; Types: custom full typical
+Name: Protocols\sserver; Description: SSL (:sserver) プロトコル; Types: custom full typical
+Name: Protocols\sserver\CA; Description: 共通 CA 証明書; Types: custom full typical
+Name: Development; Description: プラグイン開発; Types: custom full
+Name: readme; Description: Readme とヘルプ; Types: custom typical full
 
 [Files]
 Source: cvs.exe; DestDir: {app}; Flags: ignoreversion regtypelib; Components: Commandline; MinVersion: 0,4.00.1381sp6
@@ -129,18 +129,18 @@ Filename: {sys}\net.exe; Parameters: stop cvslock; Components: Server; Tasks: lo
 Filename: {sys}\net.exe; Parameters: stop cvs; Tasks: service; Components: Server; Flags: runhidden; WorkingDir: {app}
 Filename: {app}\cvslock.exe; Parameters: -u; Components: Server; Tasks: lockservice; Flags: runhidden; WorkingDir: {app}
 Filename: {app}\cvsservice.exe; Parameters: -u; Components: Server; Tasks: service; Flags: runhidden; WorkingDir: {app}
-Filename: {app}\cvsservice.exe; Parameters: -i; Components: Server; Tasks: service; WorkingDir: {app}; Description: Installing CVS Service; StatusMsg: Installing CVS Service; Flags: runhidden
-Filename: {app}\cvslock.exe; Parameters: -i; Components: Server; Tasks: lockservice; WorkingDir: {app}; Description: Installing CVS Lock Service; StatusMsg: Installing CVS Lock Service; Flags: runhidden
-Filename: {sys}\net.exe; Parameters: start cvs; Tasks: service; Components: Server; WorkingDir: {app}; Description: Start CVS service; StatusMsg: Starting CVS service; Flags: runhidden postinstall nowait
-Filename: {sys}\net.exe; Parameters: start cvslock; Components: Server; Tasks: lockservice; WorkingDir: {app}; Description: Start CVS Lock service; StatusMsg: Starting CVS Lock service; Flags: runhidden postinstall nowait
-Filename: {app}\genkey.exe; Parameters: cvsnt-default.pem; WorkingDir: {app}; Description: Generate default server certificate; StatusMsg: Generating default server certificate; Flags: runhidden; Components: Protocols\sserver; Tasks: genkey
+Filename: {app}\cvsservice.exe; Parameters: -i; Components: Server; Tasks: service; WorkingDir: {app}; Description: CVS サービスをインストールしています; StatusMsg: CVS サービスをインストールしています; Flags: runhidden
+Filename: {app}\cvslock.exe; Parameters: -i; Components: Server; Tasks: lockservice; WorkingDir: {app}; Description: CVS ロックサービスをインストールしています; StatusMsg: CVS ロックサービスをインストールしています; Flags: runhidden
+Filename: {sys}\net.exe; Parameters: start cvs; Tasks: service; Components: Server; WorkingDir: {app}; Description: CVS サービスを開始する; StatusMsg: CVS サービスを開始しています; Flags: runhidden postinstall nowait
+Filename: {sys}\net.exe; Parameters: start cvslock; Components: Server; Tasks: lockservice; WorkingDir: {app}; Description: CVS ロックサービスを開始する; StatusMsg: CVS ロックサービスを開始しています; Flags: runhidden postinstall nowait
+Filename: {app}\genkey.exe; Parameters: cvsnt-default.pem; WorkingDir: {app}; Description: デフォルトサーバー証明書を生成しています; StatusMsg: デフォルトサーバー証明書を生成しています; Flags: runhidden; Components: Protocols\sserver; Tasks: genkey
 
 [Dirs]
 
 [Tasks]
-Name: service; Description: Install cvsnt service; MinVersion: 0,4.00.1381sp6; Components: Server; Check: isadmin
-Name: lockservice; Description: Install cvsnt lock service; Components: Server; MinVersion: 0,4.00.1381sp6; Check: isadmin
-Name: genkey; Description: Generate default certificate; Components: Protocols\sserver
+Name: service; Description: cvsnt サービスのインストール; MinVersion: 0,4.00.1381sp6; Components: Server; Check: isadmin
+Name: lockservice; Description: ロックサービスのインストール; Components: Server; MinVersion: 0,4.00.1381sp6; Check: isadmin
+Name: genkey; Description: デフォルト証明書を生成する; Components: Protocols\sserver
 
 [UninstallRun]
 Filename: {sys}\net.exe; Parameters: stop cvslock; Components: Server; Tasks: lockservice; Flags: runhidden; WorkingDir: {app}
@@ -234,12 +234,12 @@ var
   Next: Boolean;
 begin
   if (not BackClicked and (CurPage = wpSelectDir)) or (BackClicked and (CurPage = wpSelectComponents)) then begin
-    ScriptDlgPageSetCaption('Antivirus Warning');
+    ScriptDlgPageSetCaption('アンチウィルス 警告');
     ScriptDlgPageSetSubCaption1('');
     Result := OutputMsg(
-    'If you are running Antivirus software you must switch off ' +
-    'the ''Filesystem Realtime Protection'' option on the machine running the server. ' + #13#10#13#10 +
-    'You also may experience problems using the client with this option enabled.', true);
+    'もし、アンチウィルス ソフトウェアを使用している場合、サーバーが動作しているコンピュータ上で' +
+    '「ファイルシステムリアルタイム保護」を無効にしてください。' + #13#10#13#10 +
+    'クライアント側でもこのオプションを有効にしていると問題があるかもしれません。', true) xor BackClicked;
     ScriptDlgPageClose(not Result);
   end
   else

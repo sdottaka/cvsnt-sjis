@@ -1259,10 +1259,26 @@ add_rcs_file (
 			ftm->tm_min, ftm->tm_sec);
 	author = getcaller ();
 
+#ifdef SJIS
+	if (fprintf (fprcs, "\012%s\012", add_vhead) < 0 ||
+	fprintf (fprcs, "date     %s;  author ", altdate1) < 0)
+	    goto write_error;
+	if (strpbrk (author, "$,.:;@"))
+	{
+	    fputs ("@", fprcs);
+	    expand_at_signs (author, strlen(author), fprcs);
+	    fputs ("@", fprcs);
+	}
+	else
+	    fputs(author, fprcs);
+	if (fprintf (fprcs, ";  state Exp;\012") < 0)
+	goto write_error;
+#else
 	if (fprintf (fprcs, "\012%s\012", add_vhead) < 0 ||
 	fprintf (fprcs, "date     %s;  author %s;  state Exp;\012",
 		 altdate1, author) < 0)
 	goto write_error;
+#endif
 
 	if (fprintf (fprcs, "branches") < 0)
 	    goto write_error;
@@ -1284,13 +1300,31 @@ add_rcs_file (
 
 	if (add_vbranch != NULL)
 	{
+#ifdef SJIS
+	    if (fprintf (fprcs, "\012%s.1\012", add_vbranch) < 0)
+		goto write_error;
+		fprintf (fprcs, "date     %s;  author ", altdate1);
+	    if (strpbrk (author, "$,.:;@"))
+	    {
+		fputs ("@", fprcs);
+		expand_at_signs (author, strlen(author), fprcs);
+		fputs ("@", fprcs);
+	    }
+	    else
+		fputs(author, fprcs);
+	    if (fprintf (fprcs, ";  state Exp;\012",
+		     altdate1, author) < 0 ||
+	    	fprintf (fprcs, "branches ;\012") < 0 ||
+	    	fprintf (fprcs, "next     ;\012") < 0)
+		goto write_error;
+#else
 	    if (fprintf (fprcs, "\012%s.1\012", add_vbranch) < 0 ||
 		fprintf (fprcs, "date     %s;  author %s;  state Exp;\012",
 			 altdate1, author) < 0 ||
 		fprintf (fprcs, "branches ;\012") < 0 ||
 		fprintf (fprcs, "next     ;\012") < 0)
 		goto write_error;
-
+#endif
 	    /* Store initial permissions */
 		if (fprintf (fprcs, "permissions\t%o;\012",
 				sb.st_mode & 07777) < 0)
@@ -1446,7 +1480,7 @@ read_error:
     if (free_opt != NULL)
 	xfree (free_opt);
 
-    return (err + 1);
+	return (err + 1);
 }
 
 /*

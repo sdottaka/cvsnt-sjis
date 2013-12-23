@@ -208,20 +208,48 @@ init_syntax_once ()
 #if defined (STDC_HEADERS) || (!defined (isascii) && !defined (HAVE_ISASCII))
 #define ISASCII(c) 1
 #else
+#ifdef SJIS
+#define ISASCII(c) isascii((unsigned char)(c))
+#else
 #define ISASCII(c) isascii(c)
+#endif
 #endif
 
 #ifdef isblank
+#ifdef SJIS
+#define ISBLANK(c) (ISASCII (c) && isblank ((unsigned char)(c)))
+#else
 #define ISBLANK(c) (ISASCII (c) && isblank (c))
+#endif
 #else
 #define ISBLANK(c) ((c) == ' ' || (c) == '\t')
 #endif
 #ifdef isgraph
+#ifdef SJIS
+#define ISGRAPH(c) (ISASCII (c) && isgraph ((unsigned char)(c)))
+#else
 #define ISGRAPH(c) (ISASCII (c) && isgraph (c))
+#endif
+#else
+#ifdef SJIS
+#define ISGRAPH(c) (ISASCII (c) && isprint ((unsigned char)(c)) && !isspace ((unsigned char)(c)))
 #else
 #define ISGRAPH(c) (ISASCII (c) && isprint (c) && !isspace (c))
 #endif
+#endif
 
+#ifdef SJIS
+#define ISPRINT(c) (ISASCII (c) && isprint ((unsigned char)(c)))
+#define ISDIGIT(c) (ISASCII (c) && isdigit ((unsigned char)(c)))
+#define ISALNUM(c) (ISASCII (c) && isalnum ((unsigned char)(c)))
+#define ISALPHA(c) (ISASCII (c) && isalpha ((unsigned char)(c)))
+#define ISCNTRL(c) (ISASCII (c) && iscntrl ((unsigned char)(c)))
+#define ISLOWER(c) (ISASCII (c) && islower ((unsigned char)(c)))
+#define ISPUNCT(c) (ISASCII (c) && ispunct ((unsigned char)(c)))
+#define ISSPACE(c) (ISASCII (c) && isspace ((unsigned char)(c)))
+#define ISUPPER(c) (ISASCII (c) && isupper ((unsigned char)(c)))
+#define ISXDIGIT(c) (ISASCII (c) && isxdigit ((unsigned char)(c)))
+#else
 #define ISPRINT(c) (ISASCII (c) && isprint (c))
 #define ISDIGIT(c) (ISASCII (c) && isdigit (c))
 #define ISALNUM(c) (ISASCII (c) && isalnum (c))
@@ -232,6 +260,7 @@ init_syntax_once ()
 #define ISSPACE(c) (ISASCII (c) && isspace (c))
 #define ISUPPER(c) (ISASCII (c) && isupper (c))
 #define ISXDIGIT(c) (ISASCII (c) && isxdigit (c))
+#endif
 
 #ifndef NULL
 #define NULL (void *)0

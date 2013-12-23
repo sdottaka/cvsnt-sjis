@@ -253,38 +253,66 @@ root_allow_free ()
 
 int pathcmp(const char *a, const char *b)
 {
+#ifdef SJIS
+	if(isalpha((unsigned char)a[0]) && a[1]==':' && isslash((unsigned char)b[0]) && isslash((unsigned char)b[2]) && isslash((unsigned char)b[3]) && path_equal(a[0],b[1]))
+#else
 	if(isalpha(a[0]) && a[1]==':' && isslash(b[0]) && isslash(b[2]) && isslash(b[3]) && path_equal(a[0],b[1]))
+#endif
 	{
 		a+=2;
 		b+=3;
 	}
+#ifdef SJIS
+	if(isalpha((unsigned char)b[0]) && b[1]==':' && isslash(a[0]) && isslash(a[2]) && isslash(a[3]) && path_equal(b[0],a[1]))
+#else
 	if(isalpha(b[0]) && b[1]==':' && isslash(a[0]) && isslash(a[2]) && isslash(a[3]) && path_equal(b[0],a[1]))
+#endif
 	{
 		a+=4;
 		b+=2;
 	}
 	while(*a && *b && (path_equal(*a,*b) || (isslash(*a) && isslash(*b))))
 	{
+#ifdef SJIS
+		a=_mbsinc(a);
+		b=_mbsinc(b);
+#else
 		a++;
 		b++;
+#endif
 	}
 	// Strip trailing spaces
+#ifdef SJIS
+	while(*a && isspace((unsigned char)*a))
+		a++;
+	while(*b && isspace((unsigned char)*b))
+		b++;
+#else
 	while(*a && isspace(*a))
 		a++;
 	while(*b && isspace(*b))
 		b++;
+#endif
 	return (*a)-(*b);
 }
 
 int pathncmp(const char *a, const char *b, size_t len, const char **endpoint)
 {
+#ifdef SJIS
+	if(isalpha((unsigned char)a[0]) && a[1]==':' && isslash(b[0]) && isslash(b[2]) && isslash(b[3]) && path_equal(a[0],b[1]))
+#else
 	if(isalpha(a[0]) && a[1]==':' && isslash(b[0]) && isslash(b[2]) && isslash(b[3]) && path_equal(a[0],b[1]))
+#endif
 	{
 		a+=2;
 		b+=3;
 		len-=3;
 	}
+#ifdef SJIS
+	if(isalpha((unsigned char)b[0]) && b[1]==':' && isslash(a[0]) && isslash(a[2]) && isslash(a[3]) && path_equal(b[0],a[1]))
+#else
 	if(isalpha(b[0]) && b[1]==':' && isslash(a[0]) && isslash(a[2]) && isslash(a[3]) && path_equal(b[0],a[1]))
+#endif
 	{
 		a+=3;
 		b+=2;
@@ -292,15 +320,35 @@ int pathncmp(const char *a, const char *b, size_t len, const char **endpoint)
 	}
 	while(len && *a && *b && (path_equal(*a,*b) || (isslash(*a) && isslash(*b))))
 	{
+#ifdef SJIS
+		if (_ismbblead(*a))
+		{
+			a+=2;
+			b+=2;
+			len-=2;
+		} else {
+			a++;
+			b++;
+			len--;
+		}
+#else
 		a++;
 		b++;
 		len--;
+#endif
 	}
 	// Strip trailing spaces
+#ifdef SJIS
+	while(len && *a && isspace((unsigned char)*a))
+		a++;
+	while(len && *b && isspace((unsigned char)*b))
+		{ b++; len--; }
+#else
 	while(len && *a && isspace(*a))
 		a++;
 	while(len && *b && isspace(*b))
 		{ b++; len--; }
+#endif
 
 	if(endpoint)
 		*endpoint = a;
@@ -321,8 +369,12 @@ void win32ize_root(char *arg)
 		strcpy(arg,arg+1);
 		arg[1]=':';
 	}
+#ifdef SJIS
+	for(p=arg; *p; p = _mbsinc(p))
+#else
 	for(p=arg; *p; p++)
-		if(*p=='\\')
+#endif
+		if (*p=='\\')
 			*p='/';
 }
 #endif
@@ -801,7 +853,11 @@ parse_cvsroot (char *root_in)
 	   the protocol. For ext, it's an override for the CVS_RSH variable */
 	if(cvsroot_copy[0]=='{')
 	{
+#ifdef SJIS
+		p = _mbschr(cvsroot_copy+1,'}');
+#else
 		p = strchr(cvsroot_copy+1,'}');
+#endif
 		if(p)
 		{
 			int len = p-cvsroot_copy-1;
@@ -811,10 +867,17 @@ parse_cvsroot (char *root_in)
 			cvsroot_copy = p+1;
 		}
 	}
-
+#ifdef SJIS
+	p1=_mbschr(cvsroot_copy,'@');
+#else
 	p1=strchr(cvsroot_copy,'@');
+#endif
 	if(!p1) p1=cvsroot_copy;
+#ifdef SJIS
+	if (((p = strchr (p1, '/')) == NULL) && (p = _mbschr (p1, '\\')) == NULL)
+#else
 	if (((p = strchr (p1, '/')) == NULL) && (p = strchr (p1, '\\')) == NULL)
+#endif
 	{
 	    error (0, 0, "CVSROOT (\"%s\")", root_in);
 	    error (0, 0, "requires a path spec");
@@ -840,7 +903,11 @@ parse_cvsroot (char *root_in)
 	*p = '\0';
 
 	/* Check to see if there is a username[:password] in the string. */
+#ifdef SJIS
+	if ((p = _mbschr (cvsroot_copy, '@')) != NULL)
+#else
 	if ((p = strchr (cvsroot_copy, '@')) != NULL)
+#endif
 	{
 	    *p = '\0';
 	    /* check for a password */
@@ -876,7 +943,11 @@ parse_cvsroot (char *root_in)
 	    {
 		q = p;
 		if (*q == '-') q++;
+#ifdef SJIS
+		while (*q && !(*q==':' && !*(q+1)) && !(isalpha((unsigned char)*q) && *(q+1)==':' && !*(q+2)))
+#else
 		while (*q && !(*q==':' && !*(q+1)) && !(isalpha(*q) && *(q+1)==':' && !*(q+2)))
+#endif
 		{
 		    if (!isdigit(*q++))
 		    {

@@ -32,7 +32,7 @@
 				OmitFramePointers="TRUE"
 				OptimizeForProcessor="2"
 				OptimizeForWindowsApplication="TRUE"
-				PreprocessorDefinitions="WIN32;NDEBUG;_WINDOWS;_USRDLL,_UNICODE"
+				PreprocessorDefinitions="SJIS;JP_STRING;WIN32;NDEBUG;_WINDOWS;_USRDLL,_UNICODE"
 				StringPooling="TRUE"
 				RuntimeLibrary="2"
 				EnableFunctionLevelLinking="FALSE"
@@ -107,7 +107,7 @@
 				OmitFramePointers="FALSE"
 				OptimizeForProcessor="2"
 				OptimizeForWindowsApplication="TRUE"
-				PreprocessorDefinitions="WIN32;_DEBUG;_WINDOWS;_USRDLL,_UNICODE"
+				PreprocessorDefinitions="SJIS;JP_STRING;WIN32;_DEBUG;_WINDOWS;_USRDLL,_UNICODE"
 				MinimalRebuild="TRUE"
 				BasicRuntimeChecks="3"
 				RuntimeLibrary="3"
@@ -182,7 +182,7 @@
 				OmitFramePointers="FALSE"
 				OptimizeForProcessor="2"
 				OptimizeForWindowsApplication="TRUE"
-				PreprocessorDefinitions="WIN32;_DEBUG;_WINDOWS;_USRDLL"
+				PreprocessorDefinitions="SJIS;JP_STRING;WIN32;_DEBUG;_WINDOWS;_USRDLL"
 				MinimalRebuild="TRUE"
 				BasicRuntimeChecks="0"
 				RuntimeLibrary="3"
@@ -345,5 +345,8 @@
 		</Filter>
 	</Files>
 	<Globals>
+		<Global
+			Name="RESOURCE_FILE"
+			Value="cvsntcpl.rc"/>
 	</Globals>
 </VisualStudioProject>

@@ -105,7 +105,11 @@ void CserverPage::UpdateStatus()
 
 	if(!m_hService)
 	{
+#ifdef JP_STRING
+		m_szStatus="サービスがインストールされていません";
+#else
 		m_szStatus="Service not installed";
+#endif
 		m_btStart.EnableWindow(FALSE);
 		m_btStop.EnableWindow(FALSE);
 	}
@@ -115,22 +119,38 @@ void CserverPage::UpdateStatus()
 		switch(stat.dwCurrentState)
 		{
 			case SERVICE_STOPPED:
+#ifdef JP_STRING
+				m_szStatus="停止";
+#else
 				m_szStatus="Stopped";
+#endif
 				m_btStart.EnableWindow(TRUE);
 				m_btStop.EnableWindow(FALSE);
 				break;
 			case SERVICE_START_PENDING:
+#ifdef JP_STRING
+				m_szStatus="開始中";
+#else
 				m_szStatus="Starting";
+#endif
 				m_btStart.EnableWindow(FALSE);
 				m_btStop.EnableWindow(FALSE);
 				break;
 			case SERVICE_STOP_PENDING:
+#ifdef JP_STRING
+				m_szStatus="停止中";
+#else
 				m_szStatus="Stopping";
+#endif
 				m_btStart.EnableWindow(FALSE);
 				m_btStop.EnableWindow(FALSE);
 				break;
 			case SERVICE_RUNNING:
+#ifdef JP_STRING
+				m_szStatus="実行中";
+#else
 				m_szStatus="Running";
+#endif
 				m_btStart.EnableWindow(FALSE);
 				m_btStop.EnableWindow(TRUE);
 				break;
@@ -144,7 +164,11 @@ void CserverPage::UpdateStatus()
 
 	if(!m_hLockService)
 	{
+#ifdef JP_STRING
+		m_szLockStatus="サービスがインストールされていません";
+#else
 		m_szLockStatus="Service not installed";
+#endif
 		m_btLockStart.EnableWindow(FALSE);
 		m_btLockStop.EnableWindow(FALSE);
 	}
@@ -154,22 +178,39 @@ void CserverPage::UpdateStatus()
 		switch(stat.dwCurrentState)
 		{
 			case SERVICE_STOPPED:
+#ifdef JP_STRING
+				m_szLockStatus="停止";
+#else
 				m_szLockStatus="Stopped";
+#endif
+
 				m_btLockStart.EnableWindow(TRUE);
 				m_btLockStop.EnableWindow(FALSE);
 				break;
 			case SERVICE_START_PENDING:
+#ifdef JP_STRING
+				m_szLockStatus="開始中";
+#else
 				m_szLockStatus="Starting";
+#endif
 				m_btLockStart.EnableWindow(FALSE);
 				m_btLockStop.EnableWindow(FALSE);
 				break;
 			case SERVICE_STOP_PENDING:
+#ifdef JP_STRING
+				m_szLockStatus="停止中";
+#else
 				m_szLockStatus="Stopping";
+#endif
 				m_btLockStart.EnableWindow(FALSE);
 				m_btLockStop.EnableWindow(FALSE);
 				break;
 			case SERVICE_RUNNING:
+#ifdef JP_STRING
+				m_szLockStatus="実行中";
+#else
 				m_szLockStatus="Running";
+#endif
 				m_btLockStart.EnableWindow(FALSE);
 				m_btLockStop.EnableWindow(TRUE);
 				break;
@@ -195,7 +236,11 @@ void CserverPage::OnStart()
 	if(!StartService(m_hService,0,NULL))
 	{
 		CString tmp;
+#ifdef JP_STRING
+		tmp.Format(_T("サービスが開始できません: %s"),GetErrorString());
+#else
 		tmp.Format(_T("Couldn't start service: %s"),GetErrorString());
+#endif
 		AfxMessageBox(tmp,MB_ICONSTOP);
 	}
 	UpdateStatus();
@@ -209,7 +254,11 @@ void CserverPage::OnStop()
 	if(!ControlService(m_hService,SERVICE_CONTROL_STOP,&stat))
 	{
 		CString tmp;
+#ifdef JP_STRING
+		tmp.Format(_T("サービスが停止できません: %s"),GetErrorString());
+#else
 		tmp.Format(_T("Couldn't stop service: %s"),GetErrorString());
+#endif
 		AfxMessageBox(tmp,MB_ICONSTOP);
 	}
 	UpdateStatus();
@@ -237,7 +286,11 @@ void CserverPage::OnBnClickedStart2()
 	if(!StartService(m_hLockService,0,NULL))
 	{
 		CString tmp;
+#ifdef JP_STRING
+		tmp.Format(_T("サービスが開始できません: %s"),GetErrorString());
+#else
 		tmp.Format(_T("Couldn't start service: %s"),GetErrorString());
+#endif
 		AfxMessageBox(tmp,MB_ICONSTOP);
 	}
 	UpdateStatus();
@@ -251,7 +304,11 @@ void CserverPage::OnBnClickedStop2()
 	if(!ControlService(m_hLockService,SERVICE_CONTROL_STOP,&stat))
 	{
 		CString tmp;
+#ifdef JP_STRING
+		tmp.Format(_T("サービスが停止できません: %s"),GetErrorString());
+#else
 		tmp.Format(_T("Couldn't stop service: %s"),GetErrorString());
+#endif
 		AfxMessageBox(tmp,MB_ICONSTOP);
 	}
 	UpdateStatus();

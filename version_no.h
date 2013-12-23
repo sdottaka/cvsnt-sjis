@@ -44,6 +44,9 @@
 #else
 //#define CVSNT_SPECIAL_BUILD " (Prerelease "__DATE__")"
 #endif
+#ifdef SJIS
+#define CVSNT_SPECIAL_BUILD "(SJIS”Å-3)"
+#endif
 
 //////////////////////////////////////////////////////////////////////////
 // Preprocessor definitions (for version_no.h)

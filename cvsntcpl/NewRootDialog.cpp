@@ -56,7 +56,11 @@ void CNewRootDialog::OnSelect()
 	
 	SHGetSpecialFolderLocation(m_hWnd, CSIDL_DRIVES, &idlroot);
 	SHGetMalloc(&mal);
+#ifdef JP_STRING
+	BROWSEINFO bi = { m_hWnd, idlroot, fn, _T("リポジトリルートのフォルダを選択してください。"), BIF_NEWDIALOGSTYLE|BIF_STATUSTEXT|BIF_UAHINT|BIF_RETURNONLYFSDIRS|BIF_RETURNFSANCESTORS, BrowseValid };
+#else
 	BROWSEINFO bi = { m_hWnd, idlroot, fn, _T("Select folder for repository root."), BIF_NEWDIALOGSTYLE|BIF_STATUSTEXT|BIF_UAHINT|BIF_RETURNONLYFSDIRS|BIF_RETURNFSANCESTORS, BrowseValid };
+#endif
 	idl = SHBrowseForFolder(&bi);
 
 	mal->Free(idlroot);
@@ -87,41 +91,69 @@ void CNewRootDialog::OnOK()
 	shortfn[3]='\0';
 	if(_tcsnicmp(m_RepoPrefix,m_szRoot,m_RepoPrefix.GetLength()))
 	{
+#ifdef JP_STRING
+		AfxMessageBox(_T("全てのリポジトリは、現在のリポジトリプリフィックスを含んでいなければなりません。"));
+#else
 		AfxMessageBox(_T("All repositories must be within the current repository prefix"));
+#endif
 		return;
 	}
 	if(m_szRoot[0]!='/' && m_szRoot[1]!=':')
 	{
+#ifdef JP_STRING
+		AfxMessageBox(_T("パス名は、絶対パスで指定してください。"),MB_ICONSTOP|MB_OK);
+#else
 		AfxMessageBox(_T("You must specify an absolute root for the pathname"),MB_ICONSTOP|MB_OK);
+#endif
 		return;
 	}
 	if(m_szRoot[0]=='/' && m_szRoot[1]=='/')
 	{
+#ifdef JP_STRING
+		AfxMessageBox(_T("UNCパスをルートとして指定できません。"),MB_ICONSTOP|MB_OK);
+#else
 		AfxMessageBox(_T("You cannot use a UNC pathname for the root"),MB_ICONSTOP|MB_OK);
+#endif
 		return;
 	}
 	if(GetDriveType(shortfn)==DRIVE_REMOTE)
 	{
+#ifdef JP_STRING
+		AfxMessageBox(_T("リポジトリはローカルドライブ上にある必要があります。 ネットワークドライブは指定できません。"),MB_ICONSTOP|MB_OK);
+#else
 		AfxMessageBox(_T("You must store the repository on a local drive.  Network drives are not allowed"),MB_ICONSTOP|MB_OK);
+#endif
 		return;
 	}
 
 	DWORD dwStatus = GetFileAttributes(m_szRoot);
 	if(dwStatus==0xFFFFFFFF)
 	{
+#ifdef JP_STRING
+		tmp.Format(_T("%s は存在しません。 作成しますか?"),(LPCTSTR)m_szRoot);
+#else
 		tmp.Format(_T("%s does not exist.  Create it?"),(LPCTSTR)m_szRoot);
+#endif
 		if(AfxMessageBox(tmp,MB_ICONSTOP|MB_YESNO|MB_DEFBUTTON2)==IDNO)
 			return;
 		if(!CreateDirectory(m_szRoot,NULL))
 		{
+#ifdef JP_STRING
+			AfxMessageBox(_T("ディレクトリの作成に失敗しました。"),MB_ICONSTOP|MB_OK);
+#else
 			AfxMessageBox(_T("Couldn't create directory"),MB_ICONSTOP|MB_OK);
+#endif
 			return;
 		}
 		bCreated=true;
 	}
 	if(!bCreated && !(dwStatus&FILE_ATTRIBUTE_DIRECTORY))
 	{
+#ifdef JP_STRING
+		tmp.Format(_T("%s はディレクトリではありません。"),(LPCTSTR)m_szRoot);
+#else
 		tmp.Format(_T("%s is not a directory."),(LPCTSTR)m_szRoot);
+#endif
 		AfxMessageBox(tmp,MB_ICONSTOP|MB_OK);
 		return;
 	}
@@ -130,7 +162,11 @@ void CNewRootDialog::OnOK()
 	dwStatus = GetFileAttributes(tmp);
 	if(dwStatus==0xFFFFFFFF)
 	{
+#ifdef JP_STRING
+		tmp.Format(_T("%s は存在しますが、有効なCVSリポジトリではありません。\n\nそのディレクトリを初期化しますか?"),(LPCTSTR)m_szRoot);
+#else
 		tmp.Format(_T("%s exists, but is not a valid CVS repository.\n\nDo you want to initialise it?"),(LPCTSTR)m_szRoot);
+#endif
 		if(!bCreated && AfxMessageBox(tmp,MB_ICONQUESTION|MB_YESNO|MB_DEFBUTTON2)==IDNO)
 			return;
 		tmp.Format(_T("%scvs -d \"%s\" init"),(LPCTSTR)m_szInstallPath,(LPCTSTR)m_szRoot);
@@ -152,7 +188,11 @@ void CNewRootDialog::OnOK()
 		dwStatus = GetFileAttributes(tmp);
 		if(dwStatus==0xFFFFFFFF)
 		{
+#ifdef JP_STRING
+			tmp.Format(_T("リポジトリの初期化に失敗しました。 エラー内容は、次のコマンドを入力することで確認できます: \n\n%scvs -d %s init"),(LPCTSTR)m_szInstallPath,(LPCTSTR)m_szRoot);
+#else
 			tmp.Format(_T("Repository initialisation failed.  To see errors, type the following at the command line:\n\n%scvs -d %s init"),(LPCTSTR)m_szInstallPath,(LPCTSTR)m_szRoot);
+#endif
 			AfxMessageBox(tmp,MB_ICONSTOP|MB_OK);
 		}
 	}

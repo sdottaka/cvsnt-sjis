@@ -263,6 +263,9 @@ void cvsguiglue_flushconsole(int closeit)
 	\return The exit code
 	\note Detects whether the cvsgui protocol should be activated
 */
+#ifdef WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM
+#include "URI_encode.h"
+#endif /* WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM */
 #ifdef _UNICODE
 int real_main(int argc, char* argv[])
 #else
@@ -271,6 +274,10 @@ int main(int argc, char* argv[])
 {
 	int res;
 	char** tmparg = 0L;
+#ifdef WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM
+	int commandline_URI_encode = 0; /* bool, false */
+	int j;
+#endif /* WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM */
 
 	if( argc >= 4 && strcmp(argv[1], "-cvsgui") == 0 )
 	{
@@ -285,13 +292,36 @@ int main(int argc, char* argv[])
 
 		tmparg[0] = argv[0];
 
+#ifdef WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM
+		j = 4;
+#endif /* WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM */
 		for(i = 4; i < argc; i++)
 		{
+#ifdef WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM
+#if defined(_DEBUG) && defined(WIN32)
+			OutputDebugString(argv[i]), OutputDebugString("\n");
+#endif /* defined(_DEBUG) && defined(WIN32) */
+			if(!commandline_URI_encode && strcmp(argv[i], "--cvsgui-cmdline-encoded") == 0)
+			{
+				commandline_URI_encode = 1; /* true */
+			}
+			else
+			{
+				tmparg[j - 3] = commandline_URI_encode ? URI_decode(argv[i]) : argv[i];
+				j++;
+			}
+#else  /* WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM */
 			tmparg[i - 3] = argv[i];
+#endif /* WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM */
 		}
 
+#ifdef WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM
+		tmparg[argc - (3 + commandline_URI_encode)] = 0L;
+		argc -= (3 + commandline_URI_encode);
+#else  /* WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM */
 		tmparg[argc - 3] = 0L;
 		argc -= 3;
+#endif /* WINCVS_GOTTANI_TEMPORARILY_FIX_COMMANDLINE_PROBLEM */
 
 		cvs_process_init();
 		reopen_consoles();

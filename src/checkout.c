@@ -1127,7 +1127,11 @@ static char *findslash (char *start, char *p)
 {
     for (;;)
     {
+#ifdef SJIS
+		if (isslashmb(start,p)) return p;
+#else
 		if (isslash(*p)) return p;
+#endif
 		if (p == start) break;
 		--p;
     }

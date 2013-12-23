@@ -101,16 +101,32 @@ BOOL CAdvancedPage::OnInitDialog()
 
 	m_edTempDir.SetWindowText((LPCTSTR)buf);
 
+#ifdef JP_STRING
+	m_cbEncryption.ResetContent();
+	m_cbEncryption.SetItemData(m_cbEncryption.AddString(_T("任意")),0);
+	m_cbEncryption.SetItemData(m_cbEncryption.AddString(_T("依頼認証")),1);
+	m_cbEncryption.SetItemData(m_cbEncryption.AddString(_T("依頼暗号化")),2);
+	m_cbEncryption.SetItemData(m_cbEncryption.AddString(_T("強制認証")),3);
+	m_cbEncryption.SetItemData(m_cbEncryption.AddString(_T("強制暗号化")),4);
+#else
 	m_cbEncryption.ResetContent();
 	m_cbEncryption.SetItemData(m_cbEncryption.AddString(_T("Optional")),0);
 	m_cbEncryption.SetItemData(m_cbEncryption.AddString(_T("Request Authentication")),1);
 	m_cbEncryption.SetItemData(m_cbEncryption.AddString(_T("Request Encryption")),2);
 	m_cbEncryption.SetItemData(m_cbEncryption.AddString(_T("Require Authentication")),3);
 	m_cbEncryption.SetItemData(m_cbEncryption.AddString(_T("Require Encryption")),4);
+#endif
+#ifdef JP_STRING
+	m_cbCompression.ResetContent();
+	m_cbCompression.SetItemData(m_cbCompression.AddString(_T("任意")),0);
+	m_cbCompression.SetItemData(m_cbCompression.AddString(_T("依頼圧縮")),1);
+	m_cbCompression.SetItemData(m_cbCompression.AddString(_T("強制圧縮")),2);
+#else
 	m_cbCompression.ResetContent();
 	m_cbCompression.SetItemData(m_cbCompression.AddString(_T("Optional")),0);
 	m_cbCompression.SetItemData(m_cbCompression.AddString(_T("Request Compression")),1);
 	m_cbCompression.SetItemData(m_cbCompression.AddString(_T("Require Compression")),2);
+#endif
 
 	m_cbEncryption.SetCurSel((t=QueryDword(_T("EncryptionLevel")))>=0?t:0);
 	m_cbCompression.SetCurSel((t=QueryDword(_T("CompressionLevel")))>=0?t:0);
@@ -126,7 +142,11 @@ void CAdvancedPage::OnChangetemp()
 	
 	SHGetSpecialFolderLocation(m_hWnd, CSIDL_DRIVES, &idlroot);
 	SHGetMalloc(&mal);
+#ifdef JP_STRING
+	BROWSEINFO bi = { m_hWnd, idlroot, fn, _T("CVSが使用するテンポラリファイル格納フォルダを選択してください。  CVSを使用する全てユーザーが書き込めるフォルダを指定する必要があります。"), BIF_NEWDIALOGSTYLE|BIF_RETURNONLYFSDIRS|BIF_RETURNFSANCESTORS, BrowseValid };
+#else
 	BROWSEINFO bi = { m_hWnd, idlroot, fn, _T("Select folder for CVS temporary files.  This folder must be writeable by all users that wish to use CVS."), BIF_NEWDIALOGSTYLE|BIF_RETURNONLYFSDIRS|BIF_RETURNFSANCESTORS, BrowseValid };
+#endif
 	idl = SHBrowseForFolder(&bi);
 
 	mal->Free(idlroot);

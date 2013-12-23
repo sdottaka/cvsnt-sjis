@@ -26,6 +26,10 @@ extern "C" {
 
 #include <stdio.h>
 
+#ifdef SJIS
+#include <mbstring.h>
+#endif
+
 /* Under OS/2, <stdio.h> doesn't define popen()/pclose(). */
 #ifdef USE_OWN_POPEN
 #include "popen.h"
@@ -892,6 +896,9 @@ extern void server_error_exit();
 #ifdef _WIN32
 #define isslash(c) ((c=='/') || (c=='\\'))
 #define path_equal(a,b) (tolower(a)==tolower(b))
+#ifdef SJIS
+#define isslashmb(start,p) ( (*(p)=='/') || ((*(p)=='\\') && !_ismbstrail(start,p)) )
+#endif
 #else
 #define isslash(c) (c=='/')
 #define path_equal(a,b) (a==b)

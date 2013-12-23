@@ -185,7 +185,11 @@ OM_uint32 gss_display_name (
 		gss_buffer_t output_name_buffer,
 		gss_OID *output_name_type)
 {
+#ifdef SJIS
+	char *p = _mbschr(input_name,'\\');
+#else
 	char *p = strchr(input_name,'\\');
+#endif
 	if(!p) p=input_name;
 	// For now we just assume the name is a DOMAIN\user returned from QueryContextAttributes, above.
 	// This could be handled better...

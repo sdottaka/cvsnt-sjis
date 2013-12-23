@@ -1965,7 +1965,7 @@ merge_file (finfo, vers)
     copy_file (finfo->file, backup, 1, 1);
     xchmod (finfo->file, 1);
 
-	kf=RCS_get_kflags(options);
+	kf=RCS_get_kflags(vers->options);
     if ((kf&KFLAG_BINARY)
 		|| wrap_merge_is_copy (finfo->file)
 		|| special_file_mismatch (finfo, NULL, vers->vn_rcs))

@@ -140,8 +140,11 @@ ls(argc, argv)
 		{
 			char *mod = xstrdup(argv[i]);
 			char *p;
-
+#ifdef SJIS
+			for(p=_mbschr(mod,'\\'); p; p=_mbschr(p,'\\'))
+#else
 			for(p=strchr(mod,'\\'); p; p=strchr(p,'\\'))
+#endif
 				*p='/';
 
 			p = strrchr(mod,'/');

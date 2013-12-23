@@ -141,7 +141,11 @@ int main(int argc, char* argv[])
 char* basename(const char* str)
 {
 	char*p = ((char*)str)+strlen(str)-1;
+#ifdef SJIS
+	while(p>str && (*p!='\\' || _ismbstrail((unsigned char *)str, (unsigned char *)p)))
+#else
 	while(p>str && *p!='\\')
+#endif
 		p--;
 	if(p>str) return (p+1);
 	else return p;

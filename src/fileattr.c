@@ -257,7 +257,11 @@ fileattr_modify (list, attrname, attrval, namevalsep, entsep)
     if (list != NULL)
     {
 	while (1) {
-	    p2 = strchr (p, entsep);
+#ifdef SJIS
+		p2 = _mbschr (p, entsep);
+#else
+		p2 = strchr (p, entsep);
+#endif
 	    if (p2 == NULL)
 	    {
 		p2 = p + strlen (p);

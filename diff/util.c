@@ -387,6 +387,14 @@ printf_output (format, va_alist)
 	      break;
 	    case 'c':
 	      ch = va_arg (args, int);
+#ifdef SJIS
+	      if((unsigned int)ch > 0xFF) {
+		buf[0] = ch >> 8;
+		buf[1] = ch & 0xFF;
+		(*callbacks->write_output) (buf, 2);
+		break;
+	      }
+#endif
 	      buf[0] = ch;
 	      (*callbacks->write_output) (buf, 1);
 	      break;

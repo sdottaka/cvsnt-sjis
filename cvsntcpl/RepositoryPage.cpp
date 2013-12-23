@@ -262,7 +262,11 @@ void CRepositoryPage::OnChangeprefix()
 	
 	SHGetSpecialFolderLocation(m_hWnd, CSIDL_DRIVES, &idlroot);
 	SHGetMalloc(&mal);
+#ifdef JP_STRING
+	BROWSEINFO bi = { m_hWnd, idlroot, fn, _T("CVS プリフィックス ディレクトリを選択してください。"), BIF_NEWDIALOGSTYLE|BIF_RETURNONLYFSDIRS|BIF_RETURNFSANCESTORS, BrowseValid };
+#else
 	BROWSEINFO bi = { m_hWnd, idlroot, fn, _T("Select CVS prefix directory."), BIF_NEWDIALOGSTYLE|BIF_RETURNONLYFSDIRS|BIF_RETURNFSANCESTORS, BrowseValid };
+#endif
 	idl = SHBrowseForFolder(&bi);
 
 	mal->Free(idlroot);
