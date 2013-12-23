@@ -13,7 +13,15 @@
 #ifndef SCRAMBLE__H
 #define SCRAMBLE__H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 int pserver_decrypt_password(const char *str, char *s, int s_max);
 int pserver_crypt_password (const char *str, char *s, int s_max);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

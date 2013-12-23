@@ -16,10 +16,12 @@
 #include <config.h>
 #include "cvs.h"
 
+#include "..\cvsservice\ServiceMsg.h"
+static void ReportError(BOOL bError, LPCTSTR szError, ...);
+static void AddEventSource(LPCTSTR szService, LPCTSTR szModule);
+
 #include "..\protocols\protocol_interface.h"
 #include "library.h"
-
-typedef struct protocol_interface *(*tGPI)(const struct server_interface *server);
 
 static int server_get_config_data(const struct server_interface *server, const char *key, const char *value, char *buffer, int buffer_len);
 static int server_set_config_data(const struct server_interface *server, const char *key, const char *value, const char *buffer);
@@ -38,6 +40,8 @@ struct server_interface cvs_interface =
 	NULL, /* Current root */
 	NULL, /* Library directory */
 	NULL, /* cvs command */
+	0,	  /* Input FD */
+	1,	  /* Output FD */
 	
 	server_get_config_data,
 	server_set_config_data,
@@ -78,6 +82,11 @@ void setup_server_interface(cvsroot_t *root)
 	cvs_interface.library_dir = cvs_dir;
 	cvs_interface.cvs_command = cvs_command;
 	cvs_interface.current_root = root;
+	if(server_io_socket)
+	{
+		cvs_interface.in_fd = server_io_socket;
+		cvs_interface.out_fd = server_io_socket;
+	}
 }
 
 const struct protocol_interface *load_protocol(const char *protocol)
@@ -129,6 +138,7 @@ const struct protocol_interface *load_protocol(const char *protocol)
 		FreeLibrary(hLib);
 		return NULL;
 	}
+	proto_interface->name=xstrdup(protocol);
 	return proto_interface;
 }
 
@@ -137,6 +147,7 @@ int unload_protocol(const struct protocol_interface *protocol)
 	if(protocol)
 	{
 		protocol->destroy(protocol);
+		xfree(protocol->name);
 		FreeLibrary((HMODULE)protocol->__reserved);
 	}
 	return 0;
@@ -146,6 +157,10 @@ int server_get_config_data(const struct server_interface *server, const char *ke
 {
 	HKEY hKey,hSubKey;
 	DWORD dwType,dwLen,dw;
+
+	/* Special case for the 'cvspass' key */
+	if(!strcmp(key,"cvspass") && !get_cached_password(value,buffer,buffer_len))
+			return 0;
 
 	if(RegOpenKeyExA(HKEY_CURRENT_USER,"Software\\Cvsnt",0,KEY_READ,&hKey) &&
 	   RegCreateKeyExA(HKEY_CURRENT_USER,"Software\\Cvsnt",0,NULL,0,KEY_READ,NULL,&hKey,NULL))
@@ -222,6 +237,7 @@ int server_set_config_data(const struct server_interface *server, const char *ke
 
 int server_error(const struct server_interface *server, int fatal, const char *text)
 {
+	ReportError(fatal,"%s",text);
 	error(fatal,0,"%s",text);
 	return 0;
 }
@@ -436,3 +452,62 @@ int server_set_encrypted_channel(int encrypt)
         return 0;
 }
 
+void ReportError(BOOL bError, LPCTSTR szError, ...)
+{
+	static BOOL bEventSourceAdded = FALSE;
+	char buf[512];
+	const char *bufp = buf;
+	va_list va;
+	HANDLE hEvent;
+
+	va_start(va,szError);
+	vsprintf(buf,szError,va);
+	va_end(va);
+	if(!bEventSourceAdded)
+	{
+		char szModule[MAX_PATH];
+		GetModuleFileName(NULL,szModule,MAX_PATH);
+		AddEventSource("cvsnt",szModule);
+		bEventSourceAdded=TRUE;
+	}
+
+	hEvent = RegisterEventSource(NULL,  "cvsnt");
+	ReportEvent(hEvent,bError?EVENTLOG_ERROR_TYPE:EVENTLOG_INFORMATION_TYPE,0,MSG_STRING,NULL,1,0,&bufp,NULL);
+	DeregisterEventSource(hEvent);
+}
+
+void AddEventSource(LPCTSTR szService, LPCTSTR szModule)
+{
+	HKEY hk;
+	DWORD dwData;
+	char szKey[1024];
+
+	strcpy(szKey,"SYSTEM\\CurrentControlSet\\Services\\EventLog\\Application\\");
+	strcat(szKey,szService);
+
+    // Add your source name as a subkey under the Application 
+    // key in the EventLog registry key.  
+    if (RegCreateKey(HKEY_LOCAL_MACHINE, szKey, &hk))
+		return; // Fatal error, no key and no way of reporting the error!!!
+
+    // Add the name to the EventMessageFile subkey.  
+    if (RegSetValueEx(hk,             // subkey handle 
+            "EventMessageFile",       // value name 
+            0,                        // must be zero 
+            REG_EXPAND_SZ,            // value type 
+            (LPBYTE) szModule,           // pointer to value data 
+            (DWORD)strlen(szModule) + 1))       // length of value data 
+			return; // Couldn't set key
+
+    // Set the supported event types in the TypesSupported subkey.  
+    dwData = EVENTLOG_ERROR_TYPE | EVENTLOG_WARNING_TYPE | 
+        EVENTLOG_INFORMATION_TYPE;  
+    if (RegSetValueEx(hk,      // subkey handle 
+            "TypesSupported",  // value name 
+            0,                 // must be zero 
+            REG_DWORD,         // value type 
+            (LPBYTE) &dwData,  // pointer to value data 
+            sizeof(DWORD)))    // length of value data 
+			return; // Couldn't set key
+	RegCloseKey(hk); 
+} 

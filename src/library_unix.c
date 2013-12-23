@@ -18,9 +18,11 @@
 #include <pwd.h>
 #include <sys/types.h>
 
-#include "library.h"
+#ifdef HAVE_SYSLOG_H
+#include <syslog.h>
+#endif
 
-typedef struct protocol_interface *(*tGPI)(const struct server_interface *server);
+#include "library.h"
 
 static int server_get_config_data(const struct server_interface *server, const char *key, const char *value, char *buffer, int buffer_len);
 static int server_set_config_data(const struct server_interface *server, const char *key, const char *value, const char *buffer);
@@ -36,6 +38,8 @@ struct server_interface cvs_interface =
 	NULL, /* Current root */
 	NULL, /* Library directory */
 	NULL, /* cvs command */
+	0, /* Server input fd */
+	1, /* Server output fd */
 	
 	server_get_config_data,
 	server_set_config_data,
@@ -66,9 +70,9 @@ const struct protocol_interface *load_protocol(const char *protocol)
 	tGPI get_protocol_interface;
 	struct protocol_interface *proto_interface;
 
-	snprintf(fn,sizeof(fn),"%s/%s_protocol",CVS_LIBRARY_DIR,protocol);
+	snprintf(fn,sizeof(fn),"%s/%s_protocol",CVS_LIBRARY_DIR,PATCH_NULL(protocol));
 
-	TRACE(1,"Loading protocol %s",fn);
+	TRACE(1,"Loading protocol %s",PATCH_NULL(fn));
 
 	lt_dlinit();
 	handle = lt_dlopenext(fn);
@@ -86,6 +90,7 @@ const struct protocol_interface *load_protocol(const char *protocol)
 
 	proto_interface = get_protocol_interface(&cvs_interface);
 	proto_interface->__reserved=handle;
+	proto_interface->name = xstrdup(protocol);
 	return proto_interface;
 }
 
@@ -94,6 +99,7 @@ int unload_protocol(const struct protocol_interface *protocol)
 	if(protocol)
 	{
 		protocol->destroy(protocol);
+		xfree(protocol->name);
 		lt_dlclose((lt_dlhandle)protocol->__reserved);
 		lt_dlexit();
 	}
@@ -104,11 +110,11 @@ void get_config_file(const char *key, char *fn, int fnlen)
 {
   struct passwd *pw = getpwuid(getuid());
 
-  snprintf(fn,fnlen,"%s/.cvs",pw->pw_dir);
+  snprintf(fn,fnlen,"%s/.cvs",PATCH_NULL(pw->pw_dir));
   mkdir(fn,0777);
-  snprintf(fn,fnlen,"%s/.cvs/%s",pw->pw_dir,key);
+  snprintf(fn,fnlen,"%s/.cvs/%s",PATCH_NULL(pw->pw_dir),PATCH_NULL(key));
 
-  TRACE(1,"Config file name %s",fn);
+  TRACE(1,"Config file name %s",PATCH_NULL(fn));
 }
 
 int server_get_config_data(const struct server_interface *server, const char *key, const char *value, char *buffer, int buffer_len)
@@ -116,6 +122,10 @@ int server_get_config_data(const struct server_interface *server, const char *ke
 	char fn[512],line[1024];
 	FILE *f;
 	char *p;
+
+	/* Special case for the 'cvspass' key */
+	if(!strcmp(key,"cvspass") && !get_cached_password(value,buffer,buffer_len))
+			return 0;
 
 	get_config_file(key,fn,sizeof(fn));
 	f=fopen(fn,"r");
@@ -157,7 +167,7 @@ int server_set_config_data(const struct server_interface *server, const char *ke
 	  f=fopen(fn,"w");
 	  if(f==NULL)
 	  {
-		TRACE(1,"Couldn't create config file %s",fn);
+		TRACE(1,"Couldn't create config file %s",PATCH_NULL(fn));
 	    return -1;
 	  }
 	  if(buffer)
@@ -169,7 +179,7 @@ int server_set_config_data(const struct server_interface *server, const char *ke
 	o=fopen(fn2,"w");
 	if(o==NULL)
 	{
-      TRACE(1,"Couldn't create temporary file %s",fn2);
+      TRACE(1,"Couldn't create temporary file %s",PATCH_NULL(fn2));
 	  fclose(f);
 	  return -1;
 	}
@@ -209,6 +219,11 @@ int server_set_config_data(const struct server_interface *server, const char *ke
 
 int server_error(const struct server_interface *server, int fatal, const char *text)
 {
+	/* If an auth module reports a fatal error, we need to log it 
+           as the client probably won't see it */
+#ifdef HAVE_SYSLOG_H
+	syslog (LOG_DAEMON | (fatal?LOG_ERR:LOG_NOTICE), "%s", text);
+#endif
 	error(fatal,0,"%s",text);
 	return 0;
 }
@@ -221,7 +236,7 @@ const char *enumerate_protocols(int *context)
 
 	if(!*context)
 	{
-		snprintf(fn,sizeof(fn),"%s/*_protocol.so",CVS_LIBRARY_DIR);
+		snprintf(fn,sizeof(fn),"%s/*_protocol.la",CVS_LIBRARY_DIR);
 		globbuf.gl_offs = 0;
 		if(glob(fn,GLOB_ERR|GLOB_NOSORT,NULL,&globbuf))
 		  return NULL;
@@ -238,7 +253,7 @@ const char *enumerate_protocols(int *context)
 		}
 	}
 	strcpy(fn,globbuf.gl_pathv[(*context)-1]);
-	*strchr(fn,'_')='\0';
+	*strrchr(fn,'_')='\0';
 	p=strrchr(fn,'/');
 	return p?p+1:fn; 
 }
@@ -276,7 +291,7 @@ const struct protocol_interface *find_authentication_mechanism(const char *tagli
 
 void get_global_config_file(const char *key, char *fn, int fnlen)
 {
-  snprintf(fn,fnlen,"%s/%s",CVS_CONFIG_DIR,key);
+  snprintf(fn,fnlen,"%s/%s",CVS_CONFIG_DIR,PATCH_NULL(key));
 }
 
 int server_get_global_config_data(const struct server_interface *server, const char *key, const char *value, char *buffer, int buffer_len)

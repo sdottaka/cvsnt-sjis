@@ -56,6 +56,8 @@ version (argc, argv)
     if (argc == -1)
 	usage (version_usage);
 
+	if(server_active && fake_unix_cvs)
+		version_string = "Concurrent Versions System (CVS) 1.11.2";
 #ifdef CLIENT_SUPPORT
     if (current_parsed_root && current_parsed_root->isremote)
         (void) fputs ("Client: ", stdout);

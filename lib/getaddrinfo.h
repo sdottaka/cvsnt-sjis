@@ -1,9 +1,11 @@
 #ifndef _FAKE_GETADDRINFO_H
 #define _FAKE_GETADDRINFO_H
 
-#include "gai-errnos.h"
-
 #include <stdlib.h>
+
+#ifndef HAVE_GETADDRINFO
+
+#include "gai-errnos.h"
 
 # define AI_PASSIVE        1
 # define AI_CANONNAME      2
@@ -29,5 +31,7 @@ int getaddrinfo(const char *hostname, const char *servname,
 char *gai_strerror(int ecode);
 
 void freeaddrinfo(struct addrinfo *ai);
+
+#endif
 
 #endif /* _FAKE_GETADDRINFO_H */

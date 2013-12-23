@@ -1,6 +1,5 @@
 /* Code for the buffer data structure.  */
 
-#include <assert.h>
 #include "cvs.h"
 #include "buffer.h"
 

@@ -26,10 +26,6 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
-#ifndef MAX_PATH
-#define MAX_PATH 1024
-#endif
-
 #include "protocol_interface.h"
 #include "common.h"
 #include "scramble.h"
@@ -57,6 +53,7 @@ static void sserver_error(const char *txt, int err);
 
 static SSL *ssl;
 static SSL_CTX *ctx;
+static int error_state;
 
 #define SSERVER_INIT_STRING "SSERVER 1.0 READY\n"
 
@@ -71,7 +68,7 @@ struct protocol_interface sserver_protocol_interface =
 	sserver_destroy,
 
 	elemHostname, /* Required elements */
-	elemUsername|elemPassword|elemHostname|elemPort|elemTunnel, /* Valid elements */
+	elemUsername|elemPassword|elemHostname|elemPort|elemTunnel|flagAlwaysEncrypted, /* Valid elements */
 
 	NULL, /* validate */
 	sserver_connect,
@@ -97,6 +94,7 @@ struct protocol_interface sserver_protocol_interface =
 struct protocol_interface *get_protocol_interface(const struct server_interface *server)
 {
 	current_server = server;
+	error_state = 0;
 	return &sserver_protocol_interface;
 }
 
@@ -109,8 +107,11 @@ void sserver_destroy(const struct protocol_interface *protocol)
 	if(ssl)
 	{
 	  SSL_free (ssl);
-      	  SSL_CTX_free (ctx);
 	  ssl=NULL;
+	}
+	if(ctx)
+	{
+      SSL_CTX_free (ctx);
 	  ctx=NULL;
 	}
 }
@@ -127,7 +128,7 @@ int sserver_connect(const struct protocol_interface *protocol, int verify_only)
 	char certs[4096];
 	int strict = 0;
 
-	snprintf(certs,sizeof(certs),"%sca.pem",current_server->library_dir);
+	snprintf(certs,sizeof(certs),"%sca.pem",PATCH_NULL(current_server->library_dir));
 
 	if(current_server->current_root->optional_1)
 	{
@@ -209,7 +210,7 @@ int sserver_connect(const struct protocol_interface *protocol, int verify_only)
 	SSL_set_fd (ssl, get_tcp_fd());
     if((err=SSL_connect (ssl))<1)
 	{
-		sserver_error("SSL conneciton failed", err);
+		sserver_error("SSL connection failed", err);
 		return CVSPROTO_FAIL;
 	}
 
@@ -224,7 +225,7 @@ int sserver_connect(const struct protocol_interface *protocol, int verify_only)
 			break;
 		/* Fall through */
 		default:
-			server_error(1,"Server certificate verification failed (error %d)",err);
+			server_error(1,"Server certificate verification failed: %s ",X509_verify_cert_error_string(err));
 	}
 	
 	{
@@ -298,7 +299,7 @@ int sserver_auth_protocol_connect(const struct protocol_interface *protocol, con
 	char keyfile[1024];
 	char certs[4096];
 
-	snprintf(certs,sizeof(certs),"%sca.pem",current_server->library_dir);
+	snprintf(certs,sizeof(certs),"%sca.pem",PATCH_NULL(current_server->library_dir));
 
     if (!strcmp (auth_string, "BEGIN SSL VERIFICATION REQUEST"))
 		sserver_protocol_interface.verify_only = 1;
@@ -307,7 +308,7 @@ int sserver_auth_protocol_connect(const struct protocol_interface *protocol, con
 	else
 		return CVSPROTO_NOTME;
 
-	write(1,SSERVER_INIT_STRING,sizeof(SSERVER_INIT_STRING)-1);
+	write(current_server->out_fd,SSERVER_INIT_STRING,sizeof(SSERVER_INIT_STRING)-1);
 
 	if(current_server->get_global_config_data(current_server,"PServer","CertificateFile",certfile,sizeof(certfile)))
 		server_error(1,"Couldn't get certificate file");
@@ -336,11 +337,11 @@ int sserver_auth_protocol_connect(const struct protocol_interface *protocol, con
 
     ssl = SSL_new (ctx);
 #ifdef _WIN32 /* Win32 is stupid... */
-    SSL_set_rfd (ssl, _get_osfhandle(0));
-    SSL_set_wfd (ssl, _get_osfhandle(1));
+    SSL_set_rfd (ssl, _get_osfhandle(current_server->in_fd));
+    SSL_set_wfd (ssl, _get_osfhandle(current_server->out_fd));
 #else
-    SSL_set_rfd (ssl, 0);
-    SSL_set_wfd (ssl, 1);
+    SSL_set_rfd (ssl, current_server->in_fd);
+    SSL_set_wfd (ssl, current_server->out_fd);
 #endif
     if((err=SSL_accept(ssl))<1)
 	{
@@ -404,6 +405,9 @@ int sserver_set_user_password(const char *username, const char *server, const ch
 int sserver_read_data(const struct protocol_interface *protocol, void *data, int length)
 {
 	int r,e;
+	if(error_state)
+		return -1;
+
 	r=SSL_read(ssl,data,length);
 	switch(e=SSL_get_error(ssl,r))
 	{
@@ -412,6 +416,7 @@ int sserver_read_data(const struct protocol_interface *protocol, void *data, int
 		case SSL_ERROR_ZERO_RETURN:
 			return 0;
 		default:
+			error_state = 1;
 			sserver_error("Read data failed", e);
 			return -1;
 	}
@@ -420,6 +425,8 @@ int sserver_read_data(const struct protocol_interface *protocol, void *data, int
 int sserver_write_data(const struct protocol_interface *protocol, const void *data, int length)
 {
 	int offset=0,r,e;
+	if(error_state)
+		return -1;
 	while(length)
 	{	
 		r=SSL_write(ssl,((const char *)data)+offset,length);
@@ -432,6 +439,7 @@ int sserver_write_data(const struct protocol_interface *protocol, const void *da
 		case SSL_ERROR_WANT_WRITE:
 			break;
 		default:
+			error_state = 1;
 			sserver_error("Write data failed", e);
 			return -1;
 		}
@@ -495,5 +503,5 @@ void sserver_error(const char *txt, int err)
 {
 	char errbuf[1024];
 	ERR_error_string_n(ERR_get_error(), errbuf, sizeof(errbuf));
-	server_error(0, "%s: %s",txt,errbuf);
+	server_error(0, "%s (%d): %s",txt,err,errbuf);
 }

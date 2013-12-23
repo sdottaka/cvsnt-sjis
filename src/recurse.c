@@ -12,6 +12,7 @@
 #include "savecwd.h"
 #include "fileattr.h"
 #include "edit.h"
+#include <getline.h>
 
 static int do_dir_proc PROTO((Node * p, void *closure));
 static int do_file_proc PROTO((Node * p, void *closure));
@@ -21,12 +22,14 @@ static void addfile PROTO((List **listp, char *dir, char *file));
 
 static char *update_dir;
 static char *repository = NULL;
+static char *mapped_repository = NULL;
 static List *filelist = NULL; /* holds list of files on which to operate */
 static List *dirlist = NULL; /* holds list of directories on which to operate */
 
 struct recursion_frame {
     FILEPROC fileproc;
     FILESDONEPROC filesdoneproc;
+	PREDIRENTPROC predirentproc;
     DIRENTPROC direntproc;
     DIRLEAVEPROC dirleaveproc;
     void *callerdat;
@@ -77,7 +80,7 @@ verify_access (PERMPROC permproc, char *dir, char *update_dir, const char *tag)
         return 1;
 #endif
 
-    TRACE(3,"verify_access %s,%s,%s",dir,update_dir,tag);
+    TRACE(3,"verify_access %s,%s,%s",PATCH_NULL(dir),PATCH_NULL(update_dir),PATCH_NULL(tag));
     if (repository == NULL)
     {
 	/* If the repository is not already calculated, we have to figure
@@ -108,7 +111,7 @@ verify_access (PERMPROC permproc, char *dir, char *update_dir, const char *tag)
     }
     else
     {
-	retval = permproc (repository,tag);
+	retval = permproc (mapped_repository,tag);
     }
     return retval;
 }
@@ -118,19 +121,13 @@ verify_access (PERMPROC permproc, char *dir, char *update_dir, const char *tag)
    Command line arguments (ARGC, ARGV) dictate the directories and
    files on which we operate.  In the special case of no arguments, we
    default to ".".  */
-int
-start_recursion (fileproc, filesdoneproc, direntproc, dirleaveproc, callerdat,
-		 argc, argv, local, which, aflag, readlock,
-		 update_preload, dosrcs, permproc)
-    FILEPROC fileproc;
-    FILESDONEPROC filesdoneproc;
-    DIRENTPROC 	direntproc;
-    DIRLEAVEPROC dirleaveproc;
-    void *callerdat;
+int start_recursion (FILEPROC fileproc, FILESDONEPROC filesdoneproc,
+    PREDIRENTPROC predirentproc, DIRENTPROC direntproc, DIRLEAVEPROC dirleaveproc,
+    void *callerdat,
 
-    int argc;
-    char **argv;
-    int local;
+    int argc,
+    char **argv,
+    int local,
 
     /* This specifies the kind of recursion.  There are several cases:
 
@@ -153,13 +150,13 @@ start_recursion (fileproc, filesdoneproc, direntproc, dirleaveproc, callerdat,
        does not exist in the working directory, the direntproc must
        either tell us to skip it (R_SKIP_ALL), or must create it (I
        think those are the only two cases).  */
-    int which;
+    int which,
 
-    int aflag;
-    int readlock;
-    char *update_preload;
-    int dosrcs;
-    PERMPROC permproc;
+    int aflag,
+    int readlock,
+    char *update_preload,
+    int dosrcs,
+    PERMPROC permproc)
 {
     int i, err = 0;
 #ifdef CLIENT_SUPPORT
@@ -170,6 +167,7 @@ start_recursion (fileproc, filesdoneproc, direntproc, dirleaveproc, callerdat,
 
     frame.fileproc = fileproc;
     frame.filesdoneproc = filesdoneproc;
+	frame.predirentproc = predirentproc;
     frame.direntproc = direntproc;
     frame.dirleaveproc = dirleaveproc;
     frame.callerdat = callerdat;
@@ -194,13 +192,16 @@ start_recursion (fileproc, filesdoneproc, direntproc, dirleaveproc, callerdat,
     if (dirlist)
 	dellist (&dirlist);
 
-#ifdef SERVER_SUPPORT
-    if (server_active)
-    {
 	for (i = 0; i < argc; ++i)
-	    server_pathname_check (argv[i]);
-    }
+	{
+#ifdef SERVER_SUPPORT
+	    if (server_active)
+		    server_pathname_check (argv[i]);
+		else
 #endif
+			if(isabsolute(argv[i]))
+				error(1,0,"Absolute filenames not allowed");
+    }
 
     if (argc == 0)
     {
@@ -238,14 +239,14 @@ start_recursion (fileproc, filesdoneproc, direntproc, dirleaveproc, callerdat,
 	 */
 	if (just_subdirs)
 	{
-	    dirlist = Find_Directories ((char *) NULL, W_LOCAL, (List *) NULL);
+	    dirlist = Find_Directories ((char *) NULL, W_LOCAL, (List *) NULL, NULL);
 	    /* If there are no sub-directories, there is a certain logic in
 	       favor of doing nothing, but in fact probably the user is just
 	       confused about what directory they are in, or whether they
 	       cvs add'd a new directory.  In the case of at least one
 	       sub-directory, at least when we recurse into them we
 	       notice (hopefully) whether they are under CVS control.  */
-	    if (list_isempty (dirlist))
+	    if (list_isempty (dirlist) && !noexec)
 	    {
 		if (update_dir[0] == '\0')
 		    error (0, 0, "in directory .:");
@@ -270,7 +271,7 @@ start_recursion (fileproc, filesdoneproc, direntproc, dirleaveproc, callerdat,
                    function that duplicates a list. */
 		args_to_send_when_finished = Find_Directories ((char *) NULL,
 							       W_LOCAL,
-							       (List *) NULL);
+							       (List *) NULL, NULL);
 	    }
 #endif
 	}
@@ -298,7 +299,7 @@ start_recursion (fileproc, filesdoneproc, direntproc, dirleaveproc, callerdat,
 	/* if this argument is a directory, then add it to the list of
 	   directories. */
 
-	if (!wrap_name_has (argv[i], WRAP_TOCVS) && isdir (argv[i]))
+	if (isdir (argv[i]))
 	{
 	    strip_trailing_slashes (argv[i]);
 	    addlist (&dirlist, argv[i]);
@@ -313,7 +314,7 @@ start_recursion (fileproc, filesdoneproc, direntproc, dirleaveproc, callerdat,
 	    /* Now break out argv[i] into directory part (DIR) and file part (COMP).
 		   DIR and COMP will each point to a newly malloc'd string.  */
 	    dir = xstrdup (argv[i]);
-	    comp = last_component (dir);
+	    comp = (char*)last_component (dir);
 	    if (comp == dir)
 	    {
 		/* no dir component.  What we have is an implied "./" */
@@ -347,14 +348,14 @@ start_recursion (fileproc, filesdoneproc, direntproc, dirleaveproc, callerdat,
 			/* before we do anything else, see if we have any
 			   per-directory tags */
 
-			ParseTag_Dir (dir, &tag, &date, &nonbranch);
+			ParseTag_Dir (dir, &tag, &date, &nonbranch, NULL);
 			
 	        if (! verify_access (frame.permproc, dir, update_dir,tag))
 			{
-				if(tag)
-					error (0, 0, "User %s is unable to access %s on branch/tag %s",CVS_Username,dir,tag);
-				else
-					error (0, 0, "User %s is unable to access %s",CVS_Username,dir);
+				if(tag && !quiet && !(which&W_QUIET))
+					error (0, 0, "User %s is unable to access %s on branch/tag %s - ignoring",CVS_Username,dir,tag);
+				else if(!quiet && !(which&W_QUIET))
+					error (0, 0, "User %s is unable to access %s - ignoring",CVS_Username,dir);
 			}
 			else
 		{
@@ -392,7 +393,7 @@ start_recursion (fileproc, filesdoneproc, direntproc, dirleaveproc, callerdat,
 		    (void) sprintf (reposfile, "%s/%s", repos, comp);
 		    xfree (repos);
 
-		    if (!wrap_name_has (comp, WRAP_TOCVS) && isdir (reposfile))
+		    if (isdir (reposfile))
 			addlist (&dirlist, argv[i]);
 		    else
 			addfile (&files_by_dir, dir, comp);
@@ -404,7 +405,9 @@ start_recursion (fileproc, filesdoneproc, direntproc, dirleaveproc, callerdat,
 		    addfile (&files_by_dir, dir, comp);
 	    }
 	    else
-		error (1, 0, "no such directory `%s'", dir);
+		{
+			error (1, 0, "no such directory `%s'", dir);
+		}
 
 	    xfree (file_to_try);
 	    xfree (dir);
@@ -568,9 +571,7 @@ start_recursion (fileproc, filesdoneproc, direntproc, dirleaveproc, callerdat,
  * Implement the recursive policies on the local directory.  This may be
  * called directly, or may be called by start_recursion
  */
-static int
-do_recursion (frame)
-    struct recursion_frame *frame;
+static int do_recursion (struct recursion_frame *frame)
 {
     int err = 0;
     int dodoneproc = 1;
@@ -584,38 +585,6 @@ do_recursion (frame)
 	return (0);
 
     should_readlock = noexec ? 0 : frame->readlock;
-
-    /* The fact that locks are not active here is what makes us fail to have
-       the
-
-           If someone commits some changes in one cvs command,
-	   then an update by someone else will either get all the
-	   changes, or none of them.
-
-       property (see node Concurrency in cvs.texinfo).
-
-       The most straightforward fix would just to readlock the whole
-       tree before starting an update, but that means that if a commit
-       gets blocked on a big update, it might need to wait a *long*
-       time.
-
-       A more adequate fix would be a two-pass design for update,
-       checkout, etc.  The first pass would go through the repository,
-       with the whole tree readlocked, noting what versions of each
-       file we want to get.  The second pass would release all locks
-       (except perhaps short-term locks on one file at a
-       time--although I think RCS already deals with this) and
-       actually get the files, specifying the particular versions it wants.
-
-       This could be sped up by separating out the data needed for the
-       first pass into a separate file(s)--for example a file
-       attribute for each file whose value contains the head revision
-       for each branch.  The structure should be designed so that
-       commit can relatively quickly update the information for a
-       single file or a handful of files (file attributes, as
-       implemented in Jan 96, are probably acceptable; improvements
-       would be possible such as branch attributes which are in
-       separate files for each branch).  */
 
     /* Check the value in CVSADM_ROOT and see if it's in the list.  If
        not, add it to our lists of CVS/Root directories and do not
@@ -657,7 +626,7 @@ do_recursion (frame)
 	    }
 	
 	    process_this_directory =
-		    (strcmp (current_parsed_root->original, this_root) == 0);
+		    (pathcmp (current_parsed_root->original, this_root) == 0);
 
 	    xfree (this_root);
 	}
@@ -675,42 +644,48 @@ do_recursion (frame)
     }
     else
     {
-	repository = xgetwd ();
-	if (repository == NULL)
-	    error (1, errno, "could not get working directory");
-#ifdef _WIN32
-	win32ize_root(repository);
-#endif
+		repository = xmalloc(strlen(current_parsed_root->directory)+strlen(update_dir)+10);
+		sprintf(repository,"%s/%s",current_parsed_root->directory,update_dir);
     }
+
+	if(!current_parsed_root->isremote)
+		repository = normalize_path(repository);
+	if(repository && ISDIRSEP(repository[strlen(repository)-1]))
+		repository[strlen(repository)-1]='\0';
     srepository = repository;		/* remember what to free */
-	repository = real_dir_name(repository);
+
+	if(repository && (server_active || !current_parsed_root->isremote))
+	{
+		mapped_repository = map_repository(repository);
+	}
+	else
+	{
+		mapped_repository=xstrdup(repository);
+	}
+
+	TRACE(3,"Repository = %s",PATCH_NULL(repository));
+	TRACE(3,"Mapped repository = %s",PATCH_NULL(mapped_repository));
 
     /*
      * Do we have access to this directory?
      */
-	if(repository)
+	if(repository && (server_active || !current_parsed_root->isremote))
 	{
 		char *tag;
-		char *date;
-		int nonbranch;
 
-#ifdef CLIENT_SUPPORT
-		if(!current_parsed_root->isremote && !server_active)
-#endif
-		    lock_crashrecover(repository);
+		ParseTag(&tag, NULL, NULL, NULL);
 
-		/* before we do anything else, see if we have any
-		   per-directory tags */
-		ParseTag (&tag, &date, &nonbranch);
-		if (! verify_access (frame->permproc, NULL, repository,tag))
+		if (! verify_access (frame->permproc, NULL, mapped_repository,tag))
 		{
 			if(tag)
 			   error (0, 0, "User '%s' cannot access %s on tag/branch %s", CVS_Username, fn_root(repository), tag);
 			else
-			   error (0, 0, "User '%s' cannot access %s", CVS_Username, fn_root(repository));		   return (1);
+			   error (0, 0, "User '%s' cannot access %s", CVS_Username, fn_root(repository));
+		        return (1);
 		}
+	    fileattr_startdir (mapped_repository);
+		xfree(tag);
 	}
-    fileattr_startdir (repository);
 
     /*
      * The filesdoneproc needs to be called for each directory where files
@@ -721,7 +696,7 @@ do_recursion (frame)
      * we were called with no args
      */
     if (dirlist != NULL && filelist == NULL)
-	dodoneproc = 0;
+		dodoneproc = 0;
 
     /*
      * If filelist or dirlist is already set, we don't look again. Otherwise,
@@ -747,39 +722,46 @@ do_recursion (frame)
 	       repository at this point.  Name_Repository will give a
 	       reasonable error message.  */
 	    if (repository == NULL)
+		{
 			repository = Name_Repository ((char *) NULL, update_dir);
+		}
+		if(mapped_repository == NULL)
+			mapped_repository = map_repository(repository);
 
 	    /* find the files and fill in entries if appropriate */
 	    if (process_this_directory)
 	    {
-		filelist = Find_Names (repository, lwhich, frame->aflag,
-				       &entries);
-		if (filelist == NULL)
-		{
-		    error (0, 0, "skipping directory %s", update_dir);
-		    /* Note that Find_Directories and the filesdoneproc
-		       in particular would do bad things ("? foo.c" in
-		       the case of some filesdoneproc's).  */
-		    goto skip_directory;
-		}
+			filelist = Find_Names (mapped_repository, lwhich, frame->aflag,
+						&entries, repository);
+			if (filelist == NULL)
+			{
+				error (0, 0, "skipping directory %s", update_dir);
+				/* Note that Find_Directories and the filesdoneproc
+				in particular would do bad things ("? foo.c" in
+				the case of some filesdoneproc's).  */
+				goto skip_directory;
+			}
 	    }
 	}
+
+	if (frame->flags == R_SKIP_DIRS && !(frame->which&W_LOCAL) && nonrecursive_module(repository))
+		frame->flags = R_SKIP_DIRS;
 
 	/* find sub-directories if we will recurse */
 	if (frame->flags != R_SKIP_DIRS)
 	    dirlist = Find_Directories (
-		process_this_directory ? repository : NULL,
-		frame->which, entries);
+		process_this_directory ? mapped_repository : NULL,
+		frame->which, entries, repository);
     }
     else
     {
-	/* something was passed on the command line */
-	if (filelist != NULL && frame->fileproc != NULL)
-	{
-	    /* we will process files, so pre-parse entries */
-	    if (frame->which & W_LOCAL)
-		entries = Entries_Open (frame->aflag, NULL);
-	}
+		/* something was passed on the command line */
+		if (filelist != NULL && frame->fileproc != NULL)
+		{
+			/* we will process files, so pre-parse entries */
+			if (frame->which & W_LOCAL)
+				entries = Entries_Open (frame->aflag, NULL);
+		}
     }
 
     /* process the files (if any) */
@@ -789,7 +771,7 @@ do_recursion (frame)
 	struct frame_and_file frfile;
 
 	/* read lock it if necessary */
-	if (should_readlock && repository && Reader_Lock (repository) != 0)
+	if (should_readlock && mapped_repository && Reader_Lock (mapped_repository) != 0)
 	    error (1, 0, "read lock failed - giving up");
 
 #ifdef CLIENT_SUPPORT
@@ -801,9 +783,10 @@ do_recursion (frame)
 	    notify_check (repository, update_dir);
 #endif /* CLIENT_SUPPORT */
 
-	finfo_struct.repository = repository;
+	finfo_struct.repository = mapped_repository;
 	finfo_struct.update_dir = update_dir;
 	finfo_struct.entries = entries;
+	finfo_struct.virtual_repository = repository;
 	/* do_file_proc will fill in finfo_struct.file.  */
 
 	frfile.finfo = &finfo_struct;
@@ -814,7 +797,7 @@ do_recursion (frame)
 
 	/* unlock it */
 	if (should_readlock)
-	    Lock_Cleanup ();
+	    Lock_Cleanup_Directory();
 
 	/* clean up */
 	dellist (&filelist);
@@ -822,13 +805,16 @@ do_recursion (frame)
 
     /* call-back files done proc (if any) */
     if (process_this_directory && dodoneproc && frame->filesdoneproc != NULL)
-	err = frame->filesdoneproc (frame->callerdat, err, repository,
+	err = frame->filesdoneproc (frame->callerdat, err, mapped_repository,
 				    update_dir[0] ? update_dir : ".",
 				    entries);
 
  skip_directory:
-    fileattr_write ();
-    fileattr_free ();
+	if(repository && (server_active || !current_parsed_root->isremote))
+	{
+		fileattr_write ();
+		fileattr_free ();
+	}
 
     /* process the directories (if necessary) */
     if (dirlist != NULL)
@@ -849,6 +835,8 @@ do_recursion (frame)
 
     /* free the saved copy of the pointer if necessary */
 	xfree (srepository);
+	xfree (mapped_repository);
+	repository = NULL;
 
     return (err);
 }
@@ -856,17 +844,28 @@ do_recursion (frame)
 /*
  * Process each of the files in the list with the callback proc
  */
-static int
-do_file_proc (p, closure)
-    Node *p;
-    void *closure;
+static int do_file_proc (Node *p, void *closure)
 {
     struct frame_and_file *frfile = (struct frame_and_file *)closure;
     struct file_info *finfo = frfile->finfo;
     int ret;
 	Entnode *e;
+	const char *mapped_name;
+	const char *mapped_file_repository = NULL;
 
-    finfo->file = p->key;
+	if(server_active || !current_parsed_root->isremote)
+		mapped_name = map_filename(finfo->virtual_repository, p->key, &mapped_file_repository);
+	else
+		mapped_name = xstrdup(p->key);
+
+	if(!mapped_name) /* Deleted file */
+	{
+		TRACE(3,"%s deleted by filename mapping",PATCH_NULL(p->key));
+	}
+
+	finfo->file = p->key;
+	finfo->mapped_file = mapped_name;
+
     finfo->fullname = xmalloc (strlen (finfo->file)
 			       + strlen (finfo->update_dir)
 			       + 2);
@@ -878,9 +877,9 @@ do_file_proc (p, closure)
     }
     strcat (finfo->fullname, finfo->file);
 
-    if (frfile->frame->dosrcs && repository)
+    if (frfile->frame->dosrcs && mapped_file_repository)
     {
-	finfo->rcs = RCS_parse (finfo->file, repository);
+	finfo->rcs = RCS_parse (finfo->mapped_file, mapped_file_repository);
 
 	/* OK, without W_LOCAL the error handling becomes relatively
 	   simple.  The file names came from readdir() on the
@@ -907,9 +906,9 @@ do_file_proc (p, closure)
 
 		if (! verify_access (frfile->frame->permproc, finfo->update_dir, finfo->repository, e->tag))
 		{
-			if(e->tag)
+			if(e->tag && !quiet && !(frfile->frame->which&W_QUIET))
 				error (0, 0, "User %s is unable to access %s on branch/tag %s",CVS_Username,finfo->file,e->tag);
-			else
+			else if(!quiet && !(frfile->frame->which&W_QUIET))
 				error (0, 0, "User %s is unable to access %s",CVS_Username,finfo->file);
 			ret = 1;
 		}
@@ -921,6 +920,8 @@ do_file_proc (p, closure)
 
     freercsnode(&finfo->rcs);
     xfree (finfo->fullname);
+	xfree (mapped_name);
+	xfree (mapped_file_repository);
 
     /* Allow the user to monitor progress with tail -f.  Doing this once
        per file should be no big deal, but we don't want the performance
@@ -933,26 +934,27 @@ do_file_proc (p, closure)
 /*
  * Process each of the directories in the list (recursing as we go)
  */
-static int
-do_dir_proc (p, closure)
-    Node *p;
-    void *closure;
+static int do_dir_proc (Node *p, void *closure)
 {
     struct frame_and_entries *frent = (struct frame_and_entries *) closure;
     struct recursion_frame *frame = frent->frame;
     struct recursion_frame xframe;
     char *dir = p->key;
-    char *newrepos;
+    char *newrepos, *virtrepos;
     List *sdirlist;
     char *srepository;
+	char *smapped_repository;
     Dtype dir_return = R_PROCESS;
+	Dtype hint;
     int stripped_dot = 0;
     int err = 0;
     struct saved_cwd cwd;
     char *saved_update_dir;
     int process_this_directory = 1;
+	int directory_opened = 0;
 
-    if (fncmp (dir, CVSADM) == 0)
+    if (fncmp (dir, CVSADM) == 0
+		|| fncmp (dir, CVSDUMMY) == 0)
     {
 	/* This seems to most often happen when users (beginning users,
 	   generally), try "cvs ci *" or something similar.  On that
@@ -977,9 +979,7 @@ do_dir_proc (p, closure)
 	{
 	    error (0, 0, "warning: directory %s specified in argument",
 		   dir);
-	    error (0, 0, "\
-but CVS uses %s for its own purposes; skipping %s directory",
-		   CVSADM, dir);
+	    error (0, 0, "but CVS uses %s for its own purposes; skipping %s directory", dir, dir);
 	    printed_cvs_msg = 1;
 	}
 	return 0;
@@ -1010,11 +1010,23 @@ but CVS uses %s for its own purposes; skipping %s directory",
 	 * update -d and in that case the generated name will be correct.
 	 */
 	if (repository == NULL)
+	{
 	    newrepos = xstrdup ("");
+		virtrepos = xstrdup ("");
+	}
 	else
 	{
-	    newrepos = xmalloc (strlen (repository) + strlen (dir) + 5);
-	    sprintf (newrepos, "%s/%s", repository, dir);
+	    virtrepos = xmalloc (strlen (repository) + strlen (dir) + 5);
+	    sprintf (virtrepos, "%s/%s", repository, dir);
+		virtrepos = normalize_path(virtrepos);
+		if(server_active || !current_parsed_root->isremote)
+		{
+			newrepos = map_repository(virtrepos);
+			if(!newrepos)
+				error(1,0,"Internal error - couldn't map %s to anything",virtrepos);
+		}
+		else
+			newrepos = xstrdup(virtrepos);
 	}
     }
     else
@@ -1023,9 +1035,15 @@ but CVS uses %s for its own purposes; skipping %s directory",
 	    (void) strcpy (update_dir, dir);
 
 	if (repository == NULL)
+	{
 	    newrepos = xstrdup ("");
+		virtrepos = xstrdup ("");
+	}
 	else
-	    newrepos = xstrdup (repository);
+	{
+	    newrepos = xstrdup (mapped_repository);
+		virtrepos = xstrdup (repository);
+	}
     }
 
 	/* Check to see that the CVSADM directory, if it exists, seems to be
@@ -1116,7 +1134,7 @@ but CVS uses %s for its own purposes; skipping %s directory",
 
 	    }
 
-	    process_this_directory = (strcmp (current_parsed_root->original, this_root) == 0);
+	    process_this_directory = (pathcmp (current_parsed_root->original, this_root) == 0);
 
 	    xfree (this_root);
 	}
@@ -1124,6 +1142,7 @@ but CVS uses %s for its own purposes; skipping %s directory",
     /*
      * Do we have access to this directory?
      */
+	if(server_active || !current_parsed_root->isremote)
 	{
 		char *tag;
 		char *date;
@@ -1131,8 +1150,8 @@ but CVS uses %s for its own purposes; skipping %s directory",
 
 		/* before we do anything else, see if we have any
 		   per-directory tags */
-		ParseTag (&tag, &date, &nonbranch);
-		if (! verify_access (frame->permproc, NULL, repository,tag))
+		ParseTag (&tag, &date, &nonbranch, NULL);
+		if (! verify_access (frame->permproc, NULL, mapped_repository,tag))
 		{
 			if(tag)
 			   error (0, 0, "User '%s' cannot access %s on tag/branch %s", CVS_Username, fn_root(repository), tag);
@@ -1142,8 +1161,53 @@ but CVS uses %s for its own purposes; skipping %s directory",
 		}
 	}
 
-    /* call-back dir entry proc (if any) */
-    if (dir_return == R_SKIP_ALL)
+	if(dir_return!=R_SKIP_ALL)
+	{
+		/* Generic behavior.  I don't see a reason to make the caller specify
+		a direntproc just to get this.  */
+		if ((frame->which & W_LOCAL))
+		{
+			if(!isdir (dir))
+				hint = R_SKIP_ALL;
+			else
+				hint = R_PROCESS;
+		}
+		else if(!isdir(newrepos))
+			hint = R_SKIP_ALL;
+		else
+			hint = R_PROCESS;
+	}
+
+    if (dir_return == R_SKIP_ALL || dir_return == R_ERROR)
+	;
+    else
+	{
+		char *version;
+		char *tag;
+		char *date;
+		int nonbranch;
+
+		if (frame->predirentproc != NULL)
+		{
+			if(frame->predirentproc != NULL)
+			{
+				frame->predirentproc (frame->callerdat, dir, newrepos,
+								update_dir, frent->entries, virtrepos, hint);
+			}
+		}
+
+		/* before we do anything else, see if we have any
+			per-directory tags */
+		ParseTag_Dir (dir, &tag, &date, &nonbranch, &version);
+		open_directory(newrepos,dir,tag,date,nonbranch,version,current_parsed_root->isremote);
+		directory_opened = 1;
+		xfree(version);
+		xfree(tag);
+		xfree(date);
+	}
+
+	/* call-back dir entry proc (if any) */
+    if (dir_return == R_SKIP_ALL || dir_return == R_ERROR)
 	;
     else if (frame->direntproc != NULL)
     {
@@ -1153,7 +1217,7 @@ but CVS uses %s for its own purposes; skipping %s directory",
 
 	if (process_this_directory)
 	    dir_return = frame->direntproc (frame->callerdat, dir, newrepos,
-					    update_dir, frent->entries);
+					    update_dir, frent->entries, virtrepos, hint);
 	else
 	    dir_return = R_PROCESS;
     }
@@ -1161,61 +1225,83 @@ but CVS uses %s for its own purposes; skipping %s directory",
     {
 	/* Generic behavior.  I don't see a reason to make the caller specify
 	   a direntproc just to get this.  */
-	if ((frame->which & W_LOCAL) && !isdir (dir))
-	    dir_return = R_SKIP_ALL;
+		dir_return = hint;
     }
-
-    xfree (newrepos);
 
     /* only process the dir if the return code was 0 */
-    if (dir_return != R_SKIP_ALL)
+    if (dir_return != R_SKIP_ALL && dir_return !=R_ERROR)
     {
-	/* save our current directory and static vars */
+		/* save our current directory and static vars */
         if (save_cwd (&cwd))
-	    error_exit ();
-	sdirlist = dirlist;
-	srepository = repository;
-	dirlist = NULL;
+			error_exit ();
 
-	/* cd to the sub-directory */
-	if ( CVS_CHDIR (dir) < 0)
-	    error (1, errno, "could not chdir to %s", dir);
+		sdirlist = dirlist;
+		srepository = repository;
+		smapped_repository = mapped_repository;
+		dirlist = NULL;
 
-	/* honor the global SKIP_DIRS (a.k.a. local) */
-	if (frame->flags == R_SKIP_DIRS)
-	    dir_return = R_SKIP_DIRS;
+		/* cd to the sub-directory */
+		if (!(frame->which&W_LOCAL))
+		{
+			if ( CVS_CHDIR (newrepos) < 0)
+			{
+				error (1, errno, "could not chdir to %s", fn_root(newrepos));
+			}
+		}
+		else
+		{
+			if ( CVS_CHDIR (dir) < 0)
+			{
+				error (1, errno, "could not chdir to %s", fn_root(newrepos));
+			}
+		}
 
-	/* remember if the `.' will be stripped for subsequent dirs */
-	if (strcmp (update_dir, ".") == 0)
-	{
-	    update_dir[0] = '\0';
-	    stripped_dot = 1;
-	}
+		/* honor the global SKIP_DIRS (a.k.a. local) */
+		if (frame->flags == R_SKIP_DIRS)
+			dir_return = R_SKIP_DIRS;
 
-	/* make the recursive call */
-	xframe = *frame;
-	xframe.flags = dir_return;
-	err += do_recursion (&xframe);
+		/* remember if the `.' will be stripped for subsequent dirs */
+		if (strcmp (update_dir, ".") == 0)
+		{
+			update_dir[0] = '\0';
+			stripped_dot = 1;
+		}
 
-	/* put the `.' back if necessary */
-	if (stripped_dot)
-	    (void) strcpy (update_dir, ".");
+		/* make the recursive call */
+		xframe = *frame;
+		xframe.flags = dir_return;
+		err += do_recursion (&xframe);
 
-	/* call-back dir leave proc (if any) */
-	if (process_this_directory && frame->dirleaveproc != NULL)
-	    err = frame->dirleaveproc (frame->callerdat, dir, err, update_dir,
-				       frent->entries);
+		/* put the `.' back if necessary */
+		if (stripped_dot)
+			(void) strcpy (update_dir, ".");
 
-	/* get back to where we started and restore state vars */
-	if (restore_cwd (&cwd, NULL))
-	    error_exit ();
-	free_cwd (&cwd);
-	dirlist = sdirlist;
-	repository = srepository;
+		/* call-back dir leave proc (if any) */
+		if (process_this_directory && frame->dirleaveproc != NULL)
+			err = frame->dirleaveproc (frame->callerdat, dir, err, update_dir,
+						frent->entries);
+
+		if(directory_opened)
+			close_directory();
+
+		/* get back to where we started and restore state vars */
+		if (restore_cwd (&cwd, NULL))
+			error_exit ();
+		free_cwd (&cwd);
+		dirlist = sdirlist;
+		repository = srepository;
+		mapped_repository = smapped_repository;
     }
-
+	else if(directory_opened)
+		close_directory();
+    
+    xfree (newrepos);
+	xfree (virtrepos);
     xfree (update_dir);
     update_dir = saved_update_dir;
+
+	if(dir_return == R_ERROR)
+		err++;
 
     return (err);
 }
@@ -1309,7 +1395,28 @@ unroll_files_proc (p, closure)
 	(void) strcat (update_dir, dir);
     }
 
+
+	if(frame->which&W_LOCAL)
+	{
+		char *version;
+		char *tag;
+		char *date;
+		int nonbranch;
+		char *repository = Name_Repository(NULL,update_dir);
+
+		ParseTag_Dir (dir, &tag, &date, &nonbranch, &version);
+		open_directory(repository,dir,tag,date,nonbranch,version,current_parsed_root->isremote);
+		xfree(repository);
+		xfree(version);
+		xfree(tag);
+		xfree(date);
+	}
+	else
+		open_directory(NULL,dir,NULL,NULL,0,NULL,1); /* We want to open the directory anyway, so treat it as 'remote'.  This only affects rlog, etc. */
+
     err += do_recursion (frame);
+
+	close_directory();
 
     if (save_update_dir != NULL)
     {

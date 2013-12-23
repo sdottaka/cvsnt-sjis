@@ -10,19 +10,36 @@
 #include <share.h>
 
 #define WIN32_LEAN_AND_MEAN
-#define _WIN32_WINNT 0x0400
+#define _WIN32_WINNT 0x0500
+#define WIN32_NO_STATUS
 #include <windows.h>
+#undef WIN32_NO_STATUS
+#include <ntstatus.h>
 #include <lm.h>
 #include <lmcons.h>
 #include <winsock.h>
 #include <dbghelp.h>
 #include <objbase.h>
+#include <ntdsapi.h>
+#include <dsgetdc.h>
 
 #include <config.h>
 #include <stdlib.h>
 #include <process.h>
+#include <winternl.h>
+#define _NTDEF_
 #include <ntsecapi.h>
 #include <tchar.h>
+
+#ifndef CVS95
+#include "sid.h"
+static MAKE_SID1(sidEveryone, 1, 0);
+#endif
+
+/* MS BUG:  DNLEN hasn't been maintained so when you're on a legacy-free win2k domain
+    you can apparently get a domain that's >DNLEN in size */
+#undef DNLEN
+#define DNLEN 256
 
 #include "cvs.h"
 #include "library.h"
@@ -31,8 +48,10 @@
 #include "../version_no.h"
 
 #ifdef SERVER_SUPPORT
-void nt_setuid_init(); 
-int nt_setuid(LPCTSTR szMachine, LPCTSTR szUser);
+void nt_setuid_init();
+int nt_setuid(LPCWSTR szMachine, LPCWSTR szUser, HANDLE *phToken);
+int nt_s4u(LPCWSTR wszMachine, LPCWSTR wszUser, HANDLE *phToken);
+#include "setuid/libsuid/suid.h"
 #endif
 
 /* Try to work out if this is a GMT FS.  There is probably
@@ -43,6 +62,8 @@ int nt_setuid(LPCTSTR szMachine, LPCTSTR szUser);
 #ifndef CVS95
 ITypeLib *myTypeLib;
 #endif
+
+int bIsWin95, bIsNt4, bIsWin2k;
 
 static const char *current_username=NULL;
 #ifdef SERVER_SUPPORT
@@ -112,7 +133,7 @@ static struct { DWORD err; int dos;} errors[] =
 typedef struct {
         long osfhnd;
         char osfile;
-        char pipech;    
+        char pipech;
 #ifdef _MT
         int lockinitflag;
         CRITICAL_SECTION lock;
@@ -133,7 +154,7 @@ extern __declspec(dllimport) ioinfo * __pioinfo[];
 #define FDEV            0x40    /* file handle refers to device */
 #define FTEXT           0x80    /* file handle is in text mode */
 
-static const WORD month_len [12] = 
+static const WORD month_len [12] =
 {
     31, /* Jan */
     28, /* Feb */
@@ -153,7 +174,7 @@ static const WORD month_len [12] =
     static const ULONGLONG systemtime_second = 10000000L;
 
 // IsDomainMember patch from John Anderson <panic@semiosix.com>
-int isDomainMember();
+int isDomainMember(wchar_t *wszDomain);
 
 typedef BOOL (WINAPI *MINIDUMPWRITEDUMP)(
     IN HANDLE hProcess,
@@ -165,6 +186,8 @@ typedef BOOL (WINAPI *MINIDUMPWRITEDUMP)(
     IN CONST PMINIDUMP_CALLBACK_INFORMATION CallbackParam OPTIONAL
     );
 static LONG WINAPI MiniDumper(PEXCEPTION_POINTERS pExceptionInfo);
+
+static int use_ntsec, use_ntea;
 
 static int tcp_init()
 {
@@ -186,8 +209,10 @@ static int tcp_close()
 
 void win32init(int mode)
 {
-#ifdef SERVER_SUPPORT
+	OSVERSIONINFO osv;
 	char buffer[1024];
+
+#ifdef SERVER_SUPPORT
 
 	impersonate = 1;
 	force_local_machine = 0;
@@ -198,6 +223,15 @@ void win32init(int mode)
 	if(!get_global_config_data("PServer","DontUseDomain",buffer,sizeof(buffer)))
 		force_local_machine = atoi(buffer);
 #endif
+
+	osv.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
+	GetVersionEx(&osv);
+	if (osv.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS)
+		bIsWin95 = 1;
+	else if(osv.dwMajorVersion==4)
+		bIsNt4=1;
+	else
+		bIsWin2k=1;
 
 	_tzset(); // Set the timezone from the system, or 'TZ' if specified.
 
@@ -221,6 +255,39 @@ void win32init(int mode)
 		nt_setuid_init();
 #endif
 
+	/* Cygwin default nsec is on, ntea is off */
+	/* We default ntea for minimum impact at the client side.  The CYGWIN variable
+	   will override this for us */
+	use_ntsec = 0;
+	use_ntea = 1;
+
+	if(GetEnvironmentVariable("CYGWIN",buffer,sizeof(buffer)))
+	{
+		if(strstr(buffer,"ntsec"))
+		{ 
+			use_ntsec = !strstr(buffer,"nontsec");
+			if(use_ntsec) use_ntea=0;
+		}
+		if(strstr(buffer,"ntea"))
+		{
+			use_ntea = !strstr(buffer,"nontea");
+			if(use_ntea) use_ntsec=0;
+		}
+	}
+
+	if(GetEnvironmentVariable("CVSNT",buffer,sizeof(buffer)))
+	{
+		if(strstr(buffer,"ntsec"))
+		{
+			use_ntsec = !strstr(buffer,"nontsec");
+			if(use_ntsec) use_ntea=0;
+		}
+		if(strstr(buffer,"ntea"))
+		{
+			use_ntea = !strstr(buffer,"nontea");
+			if(use_ntea) use_ntsec=0;
+		}
+	}
 }
 
 void wnt_cleanup (void)
@@ -274,14 +341,22 @@ char *getpass (const char *prompt)
 	FlushConsoleInputBuffer(hInput);
 	GetConsoleMode(hInput,&dwMode);
 	SetConsoleMode(hInput,ENABLE_PROCESSED_INPUT);
-    for (i = 0; i < max_length - 1; ++i)
+    for (i = 0; i < max_length - 1;)
     {
 		c=0;
 		c = read_key();
 		if(c==27 || c=='\r' || c=='\n')
 			break;
-		password[i]=c;
-		fputc('*',stdout);
+		else if(c==8 && i)
+		{
+		  fputs("\b \b",stdout);
+		  --i; 
+		}
+		else if(c>31)
+		{
+		  password[i++]=c;
+		  fputc('*',stdout);
+		}
 		fflush (stderr);
 		fflush (stdout);
     }
@@ -292,157 +367,140 @@ char *getpass (const char *prompt)
 	return c==27?NULL:password;
 }
 
-#ifdef SERVER_SUPPORT
-int win32_valid_user(char *username, char *password, char *domain, user_handle_t *user_handle)
+#ifndef CVS95
+DWORD BreakNameIntoParts(LPCSTR name, LPWSTR w_name, LPWSTR w_domain, LPWSTR w_pdc)
 {
-	HANDLE user = NULL;
-    TCHAR User[UNLEN+1];
-    TCHAR Domain[UNLEN+1];
-	TCHAR Password[UNLEN+1];
+	static wchar_t *pw_pdc;
     char *ptr;
+	wchar_t w_defaultdomain[DNLEN+1]={0};
+
+	// only fetch a domain controller if the machine is a domain member
+	if(isDomainMember(w_defaultdomain))
+	{
+		TRACE(3,"Machine is domain member");
+		ptr=strchr(name, '\\');
+  		if (ptr)
+  		{
+ 			w_name[MultiByteToWideChar(CP_ACP,0,ptr+1,-1,w_name,UNLEN+1)]='\0';
+			w_domain[MultiByteToWideChar(CP_ACP,0,name,ptr-name,w_domain,DNLEN)]='\0';
+   		}
+		else
+		{
+ 			w_name[MultiByteToWideChar(CP_ACP,0,name,-1,w_name,UNLEN+1)]='\0';
+			wcscpy(w_domain,w_defaultdomain);
+		}
+	}
+  	else
+	{
+		TRACE(3,"Machine is standalone");
+		if(strchr(name,'\\'))
+		{
+			fprintf(stderr,"error 0 Invalid username - cannot specify domain as server is not acting as a domain member\n");
+			fflush(stderr);
+			return ERROR_INVALID_PARAMETER;
+		}
+ 		w_name[MultiByteToWideChar(CP_ACP,0,name,-1,w_name,UNLEN+1)]='\0';
+		*w_domain='\0';
+	}
+
+	if(w_pdc)
+	{
+		DWORD (WINAPI *pDsGetDcNameW)(LPCWSTR ComputerName,LPCWSTR DomainName,GUID *DomainGuid,LPCWSTR SiteName,ULONG Flags,PDOMAIN_CONTROLLER_INFOW *DomainControllerInfo);
+		pDsGetDcNameW=GetProcAddress(GetModuleHandle("netapi32"),"DsGetDcNameW");
+
+		w_pdc[0]='\0';
+		if(w_domain[0] && pDsGetDcNameW)
+		{
+			PDOMAIN_CONTROLLER_INFOW pdi;
+
+			if(!pDsGetDcNameW(NULL,w_domain,NULL,NULL,DS_IS_FLAT_NAME,&pdi) || !pDsGetDcNameW(NULL,w_domain,NULL,NULL,DS_IS_DNS_NAME,&pdi))
+			{
+				wcscpy(w_pdc,pdi->DomainControllerName);
+				NetApiBufferFree(pdi);
+			}
+		}
+		else if(w_domain[0])
+		{
+			if(!NetGetAnyDCName(NULL,w_domain,(LPBYTE*)&pw_pdc) || !NetGetDCName(NULL,w_domain,(LPBYTE*)&pw_pdc))
+			{
+				wcscpy(w_pdc,pw_pdc);
+				NetApiBufferFree(pw_pdc);
+			}
+		}
+	}
+	return ERROR_SUCCESS;
+}
+#endif
+
+#ifdef SERVER_SUPPORT
+int win32_valid_user(const char *username, const char *password, const char *domain, user_handle_t *user_handle)
+{
+	HANDLE handle = NULL;
+    wchar_t User[UNLEN+1];
+    wchar_t Domain[DNLEN+1];
+	wchar_t Password[UNLEN+1];
+	char user[UNLEN+DNLEN+2];
 
     memset(User, '\0', sizeof User);
     memset(Domain, '\0', sizeof Domain);
 
-	if(!domain)       /* No domain specified, look for one in username */
-	{
-      ptr=strchr(username, '\\');
-      if (ptr) 
-      {
-		/* Use repository password file domain */
-		if(!isDomainMember())
-		{
-			cvs_outerr("error 0 Cannot login: Domain specified but server is not acting as domain member.\n",0);
-			cvs_flusherr();
-			return 0;
-		}
+	if(domain)
+		sprintf(user,"%s\\%s",domain,username);
+	else
+		strcpy(user,username);
 
-#ifndef _UNICODE
-        strncpy(Domain, username, min(ptr-username, sizeof Domain-1));
-        strncpy(User, ptr+1, sizeof User-1);
-#else
-		MultiByteToWideChar(CP_UTF8,0,username, ptr-username, Domain, (sizeof(Domain)/sizeof(TCHAR))-1);
-		MultiByteToWideChar(CP_UTF8,0, ptr+1, strlen(ptr+1), User, (sizeof(User)/sizeof(TCHAR))-1);
-#endif
-      }
-	  else
-	  {
-#ifndef _UNICODE
-        strncpy(User, username, sizeof User-1);
-#else
-		MultiByteToWideChar(CP_UTF8,0,username, strlen(username), User, (sizeof(User)/sizeof(TCHAR))-1);
-#endif
-      }
-    }
-	else 
-	{
-#ifndef _UNICODE
-		strncpy(User, username, sizeof User -1); // TH Fix if domain specified
-        strncpy(Domain, domain, sizeof Domain-1);
-#else
-		MultiByteToWideChar(CP_UTF8,0, username, strlen(username), User, (sizeof(User)/sizeof(TCHAR))-1);
-		MultiByteToWideChar(CP_UTF8,0,domain, strlen(domain), Domain, (sizeof(Domain)/sizeof(TCHAR))-1);
-#endif
-    }
+	if(BreakNameIntoParts(user, User, Domain, NULL))
+		return 0;
 
-#ifndef _UNICODE
-		strncpy(Password, password, sizeof Password -1); 
-#else
-		MultiByteToWideChar(CP_UTF8,0, password, strlen(password), Password, (sizeof(Password)/sizeof(TCHAR))-1);
-#endif
+	Password[MultiByteToWideChar(CP_UTF8,0, password, -1, Password, (sizeof(Password)/sizeof(TCHAR))-1)]='\0';
 
-	if(!LogonUser(User,Domain,Password,LOGON32_LOGON_NETWORK,LOGON32_PROVIDER_DEFAULT,&user))
+	if(!LogonUserW(User,Domain,Password,LOGON32_LOGON_NETWORK,LOGON32_PROVIDER_DEFAULT,&handle))
 	{
 		switch(GetLastError())
 		{
-		case ERROR_PRIVILEGE_NOT_HELD:
-			cvs_outerr("error 0 Cannot login: Server has insufficient rights to validate user account - contact your system administrator\n",0);
-			cvs_flusherr();
-			break;
-		default:
-			break;
+			case ERROR_SUCCESS:
+				break;
+			case ERROR_NO_SUCH_DOMAIN:
+			case ERROR_NO_SUCH_USER:
+			case ERROR_ACCOUNT_DISABLED:
+			case ERROR_PASSWORD_EXPIRED:
+			case ERROR_ACCOUNT_RESTRICTION:
+				/* Do we want to print something here? */
+				break;
+			case ERROR_PRIVILEGE_NOT_HELD:
+			case ERROR_ACCESS_DENIED:
+				/* Technically can't happen (due to check for seTcbName above) */
+				cvs_outerr("error 0 Cannot login: Server has insufficient rights to validate user account - contact your system administrator\n",0);
+				cvs_flusherr();
+				break;
+			default:
+				break;
 		}
-
-		return 0;
 	}
 	if(user_handle)
-		*user_handle=user;
-	else
-		CloseHandle(user);
-	return 1;
+		*user_handle=handle;
+	else if(user)
+		CloseHandle(handle);
+	return handle?1:0;
 }
 #endif
-
-NET_API_STATUS CVSNetGetAnyDCName(LPCWSTR servername, LPCWSTR domainname, LPWSTR buf)
-{
-	wchar_t* pbuf=NULL;
-	NET_API_STATUS ret;
-
-	ret=NetGetAnyDCName(servername,domainname,(LPBYTE*)&pbuf);
-	if(pbuf)
-	{
-		wcscpy(buf,pbuf);
-		NetApiBufferFree(pbuf);
-	}
-	return ret;
-}
 
 struct passwd *win32getpwnam(const char *name)
 {
 #ifdef WINNT_VERSION // Win95 doesn't support this...  Client only mode...
 	static struct passwd pw;
 	USER_INFO_1 *pinfo = NULL;
-    WKSTA_USER_INFO_1 *wk_info = NULL;
 	static wchar_t w_name[UNLEN+1];
 	static wchar_t w_domain[DNLEN+1];
-	static wchar_t w_pdc[2048];
+	static wchar_t w_pdc[DNLEN+1];
 	static char homedir[1024];
-	static char pdc[1024];
 	NET_API_STATUS res;
-    char *ptr;
 
-    // only fetch a domain controller if the machine is a domain member
-	if(isDomainMember())
-	{
-		ptr=strchr(name, '\\');
-  		if (ptr)
-  		{
- 			int numchars;
- 
- 			MultiByteToWideChar(CP_ACP,0,ptr+1,-1,w_name,UNLEN+1);
- 
- 			// Since -1 wasn't specified for the cbMultiByte (size) parameter and
- 			// the input string isn't NULL terminated, the output won't be NULL 
- 			// terminated.  We have to do that ourselves.  Note that we leave space
- 			// for the NULL byte.
- 			numchars = MultiByteToWideChar(CP_ACP,0,name,ptr-name,w_domain,DNLEN);
- 
- 			if (numchars >= 0)
- 				w_domain[numchars] = 0;
-  
-  			// May fail for workgroup-only NT boxen (Patch from jonathan.gilligan@vanderbilt.edu)
-  			CVSNetGetAnyDCName(NULL,w_domain,w_pdc); 
-			name = ptr+1;
-  		} 
-  		else 
-  		{
-			if(NetWkstaUserGetInfo(NULL,1,(LPBYTE*)&wk_info)==NERR_Success)
-				wcscpy(w_pdc,wk_info->wkui1_logon_server);
-			else
-				CVSNetGetAnyDCName(NULL,NULL,w_pdc); 
-			MultiByteToWideChar(CP_ACP,0,name,-1,w_name,UNLEN+1);
-  		} 
-  	}
-  	else
-	{
-		if(strchr(name,'\\'))
-		{
-			fprintf(stderr,"error 0 Invalid username - cannot specify domain as server is not acting as a domain member\n");
-			fflush(stderr);
-			return NULL;
-		}
-		MultiByteToWideChar(CP_ACP,0,name,-1,w_name,UNLEN+1); // Initialise buffer...  (Patch from Brian Moran)
-	}
+	memset(&pw,0,sizeof(pw));
+
+	TRACE(3,"win32getpwnam(%s)",name);
+
+	BreakNameIntoParts(name,w_name,w_domain,w_pdc);
 
 	// If by sad chance this gets called on Win95, there is
 	// no way of verifying user info, and you always get 'Not implemented'.
@@ -450,26 +508,18 @@ struct passwd *win32getpwnam(const char *name)
 	res=NetUserGetInfo(w_pdc,w_name,1,(BYTE**)&pinfo);
 	if(res==NERR_UserNotFound)
 	{
-		if(w_pdc)
-			NetApiBufferFree(w_pdc);
+		TRACE(3,"NetUserGetInfo returned NERR_UserNotFound - failing");
 		return NULL;
 	}
-
-	if(w_pdc)
-		WideCharToMultiByte(0,0,w_pdc,-1,pdc,sizeof(pdc),0,0);
 
 	pw.pw_uid=0;
 	pw.pw_gid=0;
 	pw.pw_name=name;
 	pw.pw_passwd="secret";
 	pw.pw_shell="cmd.exe";
-#ifdef _UNICODE
-	pw.pw_pdc =w_pdc;
-	pw.pw_name_t = w_name;
-#else
-	pw.pw_pdc=w_pdc?pdc:NULL;
-	pw.pw_name_t =name;
-#endif
+	pw.pw_pdc_w=w_pdc;
+	pw.pw_domain_w=w_domain;
+	pw.pw_name_w = w_name;
 
 	if(res==NERR_Success)
 	{
@@ -478,23 +528,16 @@ struct passwd *win32getpwnam(const char *name)
 	}
 	else
 		pw.pw_dir=get_homedir();
-		
+
 	if(pinfo)
 		NetApiBufferFree(pinfo);
-	if(wk_info)
-		NetApiBufferFree(wk_info);
-	else if(w_pdc)
-		NetApiBufferFree(w_pdc);
 	return &pw;
 #else // Win95 broken version.  Rely on the HOME environment variable...
-	static struct passwd pw;
-	pw.pw_uid=0;
-	pw.pw_gid=0;
+	static struct passwd pw = {0};
 	pw.pw_name=(char*)name;
 	pw.pw_passwd="secret";
 	pw.pw_shell="cmd.exe";
 	pw.pw_dir=get_homedir();
-	pw.pw_pdc=NULL;
 #endif
 	return &pw;
 }
@@ -506,6 +549,14 @@ char *win32getlogin()
 
 	if(!GetUserNameA(UserName,&len))
 		return NULL;
+
+	/* Patch for cygwin sshd suggested by Markus Kuehni */
+	if(!strcmp(UserName,"SYSTEM"))
+	{
+		/* First try logname, and if that fails try user */
+		if(!GetEnvironmentVariable("LOGNAME",UserName,sizeof(UserName)))
+			GetEnvironmentVariable("USER",UserName,sizeof(UserName));
+	}
 	return UserName;
 }
 
@@ -528,38 +579,110 @@ int win32setuser(const char *username)
 	return 0;
 }
 
+int trys4u(const struct passwd *pw, user_handle_t *user_handle)
+{
+	/* XP actually implements this but drops out early in the processing
+		because it's in workstation mode not server */
+	/* Also for this to succeed your PDC needs to be a Win2k3 machine */
+	TRACE(3,"Trying S4u...\n");
+	switch(nt_s4u(pw->pw_domain_w,pw->pw_name_w,user_handle))
+	{
+		case ERROR_SUCCESS:
+			return 0;
+		case ERROR_NO_SUCH_DOMAIN:
+		case ERROR_NO_SUCH_USER:
+			return 2;
+		case ERROR_ACCOUNT_DISABLED:
+		case ERROR_PASSWORD_EXPIRED:
+		case ERROR_ACCOUNT_RESTRICTION:
+			return 3;
+		case ERROR_PRIVILEGE_NOT_HELD:
+		case ERROR_ACCESS_DENIED:
+			return 1;
+		default:
+			return -1;
+	}
+}
+
+int trysuid(const struct passwd *pw, user_handle_t *user_handle)
+{
+	TRACE(3,"Trying Setuid helper...\n");
+	switch(SuidGetImpersonationTokenW(pw->pw_name_w,pw->pw_domain_w,LOGON32_LOGON_NETWORK,user_handle))
+	{
+		case ERROR_SUCCESS:
+			return 0;
+		case ERROR_NO_SUCH_DOMAIN:
+		case ERROR_NO_SUCH_USER:
+			return 2;
+		case ERROR_ACCOUNT_DISABLED:
+		case ERROR_PASSWORD_EXPIRED:
+		case ERROR_ACCOUNT_RESTRICTION:
+			return 3;
+		case ERROR_PRIVILEGE_NOT_HELD:
+		case ERROR_ACCESS_DENIED:
+			return 1;
+		default:
+			return -1;
+	}
+}
+
+int trytoken(const struct passwd *pw, user_handle_t *user_handle)
+{
+	TRACE(3,"Trying NTCreateToken...\n");
+	if(nt_setuid(pw->pw_pdc_w,pw->pw_name_w,user_handle))
+		return 1;
+	return 0;
+}
 /*
   Returns:
      0 = ok
 	 1 = user found, impersonation failed
 	 2 = user not found
+	 3 = Account disabled
 */
 
-int win32switchtouser(const char *username, user_handle_t user_handle)
+int win32switchtouser(const char *username, user_handle_t *user_handle)
 {
+	int ret=-1;
+
 	/* Store the user for later */
 	current_username = xstrdup(username);
 
+	TRACE(3,"win32switchtouser(%s), impersonate=%d",username,impersonate);
 	if(impersonate)
 	{
-		if(!user_handle)
+#ifdef _DEBUG
+		*user_handle=NULL;
+#endif
+		if(!*user_handle)
 		{
 			const struct passwd *pw;
 
 			pw = win32getpwnam(username);
-			
+
 			if(!pw)
 				return 2;
 
-			return nt_setuid(pw->pw_pdc,pw->pw_name_t)?1:0;
+			if(bIsWin2k && (ret = trys4u(pw,user_handle))>0)
+				return ret;
+			if(bIsWin2k && ret && (ret = trysuid(pw,user_handle))>0)
+				return ret;
+			if(ret && (ret = trytoken(pw,user_handle))>0)
+				return ret;
+			if(ret<0)
+				return 1;
 		}
-		else
-		{
-			return ImpersonateLoggedOnUser(user_handle)?0:1;
-		}
+		/* If we haven't bailed out above, user_handle will be set */
+		return ImpersonateLoggedOnUser(*user_handle)?0:1;
 	}
 	else
+	{
+		char user[100];
+		DWORD dw = sizeof(user);
+		GetUserName(user,&dw);
+		TRACE(3,"My username=%s",user);
 		return 0;
+	}
 }
 
 #endif
@@ -608,7 +731,7 @@ int win32_isadmin()
 	/* If Impersonation is enabled, then check the local thread for administrator access,
 	   otherwise do the domain checks, as before.  This code is basically Microsoft KB 118626  */
 	/* Also use this if we're in client mode */
-	if((!current_username || !stricmp(current_username,CVS_Username)) && (impersonate || !server_active)) 
+	if((!current_username || !stricmp(current_username,CVS_Username)) && (impersonate || !server_active))
 	{
 		BOOL   fReturn         = FALSE;
 		DWORD  dwStatus;
@@ -742,64 +865,19 @@ int win32_isadmin()
 		/* Contact the domain controller to decide whether the user is an adminstrator.  This
 		   is about 90-95% accurate */
 		USER_INFO_1 *info;
-		WKSTA_USER_INFO_1 *wk_info = NULL;
 		wchar_t w_name[UNLEN+1];
 		wchar_t w_domain[DNLEN+1];
-		wchar_t *w_pdc = NULL;
-		char *ptr;
+		wchar_t w_pdc[DNLEN+1];
 		DWORD priv;
 		BOOL check_local = FALSE; /* If the domain wasn't specified, try checking for local admin too */
-   
-		// only fetch a domain controller if the machine is a domain member
-		if(isDomainMember())
-		{
-  			ptr=strchr(CVS_Username, '\\');
-  			if (ptr)
-  			{
- 				int numchars;
-	 
- 				MultiByteToWideChar(CP_ACP,0,ptr+1,-1,w_name,UNLEN+1);
- 				numchars = MultiByteToWideChar(CP_ACP,0,CVS_Username,ptr-CVS_Username,w_domain,DNLEN);
-	 
-				if (numchars >= 0)
- 					w_domain[numchars] = 0;
-	 
-  				// May fail for workgroup-only NT boxen (Patch from jonathan.gilligan@vanderbilt.edu)
-  				NetGetAnyDCName(NULL,w_domain,(LPBYTE*)&w_pdc); 
-  			} 
- 			else
-  			{
- 			MultiByteToWideChar(CP_ACP,0,CVS_Username,-1,w_name,UNLEN+1);
-	  
-			if(NetWkstaUserGetInfo(NULL,1,(LPBYTE*)&wk_info)==NERR_Success)
-				w_pdc = wk_info->wkui1_logon_server;
-			else
-				NetGetAnyDCName(NULL,NULL,(LPBYTE*)&w_pdc); 
 
-			check_local = TRUE;
-			}
-		}
-		else    // bugfix 2001-04-25: jonathan.gilligan@vanderbilt.edu: w_name wasn't set in 
-				// client mode. Caused failure for cvs admin, even if the user is in the 
-				// Administrators group.
-		{
-			MultiByteToWideChar(CP_ACP,0,CVS_Username,-1,w_name,UNLEN+1);
-		}
+		if(BreakNameIntoParts(CVS_Username,w_name,w_domain,w_pdc))
+			return 0;
 
 		if(NetUserGetInfo(w_pdc,w_name,1,(LPBYTE*)&info)!=NERR_Success)
-		{
-			if(wk_info)
-				NetApiBufferFree(wk_info);
-			else if(w_pdc)
-				NetApiBufferFree(w_pdc);
-
 			return 0;
-		}
+
 		priv=info->usri1_priv;
-		if(wk_info)
-			NetApiBufferFree(wk_info);
-		else if(w_pdc)
-			NetApiBufferFree(w_pdc);
 		NetApiBufferFree(info);
 		if(priv==USER_PRIV_ADMIN)
 			return 1;
@@ -862,14 +940,14 @@ NTSTATUS OpenPolicy( LPWSTR ServerName, DWORD DesiredAccess, PLSA_HANDLE PolicyH
      return LsaOpenPolicy( Server, &ObjectAttributes, DesiredAccess, PolicyHandle );
 }
 
-int isDomainMember()
+int isDomainMember(wchar_t *wszDomain)
 {
      PPOLICY_PRIMARY_DOMAIN_INFO ppdiDomainInfo=NULL;
      PPOLICY_DNS_DOMAIN_INFO pddiDomainInfo=NULL;
      LSA_HANDLE PolicyHandle;
      NTSTATUS status;
      BOOL retval = FALSE;
-     
+
 	if(force_local_machine)
 		return 0;
 
@@ -892,6 +970,11 @@ int isDomainMember()
 		if(!status)
 		{
 			retval = pddiDomainInfo->Sid != 0;
+			if(wszDomain && retval)
+			{
+				wcsncpy(wszDomain,pddiDomainInfo->Name.Buffer,pddiDomainInfo->Name.Length);
+				wszDomain[pddiDomainInfo->Name.Length]='\0';
+			}
 		    LsaFreeMemory( (LPVOID)pddiDomainInfo );
 		}
 		else
@@ -903,6 +986,11 @@ int isDomainMember()
 			if(!status)
 			{
 				retval = ppdiDomainInfo->Sid != 0;
+				if(wszDomain && retval)
+				{
+					wcsncpy(wszDomain,ppdiDomainInfo->Name.Buffer,ppdiDomainInfo->Name.Length);
+					wszDomain[ppdiDomainInfo->Name.Length]='\0';
+				}
 			    LsaFreeMemory( (LPVOID)ppdiDomainInfo );
 			}
 		}
@@ -925,6 +1013,11 @@ int win32_openpipe(const char *pipe)
 		return -1;
 	}
 	return _open_osfhandle((long)h,_O_RDWR|_O_BINARY);
+}
+
+int win32_makepipe(long hPipe)
+{
+	return _open_osfhandle(hPipe,_O_RDWR|_O_BINARY);
 }
 
 void win32_perror(int quit, const char *prefix, ...)
@@ -966,10 +1059,18 @@ static const char *slash_convert(const char *filename, char *buffer)
 
 FILE *wnt_fopen(const char *filename, const char *mode)
 {
+#ifdef UTF8
+	const char *src = slash_convert(filename,fname);
+	wchar_t dst[MAX_PATH],wmode[32];
+	FILE *f;
+	MultiByteToWideChar(CP_UTF8,0,src,-1,dst,sizeof(dst));
+	MultiByteToWideChar(CP_UTF8,0,mode,-1,wmode,sizeof(wmode));
+	f = _wfopen(dst,wmode);
+#else
 	FILE *f = fopen(slash_convert(filename,fname),mode);
-//	printf("fopen %s = %p\n",filename,f);
+#endif
 	return f;
-		
+
 }
 
 int wnt_open(const char *filename, int oflag , int pmode)
@@ -987,10 +1088,6 @@ int wnt_fclose(FILE *file)
 {
 	assert(file);
 	assert(file->_flag);
-
-//	printf("fclose %p\n",file);
-
-	//FlushFileBuffers((HANDLE)_get_osfhandle(file->_file));
 
 	return fclose(file);
 }
@@ -1016,7 +1113,7 @@ void _dosmaperr(DWORD dwErr)
 }
 
 /* Is the year a leap year?
- * 
+ *
  * Use standard Gregorian: every year divisible by 4
  * except centuries indivisible by 400.
  *
@@ -1041,11 +1138,11 @@ BOOL IsLeapYear ( WORD year )
  * The comparison is complicated by the way we specify
  * TargetDate.
  *
- * TargetDate is assumed to be the kind of date used in 
+ * TargetDate is assumed to be the kind of date used in
  * TIME_ZONE_INFORMATION.DaylightDate: If wYear is 0,
- * then it's a kind of code for things like 1st Sunday 
+ * then it's a kind of code for things like 1st Sunday
  * of the month. As described in the Windows API docs,
- * wDay is an index of week: 
+ * wDay is an index of week:
  *      1 = first of month
  *      2 = second of month
  *      3 = third of month
@@ -1065,7 +1162,7 @@ BOOL IsLeapYear ( WORD year )
  *          -2/+2 if test day is less/greater than target day
  *          -1/+2 if test hour:minute:seconds.milliseconds less/greater than target
  *          0     if both dates/times are equal.
- * 
+ *
  */
 static int CompareTargetDate (
     const SYSTEMTIME * p_test_date,
@@ -1078,41 +1175,41 @@ static int CompareTargetDate (
     int test_milliseconds, target_milliseconds;
 
     /* Check that p_target_date is in the correct foramt: */
-    if (p_target_date->wYear) 
+    if (p_target_date->wYear)
     {
         error(0,0,"Internal error: p_target_date is not in TIME_ZONE_INFORMATION format.");
         return 0;
     }
-    if (!p_test_date->wYear) 
+    if (!p_test_date->wYear)
     {
         error(0,0,"Internal error: p_test_date must be an actual date, not TIME_ZONE_INFORMAATION format.");
         return 0;
     }
 
     /* Don't waste time calculating if we can shortcut the comparison... */
-    if (p_test_date->wMonth != p_target_date->wMonth) 
+    if (p_test_date->wMonth != p_target_date->wMonth)
     {
         return (p_test_date->wMonth > p_target_date->wMonth) ? 4 : -4;
     }
 
     /* Months equal. Now we neet to do some calculation.
-     * If we know that y is the day of the week for some arbitrary date x, 
-     * then the day of the week of the first of the month is given by 
+     * If we know that y is the day of the week for some arbitrary date x,
+     * then the day of the week of the first of the month is given by
      * (1 + y - x) mod 7.
-     * 
+     *
      * For instance, if the 19th is a Wednesday (day of week = 3), then
      * the date of the first Wednesday of the month is (19 mod 7) = 5.
-     * If the 5th is a Wednesday (3), then the first of the month is 
+     * If the 5th is a Wednesday (3), then the first of the month is
      * four days earlier (it's the first, not the zeroth):
      * (3 - 4) = -1; -1 mod 7 = 6. The first is a Saturday.
      *
-     * Check ourselves: The 19th falls on a (6 + 19 - 1) mod 7 
+     * Check ourselves: The 19th falls on a (6 + 19 - 1) mod 7
      * = 24 mod 7 = 3: Wednesday, as it should be.
      */
     first_day_of_month = (WORD)( (1u + p_test_date->wDayOfWeek - p_test_date->wDay) % 7u);
 
     /* If the first of the month comes on day y, then the first day of week z falls on
-     * (z - y + 1) mod 7. 
+     * (z - y + 1) mod 7.
      *
      * For instance, if the first is a Saturday (6), then the first Tuesday (2) falls on a
      * (2 - 6 + 1) mod 7 = -3 mod 7 = 4: The fourth. This is correct (see above).
@@ -1131,7 +1228,7 @@ static int CompareTargetDate (
     /* what's the last day of the month? */
     end_of_month = month_len [p_target_date->wMonth - 1];
     /* Correct if it's February of a leap year? */
-    if ( p_test_date->wMonth == 2 && IsLeapYear(p_test_date->wYear) ) 
+    if ( p_test_date->wMonth == 2 && IsLeapYear(p_test_date->wYear) )
     {
         ++ end_of_month;
     }
@@ -1143,15 +1240,15 @@ static int CompareTargetDate (
         temp_date -= 7;
 
     /* At long last, we're ready to do the comparison. */
-    if ( p_test_date->wDay != temp_date ) 
+    if ( p_test_date->wDay != temp_date )
     {
         return (p_test_date->wDay > temp_date) ? 2 : -2;
     }
-    else 
+    else
     {
-        test_milliseconds = ((p_test_date->wHour * 60 + p_test_date->wMinute) * 60 
+        test_milliseconds = ((p_test_date->wHour * 60 + p_test_date->wMinute) * 60
                                 + p_test_date->wSecond) * 1000 + p_test_date->wMilliseconds;
-        target_milliseconds = ((p_target_date->wHour * 60 + p_target_date->wMinute) * 60 
+        target_milliseconds = ((p_target_date->wHour * 60 + p_target_date->wMinute) * 60
                                 + p_target_date->wSecond) * 1000 + p_target_date->wMilliseconds;
         test_milliseconds -= target_milliseconds;
         return (test_milliseconds > 0) ? 1 : (test_milliseconds < 0) ? -1 : 0;
@@ -1168,13 +1265,13 @@ static int GetTimeZoneBias( const SYSTEMTIME * pst )
 {
     TIME_ZONE_INFORMATION tz;
     int n, bias;
-    
+
     GetTimeZoneInformation ( &tz );
 
-    /*  I only deal with cases where we look at 
+    /*  I only deal with cases where we look at
      *  a "last sunday" kind of thing.
      */
-    if (tz.DaylightDate.wYear || tz.StandardDate.wYear) 
+    if (tz.DaylightDate.wYear || tz.StandardDate.wYear)
     {
         error(0,0, "Cannont handle year-specific DST clues in TIME_ZONE_INFORMATION");
         return 0;
@@ -1185,7 +1282,7 @@ static int GetTimeZoneBias( const SYSTEMTIME * pst )
     n = CompareTargetDate ( pst, & tz.DaylightDate );
     if (n < 0)
         bias += tz.StandardBias;
-    else 
+    else
     {
         n = CompareTargetDate ( pst, & tz.StandardDate );
         if (n < 0)
@@ -1202,13 +1299,13 @@ static int GetTimeZoneBias( const SYSTEMTIME * pst )
 static int IsDST( const SYSTEMTIME * pst )
 {
     TIME_ZONE_INFORMATION tz;
-    
+
     GetTimeZoneInformation ( &tz );
 
-    /*  I only deal with cases where we look at 
+    /*  I only deal with cases where we look at
      *  a "last sunday" kind of thing.
      */
-    if (tz.DaylightDate.wYear || tz.StandardDate.wYear) 
+    if (tz.DaylightDate.wYear || tz.StandardDate.wYear)
     {
         error(0,0, "Cannont handle year-specific DST clues in TIME_ZONE_INFORMATION");
         return 0;
@@ -1222,15 +1319,15 @@ static int IsDST( const SYSTEMTIME * pst )
  * taking DST into account (sort of).
  *
  * INPUTS:
- *      const SYSTEMTIME * p_local: 
- *              A file time. It may be in UTC or in local 
+ *      const SYSTEMTIME * p_local:
+ *              A file time. It may be in UTC or in local
  *              time (see local_time, below, for details).
  *
  *      SYSTEMTIME * p_utc:
  *              The destination for the converted time.
  *
  * OUTPUTS:
- *      SYSTEMTIME * p_utc:         
+ *      SYSTEMTIME * p_utc:
  *              The destination for the converted time.
  */
 
@@ -1262,17 +1359,17 @@ void LocalSystemTimeToUtcSystemTime( const SYSTEMTIME * p_local, SYSTEMTIME * p_
 }
 
 
-/* Convert a file time to a Unix time_t structure. This function is as 
- * complicated as it is because it needs to ask what time system the 
+/* Convert a file time to a Unix time_t structure. This function is as
+ * complicated as it is because it needs to ask what time system the
  * filetime describes.
- * 
+ *
  * INPUTS:
- *      const FILETIME * ft: A file time. It may be in UTC or in local 
+ *      const FILETIME * ft: A file time. It may be in UTC or in local
  *                           time (see local_time, below, for details).
  *
  *      time_t * ut:         The destination for the converted time.
  *
- *      BOOL local_time:     TRUE if the time in *ft is in local time 
+ *      BOOL local_time:     TRUE if the time in *ft is in local time
  *                           and I need to convert to a real UTC time.
  *
  * OUTPUTS:
@@ -1282,15 +1379,15 @@ static BOOL FileTimeToUnixTime ( const FILETIME* pft, time_t* put, BOOL local_ti
 {
     BOOL success = FALSE;
 
-   /* FILETIME = number of 100-nanosecond ticks since midnight 
-    * 1 Jan 1601 UTC. time_t = number of 1-second ticks since 
+   /* FILETIME = number of 100-nanosecond ticks since midnight
+    * 1 Jan 1601 UTC. time_t = number of 1-second ticks since
     * midnight 1 Jan 1970 UTC. To translate, we subtract a
     * FILETIME representation of midnight, 1 Jan 1970 from the
     * time in question and divide by the number of 100-ns ticks
     * in one second.
     */
 
-    SYSTEMTIME base_st = 
+    SYSTEMTIME base_st =
     {
         1970,   /* wYear            */
         1,      /* wMonth           */
@@ -1301,7 +1398,7 @@ static BOOL FileTimeToUnixTime ( const FILETIME* pft, time_t* put, BOOL local_ti
         0,      /* wSecond          */
         0       /* wMilliseconds    */
     };
-    
+
     ULARGE_INTEGER itime;
     FILETIME base_ft;
     int bias = 0;
@@ -1314,7 +1411,7 @@ static BOOL FileTimeToUnixTime ( const FILETIME* pft, time_t* put, BOOL local_ti
     }
 
     success = SystemTimeToFileTime ( &base_st, &base_ft );
-    if (success) 
+    if (success)
     {
         itime.QuadPart = ((ULARGE_INTEGER *)pft)->QuadPart;
 
@@ -1337,15 +1434,15 @@ static BOOL UnixTimeToFileTime ( time_t ut, FILETIME* pft, BOOL local_time )
 {
     BOOL success = FALSE;
 
-   /* FILETIME = number of 100-nanosecond ticks since midnight 
-    * 1 Jan 1601 UTC. time_t = number of 1-second ticks since 
+   /* FILETIME = number of 100-nanosecond ticks since midnight
+    * 1 Jan 1601 UTC. time_t = number of 1-second ticks since
     * midnight 1 Jan 1970 UTC. To translate, we subtract a
     * FILETIME representation of midnight, 1 Jan 1970 from the
     * time in question and divide by the number of 100-ns ticks
     * in one second.
     */
 
-    SYSTEMTIME base_st = 
+    SYSTEMTIME base_st =
     {
         1970,   /* wYear            */
         1,      /* wMonth           */
@@ -1356,7 +1453,7 @@ static BOOL UnixTimeToFileTime ( time_t ut, FILETIME* pft, BOOL local_time )
         0,      /* wSecond          */
         0       /* wMilliseconds    */
     };
-    
+
     ULARGE_INTEGER itime;
     FILETIME base_ft;
     int bias = 0;
@@ -1373,13 +1470,343 @@ static BOOL UnixTimeToFileTime ( time_t ut, FILETIME* pft, BOOL local_time )
         success = FileTimeToSystemTime((FILETIME*)&itime, & temp_st);
         bias =  GetTimeZoneBias(& temp_st);
 
-		itime.QuadPart += (bias * 60) *systemtime_second;
+		itime.QuadPart -= (bias * 60) *systemtime_second;
     }
 
 	*(ULARGE_INTEGER*)pft=itime;
 
     return success;
 }
+
+#ifndef CVS95
+static BOOL GetFileSec(LPCTSTR strPath, HANDLE hFile, SECURITY_INFORMATION requestedInformation, PSECURITY_DESCRIPTOR *ppSecurityDescriptor)
+{
+	if(hFile)
+	{
+		DWORD dwLen = 0;
+		GetKernelObjectSecurity(hFile,requestedInformation,NULL,0,&dwLen);
+		if(!dwLen)
+			return FALSE;
+		*ppSecurityDescriptor = (PSECURITY_DESCRIPTOR)xmalloc(dwLen);
+		if(!GetKernelObjectSecurity(hFile,requestedInformation,*ppSecurityDescriptor,dwLen,&dwLen))
+		{
+			xfree(*ppSecurityDescriptor);
+			return FALSE;
+		}
+		return TRUE;
+	}
+	else
+	{
+		DWORD dwLen = 0;
+		GetFileSecurity(strPath,requestedInformation,NULL,0,&dwLen);
+		if(!dwLen)
+			return FALSE;
+		*ppSecurityDescriptor = (PSECURITY_DESCRIPTOR)xmalloc(dwLen);
+		if(!GetFileSecurity(strPath,requestedInformation,*ppSecurityDescriptor,dwLen,&dwLen))
+		{
+			xfree(*ppSecurityDescriptor);
+			return FALSE;
+		}
+		return TRUE;
+	}
+}
+
+static mode_t GetUnixFileModeNtSec(LPCTSTR strPath, HANDLE hFile)
+{
+	PSECURITY_DESCRIPTOR pSec;
+	PACL pAcl;
+	mode_t mode;
+	int index;
+	PSID pUserSid,pGroupSid;
+	int haveuser,havegroup,haveworld;
+	BOOL bPresent,bDefaulted;
+
+	if(!GetFileSec(strPath,hFile,DACL_SECURITY_INFORMATION|OWNER_SECURITY_INFORMATION|GROUP_SECURITY_INFORMATION,&pSec))
+		return 0;
+
+	if(!GetSecurityDescriptorDacl(pSec,&bPresent,&pAcl,&bDefaulted))
+	{
+		xfree(pSec);
+		return 0;
+	}
+
+	if(!pAcl)
+	{
+		xfree(pSec);
+		if(bPresent) /* Null DACL */
+			return 0755;
+		else
+			return 0; /* No DACL/No Access */
+	}
+
+	if(!GetSecurityDescriptorOwner(pSec,&pUserSid,&bDefaulted))
+	{
+		xfree(pSec);
+		return 0;
+	}
+	if(!GetSecurityDescriptorGroup(pSec,&pGroupSid,&bDefaulted))
+	{
+		xfree(pSec);
+		return 0;
+	}
+
+	mode=0;
+	haveuser=havegroup=haveworld=0;
+	for (index = 0; index < pAcl->AceCount && haveuser+havegroup+haveworld<3; ++index)
+	{
+		PACCESS_ALLOWED_ACE pACE;
+		PSID pSid;
+		mode_t mask,mask2;
+		if (!GetAce(pAcl, index, (LPVOID*)&pACE))
+			continue;
+		pSid = (PSID)&pACE->SidStart;
+		if(!haveuser && pUserSid && EqualSid(pSid,pUserSid))
+		{
+			mask=0700;
+			haveuser=1;
+		}
+		else if(!havegroup && pGroupSid && EqualSid(pSid,pGroupSid))
+		{
+			mask=0070;
+			havegroup=1;
+		}
+		else if(!haveworld && EqualSid(pSid,&sidEveryone))
+		{
+			mask=0007;
+			haveworld=1;
+		}
+		else continue;
+
+		mask2=0;
+		if((pACE->Mask&FILE_GENERIC_READ)==FILE_GENERIC_READ)
+			mask2|=0444;
+		if((pACE->Mask&FILE_GENERIC_WRITE)==FILE_GENERIC_WRITE)
+			mask2|=0222;
+		if((pACE->Mask&FILE_GENERIC_EXECUTE)==FILE_GENERIC_EXECUTE)
+			mask2|=0111;
+
+		if(pACE->Header.AceType==ACCESS_ALLOWED_ACE_TYPE)
+			mode|=(mask2&mask);
+		else if(pACE->Header.AceType==ACCESS_DENIED_ACE_TYPE)
+			mode&=~(mask2&mask);
+	}
+
+	xfree(pSec);
+
+	/* We could use GetEffectiveRightsFromAcl here but don't want to as it takes
+	   into account annoying things like inheritance.  All we want to do is transport
+	   the mode bits to/from a unix server relatively unmolested */
+	/* If there's no group ownership, make group = world, and if there's no owner ownership,
+	   make owner=group.  This should only normally happen on 'legacy' checkins as the
+	   files in the sandbox will have both set by SetUnixFileMode. */
+	if(!havegroup)
+		mode|=(mode&0007)<<3;
+	if(!haveuser)
+		mode|=(mode&0070)<<3;
+
+	TRACE(3,"GetUnixFileModeNtSec(%s,%p) returns %04o",strPath,hFile,mode);
+
+	return mode;
+}
+
+static BOOL SetUnixFileModeNtSec(LPCTSTR strPath, mode_t mode)
+{
+	PSECURITY_DESCRIPTOR pSec;
+	SECURITY_DESCRIPTOR NewSec;
+	PACL pAcl,pNewAcl;
+	PSID pUserSid,pGroupSid;
+	int n;
+	BOOL bPresent,bDefaulted;
+
+	TRACE(3,"SetUnixFileModeNtSec(%s,%04o)",strPath,mode);
+
+	if(!GetFileSec(strPath,NULL,DACL_SECURITY_INFORMATION|OWNER_SECURITY_INFORMATION|GROUP_SECURITY_INFORMATION,&pSec))
+		return 0;
+	if(!GetSecurityDescriptorDacl(pSec,&bPresent,&pAcl,&bDefaulted))
+	{
+		xfree(pSec);
+		return 0;
+	}
+	if(!GetSecurityDescriptorOwner(pSec,&pUserSid,&bDefaulted))
+	{
+		xfree(pSec);
+		return 0;
+	}
+	if(!GetSecurityDescriptorGroup(pSec,&pGroupSid,&bDefaulted))
+	{
+		xfree(pSec);
+		return 0;
+	}
+
+	if(pAcl)
+	{
+		pNewAcl=(PACL)xmalloc(pAcl->AclSize+256);
+		InitializeAcl(pNewAcl,pAcl->AclSize+256,ACL_REVISION);
+		/* Delete any ACEs that equal our data */
+		for(n=0; n<(int)pAcl->AceCount; n++)
+		{
+			ACCESS_ALLOWED_ACE *pAce;
+			GetAce(pAcl,n,(LPVOID*)&pAce);
+			if(!((pUserSid && EqualSid((PSID)&pAce->SidStart,pUserSid)) ||
+				(pGroupSid && EqualSid((PSID)&pAce->SidStart,pGroupSid)) ||
+			   (EqualSid((PSID)&pAce->SidStart,&sidEveryone))))
+			{
+				AddAce(pNewAcl,ACL_REVISION,MAXDWORD,pAce,pAce->Header.AceSize);
+			}
+		}
+	}
+	else
+	{
+		pNewAcl=xmalloc(1024);
+		InitializeAcl(pNewAcl,1024,ACL_REVISION);
+	}
+
+	/* Poor mans exception handling...  better to go C++ really */
+	do
+	{
+		/* Always grant rw + control to the owner, no matter what else happens */
+		if(pUserSid && !AddAccessAllowedAce(pNewAcl,ACL_REVISION,STANDARD_RIGHTS_ALL|FILE_GENERIC_READ|FILE_GENERIC_WRITE|((mode&0100)?FILE_GENERIC_EXECUTE:0),pUserSid))
+			break;
+		if(pGroupSid && !AddAccessAllowedAce(pNewAcl,ACL_REVISION,((mode&0040)?FILE_GENERIC_READ:0)|((mode&0020)?(FILE_GENERIC_WRITE|DELETE):0)|((mode&0010)?FILE_GENERIC_EXECUTE:0),pGroupSid))
+			break;
+		if(!AddAccessAllowedAce(pNewAcl,ACL_REVISION,((mode&0004)?FILE_GENERIC_READ:0)|((mode&0002)?(FILE_GENERIC_WRITE|DELETE):0)|((mode&0001)?FILE_GENERIC_EXECUTE:0),&sidEveryone))
+			break;
+
+		if(!InitializeSecurityDescriptor(&NewSec,SECURITY_DESCRIPTOR_REVISION))
+			break;
+
+		if(!SetSecurityDescriptorDacl(&NewSec,TRUE,pNewAcl,FALSE))
+			break;
+
+		if(!SetFileSecurity(strPath,DACL_SECURITY_INFORMATION|PROTECTED_DACL_SECURITY_INFORMATION,&NewSec))
+			break;
+	} while(0);
+
+	xfree(pSec);
+	xfree(pNewAcl);
+
+	return TRUE;
+}
+
+typedef NTSTATUS (NTAPI *NtQueryEaFile_t)(HANDLE FileHandle, PIO_STATUS_BLOCK IoStatusBlock, PVOID Buffer, ULONG Length, BOOL ReturnSingleEntry, PVOID EaList, ULONG EaListLength,PULONG EaIndex, IN BOOL RestartScan);
+typedef NTSTATUS (NTAPI *NtSetEaFile_t)(HANDLE FileHandle, PIO_STATUS_BLOCK IoStatusBlock, PVOID EaBuffer,ULONG EaBufferSize);
+
+static NtQueryEaFile_t pNtQueryEaFile;
+static NtSetEaFile_t pNtSetEaFile;
+
+typedef struct _FILE_FULL_EA_INFORMATION
+{
+	ULONG NextEntryOffset;
+	BYTE Flags;
+	BYTE EaNameLength;
+	USHORT EaValueLength;
+	CHAR EaName[1];
+} FILE_FULL_EA_INFORMATION, *PFILE_FULL_EA_INFORMATION;
+
+typedef struct _FILE_GET_EA_INFORMATION
+{
+	ULONG	NextEntryOffset;
+	BYTE	EaNameLength;
+	CHAR	EaName[1];
+} FILE_GET_EA_INFORMATION, *PFILE_GET_EA_INFORMATION;
+
+static mode_t GetUnixFileModeNtEA(LPCTSTR strPath, HANDLE hFile)
+{
+	mode_t mode = 0;
+
+	if(!pNtQueryEaFile)
+		pNtQueryEaFile=(NtQueryEaFile_t)GetProcAddress(GetModuleHandle("NTDLL"),"NtQueryEaFile");
+	if(pNtQueryEaFile)
+	{
+		if(strPath)
+			hFile = CreateFile(strPath, FILE_READ_EA, FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS, NULL);
+
+		if(hFile != INVALID_HANDLE_VALUE)
+		{
+			IO_STATUS_BLOCK io = {0};
+			BYTE buffer[256];
+			NTSTATUS status;
+			FILE_GET_EA_INFORMATION *list;
+			FILE_FULL_EA_INFORMATION *pea;
+			static const char *Attr = ".UNIXATTR";
+
+			list=(FILE_GET_EA_INFORMATION*)buffer;
+			list->NextEntryOffset=0;
+			list->EaNameLength=strlen(Attr);
+			memcpy(list->EaName,Attr,list->EaNameLength+1);
+
+			status = pNtQueryEaFile(hFile, &io, buffer, sizeof(buffer), TRUE, buffer, sizeof(buffer), NULL, TRUE);
+			switch(status)
+			{
+			case STATUS_SUCCESS:
+				pea = (FILE_FULL_EA_INFORMATION*)buffer;
+				mode=*(mode_t*)&pea->EaName[pea->EaNameLength+1];
+				break;
+			case STATUS_NONEXISTENT_EA_ENTRY:
+				TRACE(3,"error: STATUS_NONEXISTENT_EA_ENTRY");
+				break;
+			case STATUS_NO_EAS_ON_FILE:
+				TRACE(3,"error: STATUS_NO_EAS_ON_FILE");
+				break;
+			case STATUS_EA_CORRUPT_ERROR:
+				TRACE(3,"error: STATUS_EA_CORRUPT_ERROR");
+				break;
+			default:
+				TRACE(3,"error %08x",error);
+				break;
+			}
+
+			if(strPath)
+				CloseHandle(hFile);
+		}
+	}
+
+	TRACE(3,"GetUnixFileModeNtEA(%s,%p) returns %04o",strPath,hFile,mode);
+	return mode;
+}
+
+static BOOL SetUnixFileModeNtEA(LPCTSTR strPath, mode_t mode)
+{
+	HANDLE hFile = INVALID_HANDLE_VALUE;
+
+	TRACE(3,"SetUnixFileModeNtEA(%s,%04o)",strPath,mode);
+
+	if(!pNtSetEaFile)
+		pNtSetEaFile=(NtSetEaFile_t)GetProcAddress(GetModuleHandle("NTDLL"),"NtSetEaFile");
+
+	if(pNtSetEaFile)
+	{
+		if(strPath)
+			hFile = CreateFile(strPath, FILE_READ_EA|FILE_WRITE_EA, FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS, NULL);
+
+		if(hFile != INVALID_HANDLE_VALUE)
+		{
+			IO_STATUS_BLOCK io = {0};
+			BYTE buffer[256];
+			NTSTATUS status;
+			static const char *Attr = ".UNIXATTR";
+			FILE_FULL_EA_INFORMATION *pea;
+
+			pea = (FILE_FULL_EA_INFORMATION*)buffer;
+
+			pea->NextEntryOffset=0;
+			pea->Flags=0;
+			pea->EaNameLength=strlen(Attr);
+			pea->EaValueLength=sizeof(mode);
+			memcpy(pea->EaName,Attr,pea->EaNameLength+1);
+			*(mode_t*)(pea->EaName+pea->EaNameLength+1)=mode;
+
+			status = pNtSetEaFile(hFile, &io, buffer, sizeof(buffer));
+
+			if(strPath)
+				CloseHandle(hFile);
+		}
+	}
+
+	return FALSE;
+}
+
+#endif
 
 static int _statcore(HANDLE hFile, const char *filename, struct stat *buf)
 {
@@ -1422,7 +1849,7 @@ static int _statcore(HANDLE hFile, const char *filename, struct stat *buf)
 					rc = PeekNamedPipe(hFile,NULL,0,NULL,&ulAvail,NULL);
 					if (rc)
 						buf->st_size = (_off_t)ulAvail;
-					else 
+					else
 						buf->st_size = (_off_t)0;
 				}
 
@@ -1445,7 +1872,7 @@ static int _statcore(HANDLE hFile, const char *filename, struct stat *buf)
 	if(hFile)
 	{
 		/* use the file handle to get all the info about the file
-		 */
+		*/
 		if ( !GetFileInformationByHandle(hFile, &bhfi) )
 		{
 			_dosmaperr(GetLastError());
@@ -1456,7 +1883,7 @@ static int _statcore(HANDLE hFile, const char *filename, struct stat *buf)
 	{
 		WIN32_FIND_DATAA fd;
 		HANDLE hFind;
-		
+
 		hFind=FindFirstFileA(filename,&fd);
 		memset(&bhfi,0,sizeof(bhfi));
 		if(hFind==INVALID_HANDLE_VALUE)
@@ -1498,27 +1925,54 @@ static int _statcore(HANDLE hFile, const char *filename, struct stat *buf)
 		}
 	}
 
-    if ( bhfi.dwFileAttributes & FILE_ATTRIBUTE_READONLY )
-        buf->st_mode |= (_S_IREAD + (_S_IREAD >> 3) + (_S_IREAD >> 6));
-    else
-        buf->st_mode |= ((_S_IREAD|_S_IWRITE) + ((_S_IREAD|_S_IWRITE) >> 3)
-          + ((_S_IREAD|_S_IWRITE) >> 6));
-	if (bhfi.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY )
-        buf->st_mode |= (_S_IEXEC + (_S_IEXEC >> 3) + (_S_IEXEC >> 6));
-
+	if(!(bhfi.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+	{
+#ifndef CVS95
+		if(is_gmt_fs) /* No point on doing this in FAT */
+		{
+			/* We're assuming a reasonable failure mode on FAT32 here */
+			if(use_ntsec)
+				buf->st_mode = GetUnixFileModeNtSec(filename,hFile);
+			else if(use_ntea)
+				buf->st_mode = GetUnixFileModeNtEA(filename,hFile);
+			else
+				buf->st_mode = 0;
+			if(!buf->st_mode)
+				buf->st_mode = 0644;
+		}
+		else
+#else
+		{
+			buf->st_mode = 0644;
+		}
+#endif
+		if ( bhfi.dwFileAttributes & FILE_ATTRIBUTE_READONLY)
+			buf->st_mode &=~ (_S_IWRITE + (_S_IWRITE >> 3) + (_S_IWRITE >> 6));
+		else
+			buf->st_mode |= _S_IWRITE;
+	}
+	else
+	{
+		/* We always assume under NT that directories are 0755.  Since Unix permissions don't
+		   map properly to NT directories anyway it's probably sensible */
+		buf->st_mode = 0755;
+	}
+	
     // Potential, but unlikely problem... casting DWORD to short.
     // Reported by Jerzy Kaczorowski, addressed by Jonathan Gilligan
     // if the number of links is greater than 0x7FFF
     // there would be an overflow problem.
     // This is a problem inherent in the struct stat, and hence
     // in the design of the C library.
-    if (bhfi.nNumberOfLinks > SHRT_MAX) {
+    if (bhfi.nNumberOfLinks > SHRT_MAX)
+	{
         error(0,0,"Internal error: too many links to a file.");
         buf->st_nlink = SHRT_MAX;
-        }
-    else {
+    }
+    else
+	{
 	    buf->st_nlink=(short)bhfi.nNumberOfLinks;
-        }
+    }
 
 	if(!filename)
 	{
@@ -1526,7 +1980,7 @@ static int _statcore(HANDLE hFile, const char *filename, struct stat *buf)
 		// current directory is correct.
 		*szFs='\0';
 		GetVolumeInformationA(NULL,NULL,0,NULL,NULL,NULL,szFs,32);
-		
+
 		is_gmt_fs = GMT_FS(szFs);
 	}
 	else
@@ -1535,9 +1989,33 @@ static int _statcore(HANDLE hFile, const char *filename, struct stat *buf)
 		{
 			if((filename[0]=='\\' || filename[0]=='/') && (filename[1]=='\\' || filename[1]=='/'))
 			{
-				// UNC pathname, assumed to be on an NTFS server.  No way to
-				// check, actually (GVI doesn't return anything useful).
-				is_gmt_fs = 1;
+				// UNC pathname: Extract server and share and pass it to GVI
+				char szRootPath[MAX_PATH + 1] = "\\\\";
+				const char *p = &filename[2];
+				char *q = &szRootPath[2];
+				int n;
+				for (n = 0; n < 2; n++)
+				{
+					// Get n-th path element
+					while (*p != 0 && *p != '/' && *p != '\\')
+					{
+						*q = *p;
+						p++;
+						q++;
+					}
+					// Add separator
+					if (*p != 0)
+					{
+						*q = '\\';
+						p++;
+						q++;
+					}
+				}
+				*q = 0;
+
+				*szFs='\0';
+				GetVolumeInformationA(szRootPath,NULL,0,NULL,NULL,NULL,szFs,sizeof(szFs));
+				is_gmt_fs = GMT_FS(szFs);
 			}
 			else
 			{
@@ -1563,7 +2041,7 @@ static int _statcore(HANDLE hFile, const char *filename, struct stat *buf)
 		FileTimeToUnixTime ( &bhfi.ftLastWriteTime, &buf->st_mtime, FALSE );
 		FileTimeToUnixTime ( &bhfi.ftCreationTime, &buf->st_ctime, FALSE );
 	}
-	else 
+	else
 	{
         // FAT - timestamps are in incorrectly translated local time.
         // translate them back and let FileTimeToUnixTime() do the
@@ -1596,6 +2074,10 @@ static int _statcore(HANDLE hFile, const char *filename, struct stat *buf)
 #undef stat
 #undef fstat
 #undef lstat
+#undef chmod
+#undef asctime
+#undef ctime
+#undef utime
 
 int wnt_stat(const char *name, struct wnt_stat *buf)
 {
@@ -1612,8 +2094,24 @@ int wnt_lstat (const char *name, struct wnt_stat *buf)
 	return _statcore(NULL,slash_convert(name,fname),buf);
 }
 
-#undef asctime
-#undef ctime
+int wnt_chmod (const char *name, mode_t mode)
+{
+	TRACE(3,"wnt_chmod(%s,%04o)",name,mode);
+	if(chmod(name,mode)<0)
+		return -1;
+
+#ifndef CVS95
+	if(!(GetFileAttributes(name)&FILE_ATTRIBUTE_DIRECTORY))
+	{
+		if(use_ntsec)
+			SetUnixFileModeNtSec(name,mode);
+		else if(use_ntea)
+			SetUnixFileModeNtEA(name,mode);
+	}
+#endif
+	return 0;
+}
+
 /* ANSI C compatibility for timestamps - VC pads with zeros, C standard pads with spaces */
 
 char *wnt_asctime(const struct tm *tm)
@@ -1650,9 +2148,33 @@ int wnt_utime(const char *filename, struct utimbuf *uf)
 	{
 		if((filename[0]=='\\' || filename[0]=='/') && (filename[1]=='\\' || filename[1]=='/'))
 		{
-			// UNC pathname, assumed to be on an NTFS server.  No way to
-			// check, actually (GVI doesn't return anything useful).
-			is_gmt_fs = 1;
+			// UNC pathname: Extract server and share and pass it to GVI
+			char szRootPath[MAX_PATH + 1] = "\\\\";
+			const char *p = &filename[2];
+			char *q = &szRootPath[2];
+			int n;
+			for (n = 0; n < 2; n++)
+			{
+				// Get n-th path element
+				while (*p != 0 && *p != '/' && *p != '\\')
+				{
+					*q = *p;
+					p++;
+					q++;
+				}
+				// Add separator
+				if (*p != 0)
+				{
+					*q = '\\';
+					p++;
+					q++;
+				}
+			}
+			*q = 0;
+
+			*szFs='\0';
+			GetVolumeInformationA(szRootPath,NULL,0,NULL,NULL,NULL,szFs,sizeof(szFs));
+			is_gmt_fs = GMT_FS(szFs);
 		}
 		else
 		{
@@ -1676,19 +2198,22 @@ int wnt_utime(const char *filename, struct utimbuf *uf)
 		UnixTimeToFileTime ( uf->actime, &At, FALSE);
 		UnixTimeToFileTime ( uf->modtime, &Wt, FALSE);
 	}
-	else 
+	else
 	{
 		// FAT or similar.  Convert to local time
 		FILETIME fAt,fWt;
 
 		UnixTimeToFileTime ( uf->actime, &fAt, TRUE);
 		UnixTimeToFileTime ( uf->modtime, &fWt, TRUE);
-		FileTimeToLocalFileTime ( &fAt, &At ); // Was LocalFileTimeFileTime... Not sure about this change.
-		FileTimeToLocalFileTime ( &fWt, &Wt );
+		LocalFileTimeToFileTime  ( &fAt, &At );
+		LocalFileTimeToFileTime  ( &fWt, &Wt );
 	}
 	h = CreateFileA(f,GENERIC_READ|GENERIC_WRITE,0,NULL,OPEN_EXISTING,0,NULL);
 	if(h==INVALID_HANDLE_VALUE)
+	{
+		DWORD dwErr = GetLastError();
 		return -1;
+	}
 	SetFileTime(h,NULL,&At,&Wt);
 	CloseHandle(h);
 	return 0;
@@ -1713,7 +2238,7 @@ LONG WINAPI MiniDumper(PEXCEPTION_POINTERS pExceptionInfo)
 	LPCTSTR szResult = NULL;
 
 	// firstly see if dbghelp.dll is around and has the function we need
-	// look next to the EXE first, as the one in System32 might be old 
+	// look next to the EXE first, as the one in System32 might be old
 	// (e.g. Windows 2000)
 	HMODULE hDll = NULL;
 	TCHAR szDbgHelpPath[_MAX_PATH];
@@ -1749,7 +2274,7 @@ LONG WINAPI MiniDumper(PEXCEPTION_POINTERS pExceptionInfo)
 			_tcscat( szDumpPath, _T("cvsnt-") T_CVSNT_PRODUCTVERSION_SHORT _T(".dmp") );
 
 			// ask the user if they want to save a dump file
-			if (MessageBox( NULL, _T("Something bad happened to CVSNT, and it crashed.  Would you like to produce a crash dump?"), _T("cvsnt"), MB_YESNO )==IDYES)
+			if (MessageBox( NULL, _T("Unfortunately CVSNT has crashed.  Would you like to produce a crash dump?"), _T("cvsnt"), MB_YESNO|MB_SERVICE_NOTIFICATION )==IDYES)
 			{
 				// create the file
 				HANDLE hFile = CreateFile( szDumpPath, GENERIC_WRITE, FILE_SHARE_WRITE, NULL, CREATE_ALWAYS,
@@ -1797,7 +2322,7 @@ LONG WINAPI MiniDumper(PEXCEPTION_POINTERS pExceptionInfo)
 	}
 
 	if (szResult)
-		MessageBox( NULL, szResult, _T("cvsnt"), MB_OK );
+		MessageBox( NULL, szResult, _T("cvsnt"), MB_OK|MB_SERVICE_NOTIFICATION );
 	return retval;
 }
 
@@ -1880,49 +2405,6 @@ void wnt_hide_file(const char *fn)
 	SetFileAttributesA(fn,FILE_ATTRIBUTE_HIDDEN);
 }
 
-#ifdef _UNICODE
-int real_main(int argc, char *argv[]);
-
-int __cdecl wmain(int argc, wchar_t **wargv, wchar_t **wenvp)
-{
-	char **argv;
-//	char **envp;
-	int i,ret;
-
-	argv=(char**)xmalloc(argc*sizeof(char*));
-/*	for(i=0;wenvp[i];i++)
-		;
-	envp=(char**)xmalloc((i+1)*sizeof(char*));*/
-
-	for(i=0; i<argc; i++)
-	{
-		int l = wcslen(wargv[i])+1;
-		argv[i]=(char*)xmalloc(l);
-		WideCharToMultiByte(CP_UTF8,0,wargv[i],l,argv[i],l,NULL,NULL);
-	}
-
-/*	for(i=0; wenvp[i]; i++)
-	{
-		int l = wcslen(wenvp[i])+1;
-		envp[i]=(char*)xmalloc(l);
-		WideCharToMultiByte(CP_UTF8,0,wenvp[i],l,argv[i],l,NULL,NULL);
-	}
-	envp[i]=NULL; */
-
-	ret = real_main(argc,argv/*,envp*/);
-
-	for(i=0; i<argc; i++)
-		xfree(argv[i]);
-	xfree(argv);
-
-/*	for(i=0;envp[i];i++)
-		xfree(envp[i]);
-	xfree(envp);*/
-
-	return ret;
-}
-#endif
-
 int getmode(int fd)
 {
 	unsigned char mode = _osfile(fd);
@@ -1932,3 +2414,185 @@ int getmode(int fd)
 		return _O_BINARY;
 }
 
+#ifndef CVS95
+#undef main
+int main(int argc, char **argv);
+
+int wmain(int argc, wchar_t **argv)
+{
+	char **newargv = (char**)xmalloc(sizeof(char*)*(argc+1)),*buf, *p;
+	int n, ret, len;
+
+#ifdef UTF8
+	int cp = CP_UTF8;
+#else
+	int cp = CP_ACP;
+#endif
+
+	len=0;
+	for(n=0; n<argc; n++)
+		len+= WideCharToMultiByte(cp,0,argv[n],-1,NULL,0,NULL,NULL);
+	buf=p=xmalloc(len);
+	for(n=0; n<argc; n++)
+	{
+		newargv[n]=p;
+		p+=WideCharToMultiByte(cp,0,argv[n],-1,newargv[n],len,NULL,NULL);
+	}
+	newargv[n]=NULL;
+	ret = main(argc,newargv);
+	xfree(buf);
+	xfree(newargv);
+	return ret;
+}
+#endif
+
+int w32_is_network_share(const char *directory)
+{
+	char drive[]="z:\\";
+	char dir[MAX_PATH];
+
+	if(strlen(directory)<2)
+		return 0;
+
+	if(ISDIRSEP(directory[0]) && ISDIRSEP(directory[1]))
+		return 1;
+
+	if(directory[1]==':')
+	{
+		drive[0]=directory[0];
+		if(GetDriveType(drive)==DRIVE_REMOTE)
+			return 1;
+		return 0;
+	}
+
+	GetCurrentDirectory(sizeof(dir),dir);
+	if(dir[1]==':')
+	{
+		drive[0]=dir[0];
+		if(GetDriveType(drive)==DRIVE_REMOTE)
+			return 1;
+	}
+	return 0;
+}
+
+/* Courtesy of anonymous, via google */
+char *ConvertFilespecToCorrectCase(char *aFullFileSpec)
+// aFullFileSpec must be a modifiable string
+// since it will be converted to proper case.
+// Returns aFullFileSpec, the contents of which
+// have been converted to the case used by the
+// file system.  Note: The trick of changing
+// the current directory to be that of
+// aFullFileSpec and then calling GetFullPathName()
+// doesn't always work.  So perhaps the
+// only easy way is to call FindFirstFile() on each
+// directory that composes aFullFileSpec, which
+// is what is done here.
+{
+ // Longer in case of UNCs and such,
+ // which might be longer than MAX_PATH:
+ #define WORK_AREA_SIZE (MAX_PATH * 2)
+
+	size_t length;
+    char built_filespec[WORK_AREA_SIZE], *dir_start, *dir_end, *dir_last;
+	int chars_to_copy;
+	WIN32_FIND_DATA found_file;
+	HANDLE file_search;
+
+	if (!aFullFileSpec || !*aFullFileSpec)
+		return aFullFileSpec;
+	length = strlen(aFullFileSpec);
+
+	if (length < 2 || length >= WORK_AREA_SIZE)
+		return aFullFileSpec;
+
+	// Start with something easy, the drive letter:
+	if (aFullFileSpec[1] == ':')
+		aFullFileSpec[0] = toupper(aFullFileSpec[0]);
+	// else it might be a UNC that has no drive letter.
+	if (dir_start = strchr(aFullFileSpec, ':'))
+	// Skip over 1st backslash that goes with drive letter.
+		dir_start += 2;
+	else // it's probably a UNC (handling of UNCs hasn't been tested)
+	{
+		if (!strncmp(aFullFileSpec, "//", 2))
+			// I think MS says you can't use FindFirstFile() directly
+			// on a share name, so we want to omit that from consideration
+			// (i.e. we don't attempt to find its proper case):
+			dir_start = aFullFileSpec + 2;
+		else if(aFullFileSpec[0]=='/')
+			dir_start = aFullFileSpec + 1;
+		else
+			dir_start = aFullFileSpec;
+	}
+	// Init the new string (the filespec we're building),
+	// e.g. copy just the "c:\\" part.
+	chars_to_copy = dir_start - aFullFileSpec;
+	memcpy(built_filespec, aFullFileSpec, chars_to_copy);
+	built_filespec[chars_to_copy] = '\0';
+
+	dir_last = NULL;
+	for (dir_end = dir_start; dir_end = strchr(dir_end, '/'); dir_last = ++dir_end)
+	{
+		*dir_end = '\0';  // Temporarily terminate.
+		if(dir_last && !strcmp(dir_last,"."))
+		{
+			*dir_end='/';
+			continue;
+		}
+		if(dir_last && !strcmp(dir_last,".."))
+		{
+			built_filespec[strlen(built_filespec)-1]='\0';
+			dir_last = strrchr(built_filespec,'/');
+			if(dir_last > (built_filespec+(dir_start - aFullFileSpec)))
+				*dir_last = '\0';
+			else
+				built_filespec[dir_start - aFullFileSpec]='\0';
+			continue;
+		}
+		file_search = FindFirstFile(aFullFileSpec, &found_file);
+		if (file_search == INVALID_HANDLE_VALUE)
+		{
+			DWORD dwError = GetLastError();
+			if(dwError==ERROR_ACCESS_DENIED)
+				error(0,0,"Access denied looking up %s - results may not be correct",aFullFileSpec);
+			*dir_end = '/'; // Restore it before we do anything else.
+			return aFullFileSpec;
+		}
+		*dir_end = '/'; // Restore it before we do anything else.
+		FindClose(file_search);
+		// Append the case-corrected version of this directory name:
+		strcat(built_filespec, found_file.cFileName);
+		strcat(built_filespec, "/");
+	}
+
+	if(dir_last && !strcmp(dir_last,".."))
+	{
+		built_filespec[strlen(built_filespec)-1]='\0';
+		dir_last = strrchr(built_filespec,'/');
+		if(dir_last >= (built_filespec+(dir_start - aFullFileSpec)))
+			*dir_last = '\0';
+		else
+			built_filespec[dir_start - aFullFileSpec]='\0';
+		dir_last=".";
+	}
+	if(!dir_last || (*dir_last && strcmp(dir_last,".")))
+	{
+		// Now do the filename itself:
+		if (   (file_search = FindFirstFile(aFullFileSpec, &found_file)) == INVALID_HANDLE_VALUE   )
+		{
+			DWORD dwError = GetLastError();
+			if(dwError==ERROR_ACCESS_DENIED)
+				error(0,0,"Access denied looking up %s - results may not be correct",aFullFileSpec);
+			return aFullFileSpec;
+		}
+		strcat(built_filespec, found_file.cFileName);
+	}
+	FindClose(file_search);
+ // It might be possible for the new one to be longer than the old,
+ // e.g. if some 8.3 short names were converted to long names by the
+ // process.  Thus, the caller should ensure that aFullFileSpec is
+ // large enough:
+	strcpy(aFullFileSpec, built_filespec);
+	return aFullFileSpec;
+}

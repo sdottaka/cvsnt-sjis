@@ -77,6 +77,7 @@ host_triplet = @host@
 EXEEXT = @EXEEXT@
 OBJEXT = @OBJEXT@
 PATH_SEPARATOR = @PATH_SEPARATOR@
+
 libdir = $(cvs_library_dir)
 AMTAR = @AMTAR@
 AR = @AR@
@@ -115,6 +116,7 @@ am__include = @am__include@
 am__quote = @am__quote@
 cvs_config_dir = @cvs_config_dir@
 cvs_library_dir = @cvs_library_dir@
+cvs_target_name = @cvs_target_name@
 install_sh = @install_sh@
 
 # For now we need to include $(top_srcdir)/src because some systems
@@ -124,7 +126,8 @@ install_sh = @install_sh@
 # when compiling savecwd.c
 #
 # $(includeopt) is CVS specific and set by configure
-INCLUDES = -I$(top_srcdir)/src -I$(top_srcdir)/lib $(includeopt)
+AM_CPPFLAGS = -I$(top_srcdir)/src -I$(top_srcdir)/lib $(includeopt)
+AM_CFLAGS = -DCVS_CONFIG_DIR=\"$(cvs_config_dir)\" -DCVS_LIBRARY_DIR=\"$(cvs_library_dir)\"
 
 @PSERVER_PROTOCOL_SUPPORT_TRUE@pserver_target = pserver_protocol.la
 @PSERVER_PROTOCOL_SUPPORT_FALSE@pserver_target = 

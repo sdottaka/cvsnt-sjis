@@ -18,7 +18,7 @@ GNU General Public License for more details.
 #include "system.h"
 #include <stdio.h>
 #include <setjmp.h>
-#include "regex.h"
+#include "regex1.h"
 #include "diffrun.h"
 
 #define TAB_WIDTH 8
@@ -98,7 +98,7 @@ EXTERN char *file_label[2];
 
 struct regexp_list
 {
-  struct re_pattern_buffer buf;
+  regex_t buf;
   struct regexp_list *next;
 };
 
@@ -316,8 +316,6 @@ void print_rcs_script PARAMS((struct change *));
 void print_sdiff_script PARAMS((struct change *));
 
 /* util.c */
-VOID *xmalloc PARAMS((size_t));
-VOID *xrealloc PARAMS((VOID *, size_t));
 char *concat PARAMS((char const *, char const *, char const *));
 char *dir_file_pathname PARAMS((char const *, char const *));
 int change_letter PARAMS((int, int));

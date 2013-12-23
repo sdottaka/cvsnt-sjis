@@ -12,7 +12,7 @@
 
 static Dtype status_dirproc PROTO ((void *callerdat, char *dir,
 				    char *repos, char *update_dir,
-				    List *entries));
+				    List *entries, const char *virtual_repository, Dtype hint));
 static int status_fileproc PROTO ((void *callerdat, struct file_info *finfo));
 static int tag_list_proc PROTO((Node * p, void *closure));
 
@@ -43,7 +43,7 @@ cvsstatus (argc, argv)
     int c;
     int err = 0;
 
-	supress_extra_fields = 0;
+	supress_extra_fields = fake_unix_cvs;
 
     if (argc == -1)
 	usage (status_usage);
@@ -119,7 +119,7 @@ cvsstatus (argc, argv)
 
     /* start the recursion processor */
     err = start_recursion (status_fileproc, (FILESDONEPROC) NULL,
-			   status_dirproc, (DIRLEAVEPROC) NULL, NULL,
+			   (PREDIRENTPROC) NULL, status_dirproc, (DIRLEAVEPROC) NULL, NULL,
 			   argc, argv, local,
 			   W_LOCAL, 0, 1, (char *) NULL, 1, verify_read);
 
@@ -200,7 +200,7 @@ status_fileproc (callerdat, finfo)
     if (vers->ts_user == NULL)
     {
 	cvs_output ("File: no file ", 0);
-	cvs_output (finfo->file, 0);
+	cvs_output (fn_root(finfo->file), 0);
 	cvs_output ("\t\tStatus: ", 0);
 	cvs_output (sstat, 0);
 	cvs_output ("\n", 0);
@@ -228,7 +228,7 @@ status_fileproc (callerdat, finfo)
     if (vers->vn_user == NULL)
     {
 	cvs_output ("   Working revision:\tNo entry for ", 0);
-	cvs_output (finfo->file, 0);
+	cvs_output (fn_root(finfo->file), 0);
 	cvs_output ("\n", 0);
     }
     else if (vers->vn_user[0] == '0' && vers->vn_user[1] == '\0')
@@ -255,7 +255,15 @@ status_fileproc (callerdat, finfo)
 		cvs_output ("   Repository revision:\t", 0);
 		cvs_output (vers->vn_rcs, 0);
 		cvs_output ("\t", 0);
-		cvs_output (fn_root(vers->srcfile->path), 0);
+		/* We lie... */
+		{
+		char *repo = Name_Repository(NULL,NULL);
+		char *tmp = xmalloc(strlen(repo)+strlen(finfo->file)+sizeof(RCSEXT)+10);
+		sprintf(tmp,"%s/%s%s",fn_root(repo),finfo->file,RCSEXT);
+		cvs_output (tmp, 0);
+		xfree(tmp);
+		xfree(repo);
+		}
 		cvs_output ("\n", 0);
 	}
 
@@ -296,7 +304,10 @@ status_fileproc (callerdat, finfo)
 	    {
 			cvs_output ("   Sticky Tag:\t\t", 0);
 			cvs_output (edata->tag, 0);
-			cvs_output (" - MISSING from RCS file!\n", 0);
+			if (vers->vn_user[0] != '0' || vers->vn_user[1] != '\0')
+				cvs_output (" - MISSING from RCS file!\n", 0);
+			else
+				cvs_output ("\n", 0);
 	    }
 	    else
 	    {
@@ -389,14 +400,11 @@ status_fileproc (callerdat, finfo)
  * Print a warm fuzzy message
  */
 /* ARGSUSED */
-static Dtype
-status_dirproc (callerdat, dir, repos, update_dir, entries)
-    void *callerdat;
-    char *dir;
-    char *repos;
-    char *update_dir;
-    List *entries;
+static Dtype status_dirproc (void *callerdat, char *dir, char *repos, char *update_dir, List *entries, const char *virtual_repository, Dtype hint)
 {
+	if(hint!=R_PROCESS)
+		return hint;
+
     if (!quiet)
 	error (0, 0, "Examining %s", update_dir);
     return (R_PROCESS);

@@ -74,7 +74,7 @@ send_files(int argc, char **argv, int local, int aflag, unsigned int flags);
 #define SEND_NO_CONTENTS		0x004
 #define BACKUP_MODIFIED_FILES	0x008
 #define SEND_DIRECTORIES_ONLY	0x010
-#define SEND_FORCE_MODIFIED		0x012
+#define SEND_CASE_SENSITIVE		0x020
 
 /* Send an argument to the remote server.  */
 void send_arg(const char *string);

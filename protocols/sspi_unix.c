@@ -25,11 +25,12 @@ static int sspi_connect(const struct protocol_interface *protocol, int verify_on
 static int sspi_disconnect(const struct protocol_interface *protocol);
 static int sspi_login(const struct protocol_interface *protocol, char *password);
 static int sspi_logout(const struct protocol_interface *protocol);
+static int sspi_auth_protocol_connect(const struct protocol_interface *protocol, const char *auth_string);
 static int sspi_read_data(const struct protocol_interface *protocol, void *data, int length);
 static int sspi_write_data(const struct protocol_interface *protocol, const void *data, int length);
 static int sspi_flush_data(const struct protocol_interface *protocol);
 static int sspi_shutdown(const struct protocol_interface *protocol);
-static int ClientAuthenticate(const char *protocol, const char *name, const char *pwd, const char *domain);
+static int ClientAuthenticate(const char *protocol, const char *name, const char *pwd, const char *domain, const char *hostname);
 static int sspi_get_user_password(const char *username, const char *server, const char *port, const char *directory, char *password, int password_len);
 static int sspi_set_user_password(const char *username, const char *server, const char *port, const char *directory, const char *password);
 
@@ -52,7 +53,7 @@ struct protocol_interface sspi_protocol_interface =
 	sspi_login,
 	sspi_logout,
 	NULL, /* wrap */
-	NULL, /* auth_protocol_connect */
+	sspi_auth_protocol_connect, 
 	sspi_read_data,
 	sspi_write_data,
 	sspi_flush_data,
@@ -66,9 +67,14 @@ struct protocol_interface sspi_protocol_interface =
 	NULL /* server_shutdown */
 };
 
+static char winbindwrapper[1024];
+
 struct protocol_interface *get_protocol_interface(const struct server_interface *server)
 {
 	current_server = server;
+
+        if(current_server->get_global_config_data(current_server,"PServer","WinbindWrapper",winbindwrapper,sizeof(winbindwrapper)) || !winbindwrapper[0])
+            sspi_protocol_interface.auth_protocol_connect = NULL;
 
 	return &sspi_protocol_interface;
 }
@@ -136,7 +142,7 @@ int sspi_connect(const struct protocol_interface *protocol, int verify_only)
 	else
 	    server_error(1, "Can't authenticate - server and client cannot agree on an authentication scheme (got '%s')",protocols);
 
-	if(!ClientAuthenticate(proto,user,password,domain))
+	if(!ClientAuthenticate(proto,user,password,domain,current_server->current_root->hostname))
 	{
 		/* Actually we never get here... NTLM seems to allow the client to
 		   authenticate then fails at the server end.  Wierd huh? */
@@ -164,7 +170,7 @@ int sspi_disconnect(const struct protocol_interface *protocol)
 int sspi_login(const struct protocol_interface *protocol, char *password)
 {
 	char crypt_password[64];
-	char *user = get_username(current_server->current_root);
+	const char *user = get_username(current_server->current_root);
 	
 	/* Store username & encrypted password in password store */
 	pserver_crypt_password(password,crypt_password,sizeof(crypt_password));
@@ -178,13 +184,88 @@ int sspi_login(const struct protocol_interface *protocol, char *password)
 
 int sspi_logout(const struct protocol_interface *protocol)
 {
-	char *user = get_username(current_server->current_root);
+	const char *user = get_username(current_server->current_root);
 	
 	if(sspi_set_user_password(user,current_server->current_root->hostname,current_server->current_root->port,current_server->current_root->directory,NULL))
 	{
 		server_error(1,"Failed to delete password");
 	}
 	return CVSPROTO_SUCCESS;
+}
+
+int sspi_auth_protocol_connect(const struct protocol_interface *protocol, const char *auth_string)
+{
+        int rc;
+        char *protocols;
+        const char *proto;
+	int fdin, fdout, fderr;
+	int l;
+	short len;
+	char line[1024];
+	char buf[1024];
+
+        if (!strcmp (auth_string, "BEGIN SSPI"))
+           sspi_protocol_interface.verify_only = 0;
+        else
+           return CVSPROTO_NOTME;
+
+        server_getline(protocol, &protocols, 1024);
+
+        if(!protocols)
+        {
+                server_printf("Nope!\n");
+                return CVSPROTO_FAIL;
+        }
+        else if(strstr(protocols,"NTLM"))
+                proto="NTLM";
+        else
+        {
+                server_printf("Nope!\n");
+                return CVSPROTO_FAIL;
+        }
+        free(protocols);
+
+        server_printf("%s\n",proto); /* We have negotiated NTLM */
+
+	if(run_command(winbindwrapper, &fdin, &fdout, &fderr))
+	  return CVSPROTO_FAIL;
+	
+	do
+	{
+	read(current_server->in_fd,&len,2);
+	len=ntohs(len);
+	l=read(current_server->in_fd,buf,len);
+	if(l<0)
+	  return CVSPROTO_FAIL;
+	strcpy(line,"KK ");
+	l=base64enc(buf,line+3,len);
+	strcat(line,"\n");
+	write(fdin, line, strlen(line));
+	l=read(fdout, line, sizeof(line));
+	if(l<0)
+	  return CVSPROTO_FAIL;
+	line[l]='\0';
+	if(line[0]=='T' && line[1]=='T')
+	{
+	  len=base64dec(line+3,buf,l-4);
+	  base64enc(buf,line+3,len);
+	  len=htons(len);
+	  write(current_server->out_fd,&len,2);
+	  write(current_server->out_fd,buf,ntohs(len));
+	}
+	} while(line[0]=='T' && line[1]=='T');
+	if(line[0]!='A' || line[1]!='F')
+	   return CVSPROTO_FAIL;
+	close(fdin);
+	close(fdout);
+	close(fderr);
+
+	line[strlen(line)-1]='\0';
+        sspi_protocol_interface.auth_username = strdup(line+3);
+
+        /* Get the repository details for checking */
+        server_getline (protocol, &sspi_protocol_interface.auth_repository, 4096);
+        return CVSPROTO_SUCCESS;
 }
 
 int sspi_read_data(const struct protocol_interface *protocol, void *data, int length)
@@ -207,7 +288,7 @@ int sspi_shutdown(const struct protocol_interface *protocol)
 	return tcp_shutdown();
 }
 
-int ClientAuthenticate(const char *protocol, const char *name, const char *pwd, const char *domain)
+int ClientAuthenticate(const char *protocol, const char *name, const char *pwd, const char *domain, const char *hostname)
 {
 	tSmbNtlmAuthRequest request;
 	tSmbNtlmAuthChallenge challenge;

@@ -70,7 +70,17 @@ void error_exit ()
 /* VARARGS */
 void error (int status, int errnum, const char *message, ...)
 {
+	static int in_error = 0;
+
     int save_errno = errno;
+
+	if(in_error)
+	{
+		if(status)
+			error_exit();
+		return;
+	}
+	in_error = 1;
 
     if (message[0] != '\0')
     {
@@ -177,6 +187,7 @@ void error (int status, int errnum, const char *message, ...)
 	}
 	cvs_flusherr();
     errno = save_errno;
+	in_error = 0;
 }
 
 /* Print the program name and error message MESSAGE, which is a printf-style

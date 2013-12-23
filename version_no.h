@@ -23,14 +23,13 @@
  *                 detailed documentation is below, see also, version_fu.h
  */
 
-#ifdef _WIN32
-#pragma once
-#endif
+#ifndef VERSION_NO__H
+#define VERSION_NO__H
 
 // cvsnt version
 #define CVSNT_PRODUCT_MAJOR 2
 #define CVSNT_PRODUCT_MINOR 0
-#define CVSNT_PRODUCT_PATCHLEVEL 14
+#define CVSNT_PRODUCT_PATCHLEVEL 51d
 
 //
 // Example preprocessor definitions.
@@ -98,3 +97,4 @@
 // version_fu.h
 //
 //////////////////////////////////////////////////////////////////////////
+#endif

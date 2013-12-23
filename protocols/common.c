@@ -41,11 +41,87 @@
 #define socket_errno errno
 #endif
 
+/*
+** Translation Table as described in RFC1113
+*/
+static const unsigned char cb64[64]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 enum PIPES { PIPE_READ = 0, PIPE_WRITE = 1 };
 
 const struct server_interface *current_server;
 static int tcp_fd;
 static struct addrinfo *tcp_addrinfo, *tcp_active_addrinfo;
+
+/*
+** encodeblock
+**
+** encode 3 8-bit binary bytes as 4 '6-bit' characters
+*/
+static void encodeblock(const unsigned char *in, unsigned char *out, int len )
+{
+    out[0] = cb64[ in[0] >> 2 ];
+    out[1] = cb64[ ((in[0] & 0x03) << 4) | ((in[1] & 0xf0) >> 4) ];
+    out[2] = len > 1 ? cb64[ ((in[1] & 0x0f) << 2) | ((in[2] & 0xc0) >> 6) ] : '=';
+    out[3] = len > 2 ? cb64[ in[2] & 0x3f ] : '=';
+}
+
+static unsigned char de64(unsigned char b)
+{
+  const unsigned char *p=strchr(cb64,b);
+  if(p) return p-cb64;
+  else return 0;
+}
+
+/*
+** decodeblock
+**
+** decode 4 '6-bit' characters into 3 8-bit binary bytes
+ */
+static int decodeblock(const unsigned char *in, unsigned char *out)
+{   
+    int l=0;
+    unsigned char in0, in1, in2, in3;
+    in0=de64(in[0]);
+    in1=de64(in[1]);
+    in2=de64(in[2]);
+    in3=de64(in[3]);
+    out[l++] = in0 << 2 | in1 >> 4;
+    if(in[2]!='=')
+    {
+      out[l++] = in1 << 4 | in2 >> 2;
+      if(in[3]!='=')
+      {
+        out[l++] = ((in2 << 6) & 0xc0) | in3;
+      }
+    }
+    return l;
+}
+
+int base64enc(const unsigned char *in, unsigned char *out, int len)
+{
+	int l=0;
+	for(;len>0; len-=3)
+	{
+		encodeblock(in, out, len);
+		in+=3;
+		out+=4;
+		l+=4;
+	}
+	*out='\0';
+	return l;
+}
+
+int base64dec(const unsigned char *in, unsigned char *out, int len)
+{
+	int l=0,b;
+	for(;len>0; len-=4)
+	{
+		b=decodeblock(in, out);
+		out+=b;
+		l+=b;
+		in+=4;
+	}
+	return l;
+}
 
 int get_tcp_fd()
 {
@@ -100,6 +176,7 @@ static int tcp_connect_http(const cvsroot_t *cvsroot)
 	int sock;
 	const char *port;
 	char line[1024],*p;
+	int code;
 
 	port = cvsroot->proxyport;
 	if(!port)
@@ -114,20 +191,42 @@ static int tcp_connect_http(const cvsroot_t *cvsroot)
 
 	port = get_default_port(cvsroot);
 
-	tcp_printf("CONNECT %s:%s HTTP/1.0\n\n",cvsroot->hostname,port);
+	if(cvsroot->proxyuser && cvsroot->proxyuser[0])
+	{
+		char enc[sizeof(line)];
+		sprintf(line,"%s:%s",cvsroot->proxyuser,cvsroot->proxypassword?cvsroot->proxypassword:"");
+		base64enc(line,enc,strlen(line));
+		tcp_printf("CONNECT %s:%s HTTP/1.1\nProxy-Authorization: Basic %s\n\n",cvsroot->hostname,port,enc);
+	}
+	else
+		tcp_printf("CONNECT %s:%s HTTP/1.0\n\n",cvsroot->hostname,port);
 	tcp_readline(line, sizeof(line));
 	
 	p=strchr(line,' ');
-	if(!p || (atoi(p+1)/100)!=2)
-		server_error(1,"Proxy server %s does not support HTTP tunnelling",cvsroot->proxy);
-
-	/* Eat the remaining output */
-	do
+	if(p) p++;
+	code=p?atoi(p):0;
+	if((code/100)!=2)
 	{
-		tcp_readline(line,sizeof(line));
-	} while(strlen(line)>1);
+		if(code==407)
+		{
+			if(cvsroot->proxyuser && cvsroot->proxyuser[0])
+				server_error(1,"Proxy server authentication failed");
+			else
+				server_error(1,"Proxy server requires authentication");
+		}
+		else
+			server_error(1,"Proxy server connect failed: ",p?p:"No response");
+	}
+
+	while(strlen(line)>1)
+		tcp_readline(line, sizeof(line));
 
 	return 0;
+}
+
+static int tcp_connect_cgi(const cvsroot_t *cvsroot)
+{
+	return -1;
 }
 
 int tcp_connect(const cvsroot_t *cvsroot)
@@ -140,6 +239,8 @@ int tcp_connect(const cvsroot_t *cvsroot)
 		return tcp_connect_direct(cvsroot);
 	if(!strcasecmp(protocol,"HTTP"))
 		return tcp_connect_http(cvsroot);
+	if(!strcasecmp(protocol,"CGI"))
+		return tcp_connect_cgi(cvsroot);
 	tcp_fd = -1;
 	server_error(1, "Unsupported tunnelling protocol '%s' specified",protocol);
 	return -1;
@@ -212,16 +313,6 @@ win32_port_reuse_hack:
 
 	return sock;
 }
-const struct addrinfo *get_addrinfo(int get_canonical_name)
-{
-	if(get_canonical_name && tcp_addrinfo->ai_canonname==NULL)
-	{
-		char host[256];
-		getnameinfo(tcp_addrinfo->ai_addr,tcp_addrinfo->ai_addrlen,host,sizeof(host),NULL,0,0);
-		tcp_addrinfo->ai_canonname=strdup(host);
-	}
-	return tcp_addrinfo;
-}
 
 int tcp_setblock(int block)
 {
@@ -233,14 +324,12 @@ int tcp_setblock(int block)
     if(block)
 	flags&=~O_NONBLOCK;
     else
-	flags!=O_NONBLOCK;
+	flags|=O_NONBLOCK;
     fcntl(tcp_fd, F_SETFL, flags);
     return 0;
   }
-#else
-  return -1;
 #endif
-
+  return -1;
 }
 
 int tcp_disconnect()
@@ -258,17 +347,31 @@ int tcp_disconnect()
 int tcp_read(void *data, int length)
 {
 	if(!tcp_fd) /* Using stdin/out, probably */
-		return read(0,data,length);
+		return read(current_server->in_fd,data,length);
 	else
-		return recv(tcp_fd,data,length,0);
+	{
+		int err = recv(tcp_fd,data,length,0);
+#ifdef _WIN32
+		if(err<0)
+			errno = -socket_errno;
+#endif
+		return err;
+	}
 }
 
 int tcp_write(const void *data, int length)
 {
 	if(!tcp_fd) /* Using stdin/out, probably */
-		return write(1,data,length);
+		return write(current_server->out_fd,data,length);
 	else
-		return send(tcp_fd,data,length,0);
+	{
+		int err = send(tcp_fd,data,length,0);
+#ifdef _WIN32
+		if(err<0)
+			errno = -socket_errno;
+#endif
+		return err;
+	}
 }
 
 int tcp_shutdown()
@@ -326,7 +429,11 @@ int server_getc(const struct protocol_interface *protocol)
 		return c;
 	}
 	else
-		return getc(stdin);
+	{
+		if(read(current_server->in_fd,&c,1)<1)
+			return EOF;
+		return c;
+	}
 }
 
 int server_getline(const struct protocol_interface *protocol, char** buffer, int buffer_max)
@@ -353,6 +460,20 @@ int server_getline(const struct protocol_interface *protocol, char** buffer, int
 	*p='\0';
 	return l;
 	
+}
+
+int server_printf(char *fmt, ...)
+{
+	char temp[1024];
+	va_list va;
+
+	va_start(va,fmt);
+
+	vsnprintf(temp,sizeof(temp),fmt,va);
+
+	va_end(va);
+
+	return write(current_server->out_fd,temp,strlen(temp));
 }
 
 #ifdef _WIN32

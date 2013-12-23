@@ -29,9 +29,6 @@ extern int errno;
 /* Amount by which to increase buffer size when allocating more space. */
 #define PATH_INCR 32
 
-void *xmalloc(size_t bytes);
-void *xrealloc(void *ptr, size_t bytes);
-
 /* Return the current directory, newly allocated, arbitrarily long.
    Return NULL and set errno on error. */
 

@@ -21,11 +21,19 @@ GNU General Public License for more details.
 #define GDIFF_MAIN
 #include "diff.h"
 #include <signal.h>
-#include "getopt.h"
+#include "getopt1.h"
 #include "fnmatch.h"
-#include "error.h"
 #ifdef _WIN32
 #include <io.h>
+#endif
+#include "../src/unicode_stuff.h"
+
+#ifdef HAVE_UNISTD_H
+#include <unistd.h>
+#endif
+
+#ifdef HAVE_GETOPT_H
+#include <getopt.h>
 #endif
 
 #ifndef DEFAULT_WIDTH
@@ -67,7 +75,7 @@ int no_discards;
 /* I/O mode: nonzero only if using binary input/output.  */
 int binary_I_O;
 
-int unicode_files;
+encoding_type encoding = ENC_UNKNOWN;
 
 /* Return a string containing the command options with which diff was invoked.
    Spaces appear between what were separate ARGV-elements.
@@ -229,7 +237,7 @@ static struct option const longopts[] =
   {"horizon-lines", 1, 0, 140},
   {"help", 0, 0, 141},
   {"binary", 0, 0, 142},
-  {"unicode", 0, 0, 143},
+  {"encoding", 1, 0, 143},
   {0, 0, 0, 0}
 };
 
@@ -589,8 +597,8 @@ diff_run (argc, argv, out, callbacks_arg)
 	  binary_I_O = 1;
 	  break;
 	case 143:
-		/* Treat files as unicode */
-		unicode_files = 1;
+		/* Set file encoding */
+		encoding = atoi(optarg);
 		break;
 
 	default:
@@ -716,14 +724,13 @@ add_regexp (reglist, pattern)
      char const *pattern;
 {
   struct regexp_list *r;
-  char const *m;
+  int m;
 
   r = (struct regexp_list *) xmalloc (sizeof (*r));
   bzero (r, sizeof (*r));
-  r->buf.fastmap = xmalloc (256);
-  m = re_compile_pattern (pattern, strlen (pattern), &r->buf);
+  m = regcomp(&r->buf, pattern, 0);
   if (m != 0)
-    diff_error ("%s: %s", pattern, m);
+    diff_error ("%s: %s", pattern, "regexp error");
 
   /* Add to the start of the list, since it's easier than the end.  */
   r->next = *reglist;
@@ -755,7 +762,7 @@ static char const * const option_help[] = {
 "-B  --ignore-blank-lines  Ignore changes whose lines are all blank.",
 "-I RE  --ignore-matching-lines=RE  Ignore changes whose lines all match RE.",
 "--binary  Read and write data in binary mode.",
-"--unicode  Read and write as unicode.",
+"--encoding=NUM  Read and write as unicode type.",
 "-a  --text  Treat all files as text.\n",
 "-c  -C NUM  --context[=NUM]  Output NUM (default 2) lines of copied context.",
 "-u  -U NUM  --unified[=NUM]  Output NUM (default 2) lines of unified context.",

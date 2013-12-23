@@ -1,3 +1,5 @@
+#include "config.h"
+
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define STRICT
@@ -5,6 +7,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #else
+#include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <errno.h>
@@ -13,62 +16,96 @@
 
 #include <stdio.h>
 #include <stdarg.h>
+#include <time.h>
 #include <vector>
 #include <string>
 #include <map>
+#include <algorithm>
 
 #include "LockService.h"
 
 #ifdef _WIN32
 #define socket_errno WSAGetLastError()
 #define vsnprintf _vsnprintf
-#define strcasecmp stricmp
 #else
 #define closesocket close
 #define socket_errno errno
 #endif
 
-#ifdef _WIN32
-#define isslash(c) ((c=='/') || (c=='\\'))
-#define path_equal(a,b) (tolower(a)==tolower(b))
-#else
-#define isslash(c) (c=='/')
-#define path_equal(a,b) (a==b)
-#endif
+static bool DoClient(SOCKET s,size_t client, char *param);
+static bool DoLock(SOCKET s,size_t client, char *param);
+static bool DoUnlock(SOCKET s,size_t client, char *param);
+static bool DoMonitor(SOCKET s,size_t client, char *param);
+static bool DoClients(SOCKET s,size_t client, char *param);
+static bool DoLocks(SOCKET s,size_t client, char *param);
+static bool DoModified(SOCKET s,size_t client, char *param);
+static bool DoVersion(SOCKET s,size_t client, char *param);
 
-static bool DoClient(SOCKET s, char *param);
-static bool DoLock(SOCKET s, char *param);
-static bool DoUnlock(SOCKET s, char *param);
-static bool DoMonitor(SOCKET s, char *param);
-static bool DoClients(SOCKET s, char *param);
-static bool DoLocks(SOCKET s, char *param);
-static bool request_lock(SOCKET s, const char *path, unsigned flags, int& lock_to_wait_for);
+static bool request_lock(size_t client, const char *path, unsigned flags, size_t& lock_to_wait_for);
 
 extern bool g_bTestMode;
 #define DEBUG if(g_bTestMode) printf
 
+static size_t global_lockId;
+
 const char *StateString[] = { "Logging in", "Active", "Monitoring", "Closed" };
 enum ClientState { lcLogin, lcActive, lcMonitor, lcClosed };
-enum LockFlags { lfRead = 0x00, lfWrite = 0x01, lfRecursive=0x08, lfFile=0x10, lfDirectory=0x20, lfDeleted=0x8000 };
+enum LockFlags { lfRead = 0x01, lfWrite = 0x02, lfAdvisory = 0x04, lfFull = 0x08 };
+enum MonitorFlags { lcMonitorClient=0x01, lcMonitorLock=0x02, lcMonitorVersion=0x04 };
+
+typedef std::map<std::string,std::string> VersionMapType;
+
+struct Lock
+{
+	size_t owner;
+	std::string path;
+	unsigned flags;
+	size_t length; /* length of path */
+	VersionMapType versions;
+};
+
+struct TransactionStruct
+{
+	size_t owner;
+	std::string path;
+	std::string branch;
+	std::string version;
+	std::string oldversion;
+	char type;
+};
+
+typedef std::vector<TransactionStruct> TransactionListType;
 
 struct LockClient
 {
+	SOCKET sock;
 	std::string server_host;
 	std::string client_host;
 	std::string user;
 	std::string root;
 	ClientState state;
-};
-
-struct Lock
-{
-	SOCKET owner;
-	std::string path;
 	unsigned flags;
+	time_t starttime;
+	time_t endtime;
 };
 
-std::map<SOCKET,LockClient> LockClientMap;
-std::vector<Lock> LockList;
+typedef std::map<size_t,LockClient> LockClientMapType;
+typedef std::map<size_t,Lock> LockMapType;
+LockClientMapType LockClientMap;
+LockMapType LockMap;
+TransactionListType TransactionList;
+
+std::map<SOCKET,size_t> SockToClient;
+
+size_t next_client_id;
+
+/* predicate for partition below */
+struct IsWantedTransaction { bool operator()(const TransactionStruct& t) { return LockClientMap.find(t.owner)!=LockClientMap.end(); } };
+
+bool TimeIntersects(time_t start1, time_t end1, time_t start2, time_t end2)
+{
+   return (start1<=start2 && (!end1 || end1>=start2)) || (start1>=start2 && (!end2 || end2>=start1));
+}
 
 // When we're parsing stuff, it's sometimes handy
 // to have strchr return the final token as if it
@@ -81,32 +118,6 @@ static char *lock_strchr(const char *s, int ch)
 	if(p)
 		return p;
 	return (char*)s+strlen(s);
-}
-
-// Compare two paths, accounting for oddities in case/slash recognition.
-int pathcmp(const char *a, const char *b)
-{
-	while(*a && *b && (path_equal(*a,*b) || (isslash(*a) && isslash(*b))))
-	{
-		a++;
-		b++;
-	}
-	return (*a)-(*b);
-}
-
-int pathncmp(const char *a, const char *b, size_t len)
-{
-	while(len && *a && *b && (path_equal(*a,*b) || (isslash(*a) && isslash(*b))))
-	{
-		a++;
-		b++;
-		len--;
-	}
-
-	if(!len)
-		return 0;
-
-	return (*a)-(*b);
 }
 
 // Output a string to a socket
@@ -127,58 +138,19 @@ int sock_printf(SOCKET s, const char *fmt, ...)
 const char *FlagToString(unsigned flag)
 {
 	static char flg[1024];
-	
+
 	flg[0]='\0';
+	if(flag&lfRead)
+		strcat(flg,"Read ");
 	if(flag&lfWrite)
 		strcat(flg,"Write ");
-	else if(!(flag&lfDeleted))
-		strcat(flg,"Read ");
-	if(flag&lfRecursive)
-		strcat(flg,"Recursive ");
-	if(flag&lfFile)
-		strcat(flg,"File ");
-	if(flag&lfDirectory)
-		strcat(flg,"Directory ");
-	if(flag&lfDeleted)
-		strcat(flg,"Deleted ");
+	if(flag&lfAdvisory)
+		strcat(flg,"Advisory ");
+	if(flag&lfFull)
+		strcat(flg,"Full ");
 	if(flg[0])
 		flg[strlen(flg)-1]='\0'; // Chop trailing space
 	return flg;
-}
-
-bool MonitorUpdateClient(SOCKET s)
-{
-	LockClient& Client=LockClientMap[s];
-	std::map<SOCKET,LockClient>::const_iterator i;
-	for(i = LockClientMap.begin(); !(i==LockClientMap.end()); i++)
-	{
-		if((*i).second.state!=lcMonitor || (*i).first==s)
-			continue;
-		sock_printf((*i).first,"010 MONITOR Client (#%d) %s|%s|%s|%s|%s\n",
-			s,
-			Client.server_host.c_str(),
-			Client.client_host.c_str(),
-			Client.user.c_str(),
-			Client.root.c_str(),
-			StateString[Client.state]);
-	}
-	return true;
-}
-
-bool MonitorUpdateLock(int lock)
-{
-	Lock& Lock=LockList[lock];
-	std::map<SOCKET,LockClient>::const_iterator i;
-	for(i = LockClientMap.begin(); !(i==LockClientMap.end()); i++)
-	{
-		if((*i).second.state!=lcMonitor)
-			continue;
-		sock_printf((*i).first,"010 MONITOR Lock (#%d) %s|%s\n",
-			Lock.owner,
-			Lock.path.c_str(),
-			FlagToString(Lock.flags));
-	}
-	return true;
 }
 
 bool OpenLockClient(SOCKET s, const struct sockaddr_storage *sin, int sinlen)
@@ -190,55 +162,116 @@ bool OpenLockClient(SOCKET s, const struct sockaddr_storage *sin, int sinlen)
 		DEBUG("GetNameInfo failed: %s\n",gai_strerror(socket_errno));
 		return false;
 	}
-	DEBUG("Lock Client #%d(%s) opened\n",s,host);
 
 	LockClient l;
 	l.server_host=host;
 	l.state=lcLogin;
-	
-	LockClientMap[s]=l;
+	l.starttime=time(NULL);
+	l.endtime=0;
+	l.sock = s;
 
-	MonitorUpdateClient(s);
+	size_t client = ++next_client_id;
+	SockToClient[s]=client;
+	LockClientMap[client]=l;
 
-	sock_printf(s,"CVSLock 1.0 Ready\n");
+	DEBUG("Lock Client #%d(%s) opened\n",(int)client,host);
+
+	sock_printf(s,"CVSLock 2.0 Ready\n");
+
 	return true;
 }
 
 bool CloseLockClient(SOCKET s)
 {
-	for(size_t n=0; n<LockList.size();)
+	size_t client = SockToClient[s];
+	int count=0;
+	for(LockMapType::iterator i = LockMap.begin(); i!=LockMap.end();)
 	{
-		if(LockList[n].owner==s)
+		if(i->second.owner == client) 
 		{
-			DEBUG("(#%d) Destroying lock on %s\n",s,LockList[n].path.c_str());
-			LockList[n].flags=lfDeleted;
-			MonitorUpdateLock(n);
-			LockList.erase(LockList.begin()+n);
+			count++;
+			LockMap.erase(i++);
 		}
 		else
-			n++;
+			++i;
 	}
-	LockClientMap[s].state=lcClosed;
-	MonitorUpdateClient(s);
-	LockClientMap.erase(LockClientMap.find(s));
+	DEBUG("Destroyed %d locks\n",count);
+	SockToClient.erase(SockToClient.find(s));
+	LockClientMap[client].state=lcClosed;
+	LockClientMap[client].endtime=time(NULL);
+	LockClientMap[client].sock=0;
+	if(LockClientMap.size()<=1)
+	{
+		// No clients, just empty the transaction store
+		LockClientMap.clear();
+		TransactionList.clear();
+		DEBUG("No more clients\n");
+	}
+	else if(TransactionList.size())
+	{
+		// Find out which stored clients are redundant
+		//
+		// The rule is that as long as there's an active client
+		// that started before our client finished, you can't
+		// delete it.  This random overlapping is what makes
+		// atomicity hard :)
+		//
+		// remove_if doesn't work on maps so we end up with trickery
+		// like this...
+		LockClientMapType::iterator c,d;
+		for (c=LockClientMap.begin(); c!=LockClientMap.end();)
+		{
+		  if(c->second.endtime)
+		  {
+		    bool can_delete = true;
+		    for (d=LockClientMap.begin(); d!=LockClientMap.end(); ++d)
+		    {
+			if(c->first != d->first && !d->second.endtime &&
+			    TimeIntersects(c->second.starttime,c->second.endtime,d->second.starttime,d->second.endtime))
+			  can_delete = false;
+		    }
+		    if(can_delete)
+		    {
+			LockClientMap.erase(c++);
+		    }
+		    else
+		      ++c;
+		  }
+		  else
+		    ++c;
+		}
+		DEBUG("%d clients left\n",(int)LockClientMap.size());
+		/* Life is much easier on a vector */
+		size_t pos = std::partition(TransactionList.begin(), TransactionList.end(), IsWantedTransaction()) - TransactionList.begin();
+		TransactionList.resize(pos);
+	}
+	else
+	{
+	  /* No transactions, so just erase this client */
+	  DEBUG("No pending transactions\n");
+	  LockClientMap.erase(LockClientMap.find(client));
+	}
 
-	DEBUG("Lock Client #%d closed\n",s);
+	DEBUG("Lock Client #%d closed\n",(int)client);
 	return true;
 }
 
 // Lock commands:
 //
 // Client <user>'|'<root>['|'<client_host>]
-// Lock [Read] [Write] [Recursive] [File] [Directory]'|'<path>
-// Unlock <path>
-// Monitor
+// Lock [Read] [Write] [Advisory|Full]'|'<path>['|'<branch>]
+// Unlock <LockId>
+// Version <LockId>|<Branch>
+// Monitor [C][L][V]
 // Clients
 // Locks
+// Modified [Added|Deleted]'|'LockId'|'<branch>'|'<version>['|'<oldversion>]
 //
 // Errors:
 // 000 OK {message}
 // 001 FAIL {message}
 // 002 WAIT {message}
+// 003 WARN (message)
 // 010 MONITOR {message}
 
 bool ParseLockCommand(SOCKET s, const char *command)
@@ -246,10 +279,12 @@ bool ParseLockCommand(SOCKET s, const char *command)
 	char *cmd = strdup(command),*p;
 	char *param;
 	bool bRet;
+	size_t client;
 
 	if(!*command)
 		return true; // Empty line
 
+	client = SockToClient[s];
 	p=lock_strchr(cmd,' ');
 	if(!p)
 	{
@@ -263,18 +298,22 @@ bool ParseLockCommand(SOCKET s, const char *command)
 		else
 			param = p+1;
 		*p='\0';
-		if(!strcasecmp(cmd,"Client"))
-			bRet=DoClient(s,param);
-		else if(!strcasecmp(cmd,"Lock"))
-			bRet=DoLock(s,param);
-		else if(!strcasecmp(cmd,"Unlock"))
-			bRet=DoUnlock(s,param);
-		else if(!strcasecmp(cmd,"Monitor"))
-			bRet=DoMonitor(s,param);
-		else if(!strcasecmp(cmd,"Clients"))
-			bRet=DoClients(s,param);
-		else if(!strcasecmp(cmd,"Locks"))
-			bRet=DoLocks(s,param);
+		if(!strcmp(cmd,"Client"))
+			bRet=DoClient(s,client,param);
+		else if(!strcmp(cmd,"Lock"))
+			bRet=DoLock(s,client,param);
+		else if(!strcmp(cmd,"Unlock"))
+			bRet=DoUnlock(s,client,param);
+		else if(!strcmp(cmd,"Version"))
+			bRet=DoVersion(s,client,param);
+		else if(!strcmp(cmd,"Modified"))
+			bRet=DoModified(s,client,param);
+		else if(!strcmp(cmd,"Monitor"))
+			bRet=DoMonitor(s,client,param);
+		else if(!strcmp(cmd,"Clients"))
+			bRet=DoClients(s,client,param);
+		else if(!strcmp(cmd,"Locks"))
+			bRet=DoLocks(s,client,param);
 		else
 		{
 			sock_printf(s,"001 FAIL Unknown command '%s'\n",cmd);
@@ -285,10 +324,10 @@ bool ParseLockCommand(SOCKET s, const char *command)
 	return bRet;
 }
 
-bool DoClient(SOCKET s, char *param)
+bool DoClient(SOCKET s,size_t client, char *param)
 {
 	char *user, *root, *host;
-	if(LockClientMap[s].state!=lcLogin)
+	if(LockClientMap[client].state!=lcLogin)
 	{
 		sock_printf(s,"001 FAIL Unexpected 'Client' command\n");
 		return false;
@@ -315,31 +354,29 @@ bool DoClient(SOCKET s, char *param)
 
 	user = param;
 
-	LockClientMap[s].user=user;
-	LockClientMap[s].root=root;
-	LockClientMap[s].client_host=host?host:"";
-	LockClientMap[s].state=lcActive;
+	LockClientMap[client].user=user;
+	LockClientMap[client].root=root;
+	LockClientMap[client].client_host=host?host:"";
+	LockClientMap[client].state=lcActive;
 
-	MonitorUpdateClient(s);
-
-	DEBUG("(#%d) New client %s(%s) root %s\n",s,user,host?host:"unknown",root);
+	DEBUG("(#%d) New client %s(%s) root %s\n",(int)client,user,host?host:"unknown",root);
 	sock_printf(s,"000 OK Client registered\n");
 	return true;
 }
 
-bool DoLock(SOCKET s, char *param)
+bool DoLock(SOCKET s,size_t client, char *param)
 {
 	char *flags, *path,*p;
 	unsigned uFlags=0;
-	int lock_to_wait_for;
+	size_t lock_to_wait_for;
 
-	if(LockClientMap[s].state!=lcActive)
+	if(LockClientMap[client].state!=lcActive)
 	{
 		sock_printf(s,"001 FAIL Unexpected 'Lock' command\n");
 		return false;
 	}
 	path = strchr(param,'|');
-	if(!path || strchr(path+1,'|'))
+	if(!path)
 	{
 		sock_printf(s,"001 FAIL Lock command expects <flags>|<path>\n");
 		return false;
@@ -350,16 +387,14 @@ bool DoLock(SOCKET s, char *param)
 	{
 		char c=*p;
 		*p='\0';
-		if(!strcasecmp(flags,"Read"))
+		if(!strcmp(flags,"Read"))
 			uFlags|=lfRead;
-		else if(!strcasecmp(flags,"Write"))
+		else if(!strcmp(flags,"Write"))
 			uFlags|=lfWrite;
-		else if(!strcasecmp(flags,"Recursive"))
-			uFlags|=lfRecursive;
-		else if(!strcasecmp(flags,"File"))
-			uFlags|=lfFile;
-		else if(!strcasecmp(flags,"Directory"))
-			uFlags|=lfDirectory;
+		else if(!strcmp(flags,"Advisory"))
+			uFlags|=lfAdvisory;
+		else if(!strcmp(flags,"Full"))
+			uFlags|=lfFull;
 		else
 		{
 			sock_printf(s,"001 FAIL Unknown flag '%s'\n",flags);
@@ -368,159 +403,316 @@ bool DoLock(SOCKET s, char *param)
 		if(c) flags=p+1;
 		else break;
 	}
-	if((uFlags&lfRecursive) && (uFlags&lfFile))
+	if(!(uFlags&lfRead) && !(uFlags&lfWrite))
 	{
-		sock_printf(s,"001 FAIL Recursive file locks don't make sense\n");
-		return false;
-	}
-	if((uFlags&lfFile) && (uFlags&lfDirectory))
-	{
-		sock_printf(s,"001 FAIL Can't be both a file and a directory\n");
-		return false;
-	}
-	if(!(uFlags&lfFile) && !(uFlags&lfDirectory))
-	{
-		sock_printf(s,"001 FAIL Must specify file or directory\n");
+		sock_printf(s,"001 FAIL Must specify read or write\n");
 		return false;
 	}
 
-	if(pathncmp(path,LockClientMap[s].root.c_str(),LockClientMap[s].root.size()))
+	if(strncmp(path,LockClientMap[client].root.c_str(),LockClientMap[client].root.size()))
 	{
+		DEBUG("(#%d) Lock Fail %s not within %s\n",(int)client,path,LockClientMap[client].root.c_str());
 		sock_printf(s,"001 FAIL Lock not within repository\n");
 		return false;
 	}
 
-	DEBUG("(#%d) Lock request on %s (%s)\n",s,path,FlagToString(uFlags));
-
-	if(request_lock(s,path,uFlags,lock_to_wait_for))
-		sock_printf(s,"000 OK Lock granted\n");
+	if(request_lock(client,path,uFlags,lock_to_wait_for))
+	{
+		VersionMapType ver;
+		size_t newId = ++global_lockId;
+		if((uFlags&lfFull) && (uFlags&lfRead))
+		{
+			TransactionListType::const_iterator i = TransactionList.begin();
+			while(i!=TransactionList.end())
+			{
+				/* This is where atomicity really 'happens' */
+				/* Note we do the strcmp last for speed */
+				if(i->owner!=client &&   /* Not us */
+				   LockClientMap.find(i->owner)!=LockClientMap.end() && /* Exists */
+				   TimeIntersects(LockClientMap[i->owner].starttime,LockClientMap[i->owner].endtime,
+					   LockClientMap[client].starttime,LockClientMap[client].endtime) && /* Overlaps us */
+ 				   !strcmp(i->path.c_str(),path)) /* Our file */
+				{
+					ver[i->branch]=i->oldversion;
+					break;
+				}
+				++i;
+			}
+		}
+		DEBUG("(#%d) Lock request on %s (%s) (granted %u)\n",(int)client,path,FlagToString(uFlags),(unsigned)newId);
+		sock_printf(s,"000 OK Lock granted (%u)\n",(unsigned)newId);
+		LockMap[newId].flags=uFlags;
+		LockMap[newId].path=path;
+		LockMap[newId].length=strlen(path);
+		LockMap[newId].owner=client;
+		LockMap[newId].versions = ver;
+	}
 	else
-		sock_printf(s,"002 WAIT Lock busy|%s|%s|%s\n",LockClientMap[LockList[lock_to_wait_for].owner].user.c_str(),LockClientMap[LockList[lock_to_wait_for].owner].client_host.c_str(),LockList[lock_to_wait_for].path.c_str());
-	
+	{
+		DEBUG("(#%d) Lock request on %s (%s) (wait for %u)\n",(int)client,path,FlagToString(uFlags),(unsigned)lock_to_wait_for);
+		sock_printf(s,"002 WAIT Lock busy|%s|%s|%s\n",LockClientMap[LockMap[lock_to_wait_for].owner].user.c_str(),LockClientMap[LockMap[lock_to_wait_for].owner].client_host.c_str(),LockMap[lock_to_wait_for].path.c_str());
+	}
+
 	return true;
 }
 
-bool DoUnlock(SOCKET s, char *param)
+bool DoUnlock(SOCKET s,size_t client, char *param)
 {
-	char *path;
-	if(LockClientMap[s].state!=lcActive)
+	size_t lockId;
+	unsigned helper;
+
+	if(LockClientMap[client].state!=lcActive)
 	{
 		sock_printf(s,"001 FAIL Unexpected 'Unlock' command\n");
 		return false;
 	}
-	if(!*param)
-	{
-		sock_printf(s,"001 FAIL 'Unlock' needs <path> or 'All'\n");
-	}
-	if(!strcasecmp(param,"All"))
-		path = NULL;
-	else
-		path = param;
+	sscanf(param,"%u",&helper); /* 64 bit aware */
+	lockId = helper;
 
-	size_t n;
-	bool bUnlocked = false;
-	for(n=0; n<LockList.size(); )
+	if(LockMap.find(lockId)==LockMap.end())
 	{
-		if(LockList[n].owner==s && (!path || !pathcmp(path,LockList[n].path.c_str())))
-		{
-			DEBUG("(#%d) Unlocking %s\n",s,LockList[n].path.c_str());
-			LockList[n].flags=lfDeleted;
-			MonitorUpdateLock(n);
-			LockList.erase(LockList.begin()+n);
-			bUnlocked = true;
-		}
-		else
-			n++;
-	}
-	if(!bUnlocked && path)
-	{
-		sock_printf(s,"001 FAIL Unknown lock %s\n",path);
+		sock_printf(s,"001 FAIL Unknown lock id %u\n",(unsigned)lockId);
 		return false;
 	}
-	else
+	if(LockMap[lockId].owner != client)
 	{
-		sock_printf(s,"000 OK Unlocked\n");
-		return true;
+		sock_printf(s,"001 FAIL Do not own lock id %u\n",(unsigned)lockId);
+		return false;
 	}
+
+	LockMap.erase(LockMap.find(lockId));
+
+	DEBUG("(#%d) Unlock request on lock %u\n",(int)client,(unsigned)lockId);
+
+	sock_printf(s,"000 OK Unlocked\n");
+	return true;
 }
 
-bool DoMonitor(SOCKET s, char *param)
+bool DoMonitor(SOCKET s,size_t client, char *param)
 {
-	if(LockClientMap[s].state!=lcLogin)
+	if(LockClientMap[client].state!=lcLogin)
 	{
 		sock_printf(s,"001 FAIL Unexpected 'Monitor' command\n");
 		return false;
 	}
-	LockClientMap[s].state=lcMonitor;
-	MonitorUpdateClient(s);
+	LockClientMap[client].state=lcMonitor;
 	sock_printf(s,"000 OK Entering monitor mode\n");
 	return true;
 }
 
-bool DoClients(SOCKET s, char *param)
+bool DoClients(SOCKET s,size_t client, char *param)
 {
-	if(LockClientMap[s].state!=lcMonitor)
+	if(LockClientMap[client].state!=lcMonitor)
 	{
 		sock_printf(s,"001 FAIL Unexpected 'Clients' command\n");
 		return false;
 	}
-	std::map<SOCKET,LockClient>::const_iterator i;
-	for(i = LockClientMap.begin(); !(i==LockClientMap.end()); i++)
+	LockClientMapType::const_iterator i;
+	for(i = LockClientMap.begin(); !(i==LockClientMap.end()); ++i)
 	{
 		sock_printf(s,"(#%d) %s|%s|%s|%s|%s\n",
-			(*i).first,
-			(*i).second.server_host.c_str(),
-			(*i).second.client_host.c_str(),
-			(*i).second.user.c_str(),
-			(*i).second.root.c_str(),
-			StateString[(*i).second.state]);
+			(int)i->first,
+			i->second.server_host.c_str(),
+			i->second.client_host.c_str(),
+			i->second.user.c_str(),
+			i->second.root.c_str(),
+			StateString[i->second.state]);
 	}
 	sock_printf(s,"000 OK\n");
 	return true;
 }
 
-bool DoLocks(SOCKET s, char *param)
+bool DoLocks(SOCKET s,size_t client, char *param)
 {
-	if(LockClientMap[s].state!=lcMonitor)
+	if(LockClientMap[client].state!=lcMonitor)
 	{
 		sock_printf(s,"001 FAIL Unexpected 'Locks' command\n");
 		return false;
 	}
-	for(size_t n=0; n<LockList.size(); n++)
-	{
-		sock_printf(s,"(#%d) %s|%s",LockList[n].owner,LockList[n].path.c_str(),FlagToString(LockList[n].flags));
-	}
+	for(LockMapType::const_iterator i = LockMap.begin(); i!=LockMap.end(); ++i)
+		sock_printf(s,"(#%d) %s|%s (%u)\n",(int)i->second.owner,i->second.path.c_str(),FlagToString(i->second.flags), (unsigned)i->first);
+
 	sock_printf(s,"000 OK\n");
 	return true;
 }
 
-bool request_lock(SOCKET s, const char *path, unsigned flags, int& lock_to_wait_for)
+bool DoModified(SOCKET s,size_t client, char *param)
 {
-	size_t n;
-	for(n=0; n<LockList.size(); n++)
+	char *id,*branch,*version,*oldversion;
+	char type;
+	size_t lockId;
+	unsigned helper;
+
+	if(LockClientMap[client].state!=lcActive)
 	{
-		if(((LockList[n].flags&lfRecursive) && !pathncmp(LockList[n].path.c_str(),path,LockList[n].path.size())) ||
-			((flags&lfRecursive) && !pathncmp(path,LockList[n].path.c_str(),strlen(path))) ||
-			(!pathcmp(path,LockList[n].path.c_str())))
-		{
-			/* Special case - same owner can put multiple locks on the same tree */
-			if(LockList[n].owner==s)
-				continue;
-			// If either is a write lock, we break, otherwise we allow multiple
-			// read locks on the same files
-			if((LockList[n].flags&lfWrite) || (flags&lfWrite))
-				break;
-		}
-	}
-	if(n<LockList.size())
-	{
-		lock_to_wait_for = n;
+		sock_printf(s,"001 FAIL Unexpected 'Modified' command\n");
 		return false;
 	}
-	LockList.resize(n+1);
-	LockList[n].flags=flags;
-	LockList[n].path=path;
-	LockList[n].owner=s;
-	MonitorUpdateLock(n);
+	id = strchr(param,'|');
+	if(!id)
+	{
+		sock_printf(s,"001 FAIL Modified command expects <flags>|<lockId>|<branch>|<version>|oldversion\n");
+		return false;
+	}
+	(*id++)='\0';
+	sscanf(id,"%u",&helper);
+	lockId = helper;
+	branch = strchr(id,'|');
+	if(!branch)
+	{
+		sock_printf(s,"001 FAIL Modified command expects <flags>|<lockId>|<branch>|<version>|oldversion\n");
+		return false;
+	}
+	*(branch++)='\0';
+	version = strchr(branch,'|');
+	if(!version)
+	{
+		sock_printf(s,"001 FAIL Modified command expects <flags>|<lockId>|<branch>|<version>|oldversion\n");
+		return false;
+	}
+	*(version++)='\0';
+	oldversion = strchr(version,'|');
+	if(strchr(oldversion+1,'|'))
+	{
+		sock_printf(s,"001 FAIL Modified command expects <flags>|<lockId>|<branch>|<version>|oldversion\n");
+		return false;
+	}
+	if(oldversion)
+	  *(oldversion++)='\0';
+	if(!*param)
+		type='M';
+	else if(!strcmp(param,"Added"))
+		type='A';
+	else  if(!strcmp(param,"Deleted"))
+		type='D';
+	else
+	{
+		sock_printf(s,"001 FAIL Modified command expects <flags>|<lockId>|<branch>|<version>\n");
+		return false;
+	}
+
+	if(LockMap.find(lockId)==LockMap.end())
+	{
+		sock_printf(s,"001 FAIL Unknown lock id %u\n",(unsigned)lockId);
+		return false;
+	}
+	if(LockMap[lockId].owner != client)
+	{
+		sock_printf(s,"001 FAIL Do not own lock id %u\n",(unsigned)lockId);
+		return false;
+	}
+
+	if(!(LockMap[lockId].flags&lfWrite))
+	{
+		sock_printf(s,"001 FAIL No write lock on file\n");
+		return false;
+	}
+
+	DEBUG("(#%d) Modified request on lock %u (%s:%s [%c])\n",(int)client,(unsigned)lockId,branch,version,type);
+
+	sock_printf(s,"000 OK\n");
+
+	TransactionStruct t;
+	t.owner=client;
+	t.path=LockMap[lockId].path;
+	t.branch=branch;
+	t.version=version;
+	t.oldversion=oldversion;
+	t.type=type;
+	TransactionList.push_back(t);
+
 	return true;
 }
+
+bool DoVersion(SOCKET s,size_t client, char *param)
+{
+	char *branch;
+	size_t lockId;
+	unsigned helper;
+
+	if(LockClientMap[client].state!=lcActive)
+	{
+		sock_printf(s,"001 FAIL Unexpected 'Version' command\n");
+		return false;
+	}
+	branch = strchr(param,'|');
+	if(!branch)
+	{
+		sock_printf(s,"001 FAIL Version command expects <lockid>|<branch>\n");
+		return false;
+	}
+	(*branch++)='\0';
+	
+	sscanf(param,"%u",&helper); /* 64 bit aware */
+	lockId = helper;
+
+	if(LockMap.find(lockId)==LockMap.end())
+	{
+		sock_printf(s,"001 FAIL Unknown lock id %u\n",(unsigned)lockId);
+		return false;
+	}
+	if(LockMap[lockId].owner != client)
+	{
+		sock_printf(s,"001 FAIL Do not own lock id %u\n",(unsigned)lockId);
+		return false;
+	}
+	
+	VersionMapType& ver = LockMap[lockId].versions;
+
+	if(ver.find(branch)==ver.end())
+	{
+		sock_printf(s,"000 OK\n");
+		DEBUG("(#%d) Version request on lock %u (%s)\n",(int)client,(unsigned)lockId,branch);
+	}
+	else
+	{
+		sock_printf(s,"000 OK (%s)\n",ver[branch].c_str());
+		DEBUG("(#%d) Version request on lock %u (%s) returned %s\n",(int)client,(unsigned)lockId,branch,ver[branch].c_str());
+	}
+
+	return true;
+}
+
+bool request_lock(size_t client, const char *path, unsigned flags, size_t& lock_to_wait_for)
+{
+	LockMapType::const_iterator i;
+	size_t pathlen = strlen(path);
+	for(i=LockMap.begin(); i!=LockMap.end(); ++i)
+	{
+		size_t locklen = i->second.length;
+
+		if((locklen==pathlen && !strcmp(path,i->second.path.c_str())))
+		{
+			// Locks are as follows:
+			// max. 1 advisory write lock, any number of concurrent advisory read locks.
+			// max. 1 full write lock cannot be shared with any read locks
+			// any number of advisory read locks (provided it doesn't clash with a full write)
+			// any number of full read locks (provided it doesn't clash with a full write)
+
+			// As a special concession allow the same user to add multiple locks
+
+			if(flags&lfWrite) /* Trying to add write lock */
+			{
+				/* Only one write lock (full or advisory) on any object */
+				if(i->second.flags&lfWrite && i->second.owner!=client)
+					break;
+				/* If there is a full read lock on any object, can't write at the moment */
+				if(((i->second.flags&(lfRead|lfFull))==(lfRead|lfFull)) && i->second.owner!=client)
+					break;
+			}
+			else /* read lock */
+			{
+				/* If there is a full write lock on this object then fail */
+				if(((i->second.flags&(lfFull|lfWrite))==(lfFull|lfWrite)) && i->second.owner!=client)
+					break;
+			}
+		}
+	}
+	if(i!=LockMap.end())
+	{
+		lock_to_wait_for = i->first;
+		return false;
+	}
+	return true;
+}
+

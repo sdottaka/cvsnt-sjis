@@ -282,3 +282,18 @@ extern int errno;
 #ifndef CVS_CLOSEDIR
 #define CVS_CLOSEDIR closedir
 #endif
+
+/* Define debug xmalloc if debugging. */
+/* Since xmalloc is global it gets defined here rather than cvs.h. */
+#ifdef _DEBUG
+void *dbg_xmalloc(size_t bytes, const char *file, int line);
+void *dbg_xrealloc(void *ptr, size_t bytes, const char *file, int line);
+#define xmalloc(bytes) dbg_xmalloc(bytes,__FILE__,__LINE__)
+#define xrealloc(ptr,bytes) dbg_xrealloc(ptr,bytes,__FILE__,__LINE__)
+#else
+void *xmalloc(size_t bytes);
+void *xrealloc(void *ptr, size_t bytes);
+#endif
+
+void xfree_s(void **ptr);
+#define xfree(s) xfree_s((void**)&s)

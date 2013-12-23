@@ -1,40 +1,40 @@
-Summary: A version control system.
+Summary: Concurrent version control system
 Name: cvsnt
-Version: 1.11.1.3
+Version: 2.0.51c
 Release: 1
 Copyright: GPL
 Group: Development/Tools
-Source: http://www.cvsnt.org/cvsnt_%{version}.tar.gz
+Source: http://www.cvsnt.org/cvsnt-%{version}.tar.gz
 URL: http://www.cvsnt.org
 Prereq: /sbin/install-info
 Prefix: %{_prefix}
 Buildroot: %{_tmppath}/%{name}-root
 
 %description
-CVS (Concurrent Version System) is a version control system which can
+CVSNT (Concurrent Version System) is a version control system which can
 record the history of your files (usually, but not always, source
-code). CVS only stores the differences between versions, instead of
-every version of every file you've ever created. CVS also keeps a log
+code). CVSNT only stores the differences between versions, instead of
+every version of every file you've ever created. CVSNT also keeps a log
 of who, when and why changes occurred.
 
-CVS is very helpful for managing releases and controlling the
+CVSNT is very helpful for managing releases and controlling the
 concurrent editing of source files among multiple authors. Instead of
 providing version control for a collection of files in a single
-directory, CVS provides version control for a hierarchical collection
+directory, CVSNT provides version control for a hierarchical collection
 of directories consisting of revision controlled files.  These
 directories and files can then be combined together to form a software
 release.
 
-Install the cvs package if you need to use a version control system.
+Install the cvsnt package if you need to use a version control system.
 
-cvsnt is an enhanced version of cvs, initially derived from the NT port
-of CVS.
+CVSNT is much improved from the older CVS and now has many modern
+version control features.  See http://www.cvsnt.org
 
 %prep
 %setup -q
 
 %build
-%configure --mandir=%{_mandir} --infodir=%{_infodir}
+%configure --mandir=%{_mandir}
 
 make
 make doc info
@@ -44,33 +44,36 @@ rm -rf $RPM_BUILD_ROOT
 make DESTDIR=$RPM_BUILD_ROOT install
 gzip $RPM_BUILD_ROOT%{_mandir}/man1/*
 gzip $RPM_BUILD_ROOT%{_mandir}/man5/*
-gzip $RPM_BUILD_ROOT%{_mandir}/man8/*
-rm -f $RPM_BUILD_ROOT%{_infodir}/dir
-gzip $RPM_BUILD_ROOT%{_infodir}/*
+mkdir -p $RPM_BUILD_ROOT/etc/init.d
+mkdir -p $RPM_BUILD_ROOT/etc/pam.d
+mkdir -p $RPM_BUILD_ROOT/etc/xinetd.d
+install redhat/cvslockd $RPM_BUILD_ROOT/etc/init.d/cvslockd
+install redhat/cvsnt-pam $RPM_BUILD_ROOT/etc/pam.d/cvs
+install redhat/cvsnt-xinetd $RPM_BUILD_ROOT/etc/xinetd.d/cvsnt
 
 %clean
 rm -rf $RPM_BUILD_ROOT
 
-%post
-    /sbin/install-info --info-dir=%{_infodir} %{_infodir}/cvs.info.gz
-    /sbin/install-info --info-dir=%{_infodir} %{_infodir}/cvsclient.info.gz
-%preun
-if [ $1 = 0 ]; then
-    # uninstall the info reference in the dir file
-    /sbin/install-info --delete --info-dir=%{_infodir} %{_infodir}/cvs.info.gz
-    /sbin/install-info --delete --info-dir=%{_infodir} %{_infodir}/cvsclient.info.gz
-fi
-
 %files
 %defattr(-,root,root)
-%doc BUGS FAQ MINOR-BUGS NEWS PROJECTS TODO README
-%doc doc/RCSFILES doc/*.ps
+%doc FAQ README
+%doc doc/RCSFILES
 %{_bindir}
-%{_infodir}/cvs*.gz
 %{_mandir}
 %{_prefix}/lib/cvsnt
+%{_prefix}/share/cvsnt/contrib
+%{_sysconfdir}/cvsnt
+%{_sysconfdir}/init.d/cvslockd
+%{_sysconfdir}/pam.d/cvs
+%{_sysconfdir}/xinetd.d/cvsnt
 
 %changelog
+* Thu Jul 29 2005 Tony Hoyle <tmh@nodomain.org>
+- Updated for cvsnt 2.0.51
+
+* Wed Feb  4 2004 Alon Ziv <alonz@emblazesemi.com>
+- Updated for cvsnt 2.0.24
+
 * Sat Feb 23 2002 Tony Hoyle <tmh@magenta-netlogic.com>
 - Modified for cvsnt
 

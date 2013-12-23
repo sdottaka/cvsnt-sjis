@@ -17,9 +17,9 @@
 
 #define PUTTY_DO_GLOBALS	       /* actually _define_ globals */
 #define PLINK_EXPORT __declspec(dllexport)
-#include "putty.h"
-#include "storage.h"
-#include "tree234.h"
+#include "putty/putty.h"
+#include "putty/storage.h"
+#include "putty/tree234.h"
 
 #include "plink_cvsnt.h"
 
@@ -28,6 +28,9 @@ extern int fatal_exit_code;
 
 #define MAX_STDIN_BACKLOG 4096
 
+static Backend *back;
+static void *backhandle;
+static Config cfg;
 extern putty_callbacks *callbacks;
 
 void fatalbox(char *p, ...)
@@ -40,7 +43,19 @@ void fatalbox(char *p, ...)
     fputc('\n', stderr);
     cleanup_exit(1);
 }
-void connection_fatal(char *p, ...)
+
+void modalfatalbox(char *p, ...)
+{
+    va_list ap;
+    fprintf(stderr, "FATAL ERROR: ");
+    va_start(ap, p);
+    vfprintf(stderr, p, ap);
+    va_end(ap);
+    fputc('\n', stderr);
+    cleanup_exit(1);
+}
+
+void connection_fatal(void *frontend, char *p, ...)
 {
     va_list ap;
     fprintf(stderr, "FATAL ERROR: ");
@@ -88,11 +103,12 @@ static int cmdline_get_line(const char *prompt, char *str,
     }
 }
 
-int term_ldisc(int mode)
+int term_ldisc(Terminal *term, int mode)
 {
     return FALSE;
 }
-void ldisc_update(int echo, int edit)
+
+void ldisc_update(void *frontend, int echo, int edit)
 {
     /* Update stdin read mode to reflect changes in line discipline. */
     DWORD mode;
@@ -250,7 +266,7 @@ void try_output(int is_stderr)
     }
 }
 
-int from_backend(int is_stderr, char *data, int len)
+int from_backend(void *frontend, int is_stderr, const char *data, int len)
 {
     HANDLE h = (is_stderr ? errhandle : outhandle);
     int osize, esize;
@@ -309,7 +325,7 @@ void listen_thread(void* param)
 	while (1) {
 	int n;
 
-	if (!sending && back->sendok()) {
+	if (!sending && back->sendok(backhandle)) {
 	    /*
 	     * Create a separate thread to read from stdin. This is
 	     * a total pain, but I can't find another way to do it:
@@ -397,11 +413,11 @@ void listen_thread(void* param)
 	} else if (n == 1) {
 	    reading = 0;
 	    noise_ultralight(idata.len);
-	    if (connopen && back->socket() != NULL) {
+	    if (connopen && back->socket(backhandle) != NULL) {
 		if (idata.len > 0) {
-		    back->send(idata.buffer, idata.len);
+		    back->send(backhandle, idata.buffer, idata.len);
 		} else {
-		    back->special(TS_EOF);
+		    back->special(backhandle, TS_EOF);
 		}
 	    }
 	} else if (n == 2) {
@@ -413,8 +429,8 @@ void listen_thread(void* param)
 	    bufchain_consume(&stdout_data, odata.lenwritten);
 	    if (bufchain_size(&stdout_data) > 0)
 		try_output(0);
-	    if (connopen && back->socket() != NULL) {
-		back->unthrottle(bufchain_size(&stdout_data) +
+	    if (connopen && back->socket(backhandle) != NULL) {
+		back->unthrottle(backhandle, bufchain_size(&stdout_data) +
 				 bufchain_size(&stderr_data));
 	    }
 	} else if (n == 3) {
@@ -426,16 +442,16 @@ void listen_thread(void* param)
 	    bufchain_consume(&stderr_data, edata.lenwritten);
 	    if (bufchain_size(&stderr_data) > 0)
 		try_output(1);
-	    if (connopen && back->socket() != NULL) {
-		back->unthrottle(bufchain_size(&stdout_data) +
+	    if (connopen && back->socket(backhandle) != NULL) {
+		back->unthrottle(backhandle, bufchain_size(&stdout_data) +
 				 bufchain_size(&stderr_data));
 	    }
 	}
-	if (!reading && back->sendbuffer() < MAX_STDIN_BACKLOG) {
+	if (!reading && back->sendbuffer(backhandle) < MAX_STDIN_BACKLOG) {
 	    SetEvent(idata.eventback);
 	    reading = 1;
 	}
-	if ((!connopen || back->socket() == NULL) &&
+	if ((!connopen || back->socket(backhandle) == NULL) &&
 	    bufchain_size(&stdout_data) == 0 &&
 	    bufchain_size(&stderr_data) == 0)
 	    break;		       /* we closed the connection */
@@ -488,7 +504,7 @@ int plink_connect(const char *username, const char *password, const char *keyfil
 
 	if(keyfile)
 	{
-		strncpy(cfg.keyfile,keyfile,sizeof(cfg.keyfile));
+		cfg.keyfile=filename_from_str(keyfile);
 	}
 	else if(password)
 	{
@@ -526,13 +542,13 @@ int plink_connect(const char *username, const char *password, const char *keyfil
      */
     netevent = CreateEvent(NULL, FALSE, FALSE, NULL);
     {
-	char *error;
+	const char *error;
 	char *realhost;
 	/* nodelay is only useful if stdin is a character device (console) */
 	int nodelay = cfg.tcp_nodelay &&
 	    (GetFileType(GetStdHandle(STD_INPUT_HANDLE)) == FILE_TYPE_CHAR);
 
-	error = back->init(cfg.host, cfg.port, &realhost, nodelay);
+	error = back->init(NULL, &backhandle, &cfg, cfg.host, cfg.port, &realhost, nodelay, cfg.tcp_keepalives);
 	if (error) {
 	    fprintf(stderr, "Unable to open connection:\n%s", error);
 	    return 1;
@@ -591,7 +607,7 @@ int plink_connect(const char *username, const char *password, const char *keyfil
 		Sleep(100);
 		if(fatal_exit)
 		{
-			int exitcode = back->exitcode();
+			int exitcode = back->exitcode(backhandle);
 			if (exitcode < 0) {
 				exitcode = fatal_exit_code;		       /* this is an error condition */
 			}

@@ -84,7 +84,7 @@ library_callback *open_infolibrary(const char *filter)
 	{
 		infolib_list[copy]=cb;
 		if(cb->init)
-			cb->init(cb,current_parsed_root->unparsed_directory,current_parsed_root->username,CVSroot_prefix,global_session_id,remote_host_name?remote_host_name:hostname);
+			cb->init(cb,current_parsed_root->unparsed_directory,current_parsed_root->username,"",global_session_id,remote_host_name?remote_host_name:hostname);
 	}
 	xfree(copy);
 	return cb;

@@ -12,6 +12,8 @@
 
 /////////////////////////////////////////////////////////////////////////////
 
+#include "..\cvsservice\ServiceMsg.rc"
+
 #define PROJECTNAME "cvsnt"
 #define PROJECTDESCRIPTION "cvsnt Client/Server"
 #define PROJECTFILENAME "cvs.exe"

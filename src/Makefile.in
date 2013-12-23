@@ -116,6 +116,7 @@ am__include = @am__include@
 am__quote = @am__quote@
 cvs_config_dir = @cvs_config_dir@
 cvs_library_dir = @cvs_library_dir@
+cvs_target_name = @cvs_target_name@
 install_sh = @install_sh@
 
 
@@ -134,9 +135,11 @@ install_sh = @install_sh@
 @WITH_CVSGUI_TRUE@cvsgui_lib = ../cvsgui/libcvsgui.a
 @WITH_CVSGUI_FALSE@cvsgui_lib = 
 
-INCLUDES = -I$(top_srcdir)/lib -I$(top_srcdir)/diff $(cvsgui_inc) $(zlib_inc) $(includeopt) $(INCLTDL)
+AM_CPPFLAGS = -I$(top_srcdir)/lib -I$(top_srcdir)/diff $(cvsgui_inc) $(zlib_inc) $(includeopt) $(INCLTDL)
+AM_CFLAGS = -DCVS_CONFIG_DIR=\"$(cvs_config_dir)\" -DCVS_LIBRARY_DIR=\"$(cvs_library_dir)\"
 
-bin_PROGRAMS = cvs
+bin_PROGRAMS = @cvs_target_name@
+EXTRA_PROGRAMS = cvs cvsnt
 
 # The cvs executable
 cvs_SOURCES = \
@@ -177,6 +180,7 @@ cvs_SOURCES = \
 	ls.c \
 	lsacl.c \
 	main.c \
+	mapping.c \
 	mkmodules.c \
 	modules.c \
 	myndbm.c \
@@ -190,6 +194,7 @@ cvs_SOURCES = \
 	recurse.c \
 	release.c \
 	remove.c \
+	rename.c \
 	repos.c \
 	root.c \
 	run.c \
@@ -198,6 +203,7 @@ cvs_SOURCES = \
 	status.c \
 	subr.c \
 	tag.c \
+	unicode_stuff.c \
 	update.c \
 	version.c \
 	vers_ts.c \
@@ -212,19 +218,27 @@ cvs_SOURCES = \
 	fileattr.h \
 	hardlink.h \
 	hash.h \
+	mapping.h \
 	myndbm.h \
 	rcs.h \
 	server.h \
+	unicode_stuff.h \
 	update.h \
 	watch.h
+
+
+cvsnt_SOURCES = $(cvs_SOURCES)
 
 cvs_LDADD = \
 	../diff/libdiff.a \
 	../lib/libcvs.a \
+	../cvsdelta/libcvsdelta.a \
 	$(cvsgui_lib) \
 	$(zlib_lib) \
 	$(LIBLTDL)
 
+
+cvsnt_LDADD = $(cvs_LDADD)
 
 # extra clean targets
 # wish this could be distclean-hdr-local but it's not part of automake
@@ -242,7 +256,8 @@ subdir = src
 mkinstalldirs = $(SHELL) $(top_srcdir)/mkinstalldirs
 CONFIG_HEADER = $(top_builddir)/config.h options.h
 CONFIG_CLEAN_FILES =
-bin_PROGRAMS = cvs$(EXEEXT)
+EXTRA_PROGRAMS = cvs$(EXEEXT) cvsnt$(EXEEXT)
+bin_PROGRAMS = @cvs_target_name@
 PROGRAMS = $(bin_PROGRAMS)
 
 am_cvs_OBJECTS = add.$(OBJEXT) admin.$(OBJEXT) annotate.$(OBJEXT) \
@@ -256,29 +271,77 @@ am_cvs_OBJECTS = add.$(OBJEXT) admin.$(OBJEXT) annotate.$(OBJEXT) \
 	ignore.$(OBJEXT) info.$(OBJEXT) infolib_unix.$(OBJEXT) \
 	import.$(OBJEXT) library_unix.$(OBJEXT) lock.$(OBJEXT) \
 	log.$(OBJEXT) login.$(OBJEXT) logmsg.$(OBJEXT) ls.$(OBJEXT) \
-	lsacl.$(OBJEXT) main.$(OBJEXT) mkmodules.$(OBJEXT) \
-	modules.$(OBJEXT) myndbm.$(OBJEXT) no_diff.$(OBJEXT) \
-	parseinfo.$(OBJEXT) passwd.$(OBJEXT) patch.$(OBJEXT) \
-	perms.$(OBJEXT) rcs.$(OBJEXT) rcscmds.$(OBJEXT) \
+	lsacl.$(OBJEXT) main.$(OBJEXT) mapping.$(OBJEXT) \
+	mkmodules.$(OBJEXT) modules.$(OBJEXT) myndbm.$(OBJEXT) \
+	no_diff.$(OBJEXT) parseinfo.$(OBJEXT) passwd.$(OBJEXT) \
+	patch.$(OBJEXT) perms.$(OBJEXT) rcs.$(OBJEXT) rcscmds.$(OBJEXT) \
 	recurse.$(OBJEXT) release.$(OBJEXT) remove.$(OBJEXT) \
-	repos.$(OBJEXT) root.$(OBJEXT) run.$(OBJEXT) scramble.$(OBJEXT) \
-	server.$(OBJEXT) status.$(OBJEXT) subr.$(OBJEXT) tag.$(OBJEXT) \
+	rename.$(OBJEXT) repos.$(OBJEXT) root.$(OBJEXT) run.$(OBJEXT) \
+	scramble.$(OBJEXT) server.$(OBJEXT) status.$(OBJEXT) \
+	subr.$(OBJEXT) tag.$(OBJEXT) unicode_stuff.$(OBJEXT) \
 	update.$(OBJEXT) version.$(OBJEXT) vers_ts.$(OBJEXT) \
 	watch.$(OBJEXT) wrapper.$(OBJEXT) zlib.$(OBJEXT)
 cvs_OBJECTS = $(am_cvs_OBJECTS)
 @WITH_CVSGUI_FALSE@@WITH_ZLIB_TRUE@cvs_DEPENDENCIES = ../diff/libdiff.a \
-@WITH_CVSGUI_FALSE@@WITH_ZLIB_TRUE@	../lib/libcvs.a
+@WITH_CVSGUI_FALSE@@WITH_ZLIB_TRUE@	../lib/libcvs.a \
+@WITH_CVSGUI_FALSE@@WITH_ZLIB_TRUE@	../cvsdelta/libcvsdelta.a
 @WITH_CVSGUI_FALSE@@WITH_ZLIB_FALSE@cvs_DEPENDENCIES = ../diff/libdiff.a \
 @WITH_CVSGUI_FALSE@@WITH_ZLIB_FALSE@	../lib/libcvs.a \
+@WITH_CVSGUI_FALSE@@WITH_ZLIB_FALSE@	../cvsdelta/libcvsdelta.a \
 @WITH_CVSGUI_FALSE@@WITH_ZLIB_FALSE@	../zlib/libz.a
 @WITH_CVSGUI_TRUE@@WITH_ZLIB_TRUE@cvs_DEPENDENCIES = ../diff/libdiff.a \
 @WITH_CVSGUI_TRUE@@WITH_ZLIB_TRUE@	../lib/libcvs.a \
+@WITH_CVSGUI_TRUE@@WITH_ZLIB_TRUE@	../cvsdelta/libcvsdelta.a \
 @WITH_CVSGUI_TRUE@@WITH_ZLIB_TRUE@	../cvsgui/libcvsgui.a
 @WITH_CVSGUI_TRUE@@WITH_ZLIB_FALSE@cvs_DEPENDENCIES = ../diff/libdiff.a \
 @WITH_CVSGUI_TRUE@@WITH_ZLIB_FALSE@	../lib/libcvs.a \
+@WITH_CVSGUI_TRUE@@WITH_ZLIB_FALSE@	../cvsdelta/libcvsdelta.a \
 @WITH_CVSGUI_TRUE@@WITH_ZLIB_FALSE@	../cvsgui/libcvsgui.a \
 @WITH_CVSGUI_TRUE@@WITH_ZLIB_FALSE@	../zlib/libz.a
 cvs_LDFLAGS =
+am__objects_1 = add.$(OBJEXT) admin.$(OBJEXT) annotate.$(OBJEXT) \
+	buffer.$(OBJEXT) chacl.$(OBJEXT) chown.$(OBJEXT) \
+	checkin.$(OBJEXT) checkout.$(OBJEXT) classify.$(OBJEXT) \
+	client.$(OBJEXT) commit.$(OBJEXT) create_adm.$(OBJEXT) \
+	cvsrc.$(OBJEXT) cvsrcs.$(OBJEXT) diff.$(OBJEXT) edit.$(OBJEXT) \
+	entries.$(OBJEXT) error.$(OBJEXT) expand_path.$(OBJEXT) \
+	fileattr.$(OBJEXT) filesubr.$(OBJEXT) find_names.$(OBJEXT) \
+	hardlink.$(OBJEXT) hash.$(OBJEXT) history.$(OBJEXT) \
+	ignore.$(OBJEXT) info.$(OBJEXT) infolib_unix.$(OBJEXT) \
+	import.$(OBJEXT) library_unix.$(OBJEXT) lock.$(OBJEXT) \
+	log.$(OBJEXT) login.$(OBJEXT) logmsg.$(OBJEXT) ls.$(OBJEXT) \
+	lsacl.$(OBJEXT) main.$(OBJEXT) mapping.$(OBJEXT) \
+	mkmodules.$(OBJEXT) modules.$(OBJEXT) myndbm.$(OBJEXT) \
+	no_diff.$(OBJEXT) parseinfo.$(OBJEXT) passwd.$(OBJEXT) \
+	patch.$(OBJEXT) perms.$(OBJEXT) rcs.$(OBJEXT) rcscmds.$(OBJEXT) \
+	recurse.$(OBJEXT) release.$(OBJEXT) remove.$(OBJEXT) \
+	rename.$(OBJEXT) repos.$(OBJEXT) root.$(OBJEXT) run.$(OBJEXT) \
+	scramble.$(OBJEXT) server.$(OBJEXT) status.$(OBJEXT) \
+	subr.$(OBJEXT) tag.$(OBJEXT) unicode_stuff.$(OBJEXT) \
+	update.$(OBJEXT) version.$(OBJEXT) vers_ts.$(OBJEXT) \
+	watch.$(OBJEXT) wrapper.$(OBJEXT) zlib.$(OBJEXT)
+am_cvsnt_OBJECTS = $(am__objects_1)
+cvsnt_OBJECTS = $(am_cvsnt_OBJECTS)
+@WITH_CVSGUI_FALSE@@WITH_ZLIB_TRUE@cvsnt_DEPENDENCIES = \
+@WITH_CVSGUI_FALSE@@WITH_ZLIB_TRUE@	../diff/libdiff.a \
+@WITH_CVSGUI_FALSE@@WITH_ZLIB_TRUE@	../lib/libcvs.a \
+@WITH_CVSGUI_FALSE@@WITH_ZLIB_TRUE@	../cvsdelta/libcvsdelta.a
+@WITH_CVSGUI_FALSE@@WITH_ZLIB_FALSE@cvsnt_DEPENDENCIES = \
+@WITH_CVSGUI_FALSE@@WITH_ZLIB_FALSE@	../diff/libdiff.a \
+@WITH_CVSGUI_FALSE@@WITH_ZLIB_FALSE@	../lib/libcvs.a \
+@WITH_CVSGUI_FALSE@@WITH_ZLIB_FALSE@	../cvsdelta/libcvsdelta.a \
+@WITH_CVSGUI_FALSE@@WITH_ZLIB_FALSE@	../zlib/libz.a
+@WITH_CVSGUI_TRUE@@WITH_ZLIB_TRUE@cvsnt_DEPENDENCIES = ../diff/libdiff.a \
+@WITH_CVSGUI_TRUE@@WITH_ZLIB_TRUE@	../lib/libcvs.a \
+@WITH_CVSGUI_TRUE@@WITH_ZLIB_TRUE@	../cvsdelta/libcvsdelta.a \
+@WITH_CVSGUI_TRUE@@WITH_ZLIB_TRUE@	../cvsgui/libcvsgui.a
+@WITH_CVSGUI_TRUE@@WITH_ZLIB_FALSE@cvsnt_DEPENDENCIES = \
+@WITH_CVSGUI_TRUE@@WITH_ZLIB_FALSE@	../diff/libdiff.a \
+@WITH_CVSGUI_TRUE@@WITH_ZLIB_FALSE@	../lib/libcvs.a \
+@WITH_CVSGUI_TRUE@@WITH_ZLIB_FALSE@	../cvsdelta/libcvsdelta.a \
+@WITH_CVSGUI_TRUE@@WITH_ZLIB_FALSE@	../cvsgui/libcvsgui.a \
+@WITH_CVSGUI_TRUE@@WITH_ZLIB_FALSE@	../zlib/libz.a
+cvsnt_LDFLAGS =
 
 DEFS = @DEFS@
 DEFAULT_INCLUDES =  -I. -I$(srcdir) -I$(top_builddir) -I.
@@ -306,20 +369,21 @@ am__depfiles_maybe = depfiles
 @AMDEP_TRUE@	./$(DEPDIR)/log.Po ./$(DEPDIR)/login.Po \
 @AMDEP_TRUE@	./$(DEPDIR)/logmsg.Po ./$(DEPDIR)/ls.Po \
 @AMDEP_TRUE@	./$(DEPDIR)/lsacl.Po ./$(DEPDIR)/main.Po \
-@AMDEP_TRUE@	./$(DEPDIR)/mkmodules.Po ./$(DEPDIR)/modules.Po \
-@AMDEP_TRUE@	./$(DEPDIR)/myndbm.Po ./$(DEPDIR)/no_diff.Po \
-@AMDEP_TRUE@	./$(DEPDIR)/parseinfo.Po ./$(DEPDIR)/passwd.Po \
-@AMDEP_TRUE@	./$(DEPDIR)/patch.Po ./$(DEPDIR)/perms.Po \
-@AMDEP_TRUE@	./$(DEPDIR)/rcs.Po ./$(DEPDIR)/rcscmds.Po \
-@AMDEP_TRUE@	./$(DEPDIR)/recurse.Po ./$(DEPDIR)/release.Po \
-@AMDEP_TRUE@	./$(DEPDIR)/remove.Po ./$(DEPDIR)/repos.Po \
+@AMDEP_TRUE@	./$(DEPDIR)/mapping.Po ./$(DEPDIR)/mkmodules.Po \
+@AMDEP_TRUE@	./$(DEPDIR)/modules.Po ./$(DEPDIR)/myndbm.Po \
+@AMDEP_TRUE@	./$(DEPDIR)/no_diff.Po ./$(DEPDIR)/parseinfo.Po \
+@AMDEP_TRUE@	./$(DEPDIR)/passwd.Po ./$(DEPDIR)/patch.Po \
+@AMDEP_TRUE@	./$(DEPDIR)/perms.Po ./$(DEPDIR)/rcs.Po \
+@AMDEP_TRUE@	./$(DEPDIR)/rcscmds.Po ./$(DEPDIR)/recurse.Po \
+@AMDEP_TRUE@	./$(DEPDIR)/release.Po ./$(DEPDIR)/remove.Po \
+@AMDEP_TRUE@	./$(DEPDIR)/rename.Po ./$(DEPDIR)/repos.Po \
 @AMDEP_TRUE@	./$(DEPDIR)/root.Po ./$(DEPDIR)/run.Po \
 @AMDEP_TRUE@	./$(DEPDIR)/scramble.Po ./$(DEPDIR)/server.Po \
 @AMDEP_TRUE@	./$(DEPDIR)/status.Po ./$(DEPDIR)/subr.Po \
-@AMDEP_TRUE@	./$(DEPDIR)/tag.Po ./$(DEPDIR)/update.Po \
-@AMDEP_TRUE@	./$(DEPDIR)/vers_ts.Po ./$(DEPDIR)/version.Po \
-@AMDEP_TRUE@	./$(DEPDIR)/watch.Po ./$(DEPDIR)/wrapper.Po \
-@AMDEP_TRUE@	./$(DEPDIR)/zlib.Po
+@AMDEP_TRUE@	./$(DEPDIR)/tag.Po ./$(DEPDIR)/unicode_stuff.Po \
+@AMDEP_TRUE@	./$(DEPDIR)/update.Po ./$(DEPDIR)/vers_ts.Po \
+@AMDEP_TRUE@	./$(DEPDIR)/version.Po ./$(DEPDIR)/watch.Po \
+@AMDEP_TRUE@	./$(DEPDIR)/wrapper.Po ./$(DEPDIR)/zlib.Po
 COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
 	$(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
 LTCOMPILE = $(LIBTOOL) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) \
@@ -337,9 +401,9 @@ CXXLD = $(CXX)
 CXXLINK = $(LIBTOOL) --mode=link $(CXXLD) $(AM_CXXFLAGS) $(CXXFLAGS) \
 	$(AM_LDFLAGS) $(LDFLAGS) -o $@
 CXXFLAGS = @CXXFLAGS@
-DIST_SOURCES = $(cvs_SOURCES)
+DIST_SOURCES = $(cvs_SOURCES) $(cvsnt_SOURCES)
 DIST_COMMON = ChangeLog Makefile.am Makefile.in options.h.in
-SOURCES = $(cvs_SOURCES)
+SOURCES = $(cvs_SOURCES) $(cvsnt_SOURCES)
 
 all: options.h
 	$(MAKE) $(AM_MAKEFLAGS) all-am
@@ -400,6 +464,9 @@ clean-binPROGRAMS:
 cvs$(EXEEXT): $(cvs_OBJECTS) $(cvs_DEPENDENCIES) 
 	@rm -f cvs$(EXEEXT)
 	$(CXXLINK) $(cvs_LDFLAGS) $(cvs_OBJECTS) $(cvs_LDADD) $(LIBS)
+cvsnt$(EXEEXT): $(cvsnt_OBJECTS) $(cvsnt_DEPENDENCIES) 
+	@rm -f cvsnt$(EXEEXT)
+	$(CXXLINK) $(cvsnt_LDFLAGS) $(cvsnt_OBJECTS) $(cvsnt_LDADD) $(LIBS)
 
 mostlyclean-compile:
 	-rm -f *.$(OBJEXT) core *.core
@@ -444,6 +511,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ls.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/lsacl.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/main.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mapping.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mkmodules.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/modules.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/myndbm.Po@am__quote@
@@ -457,6 +525,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/recurse.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/release.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/remove.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/rename.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/repos.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/root.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/run.Po@am__quote@
@@ -465,6 +534,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/status.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/subr.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/tag.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/unicode_stuff.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/update.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/vers_ts.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/version.Po@am__quote@

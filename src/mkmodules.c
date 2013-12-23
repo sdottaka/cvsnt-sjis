@@ -13,7 +13,7 @@
 #define	DBLKSIZ	4096			/* since GNU ndbm doesn't define it */
 #endif
 
-static int checkout_file PROTO((char *file, char *temp));
+static int checkout_file (const char *file, const char *directory, const char *temp);
 static char *make_tempfile PROTO((void));
 static void rename_rcsfile PROTO((char *temp, char *real));
 
@@ -271,14 +271,41 @@ static const char *const modules_contents[] = {
     NULL
 };
 
+static const char *const modules2_contents[] = {
+	"# *** modules2 currently has 'experimental' status.  Testing is encouraged but.\n",
+	"# for greatest stability use the modules file. ***\n",
+	"#\n",
+    "# This file describes the layout of virtual directory structures\n",
+    "# within the repository.\n",
+    "#\n",
+	"# The layout is similar to a Windows .ini file.  For example:\n",
+    "#\n",
+    "# [foo]\n",
+    "# dir1/dir2/dir3 = realdir1/realdir2\n",
+    "# dir1/dir3 = !realdir1/realdir3 (^*js$|^*cpp$)\n",
+    "#\n",
+    "# [bar]\n",
+    "# / = realdir4\n",
+	"# dir_to_delete =\n",
+	"# foo = foo\n",
+	"#\n",
+	"# The special character '!' stops recursion to directories below the one specified (-l option).\n",
+	"# The special character '+' stops parsing of that line, so that you can avoid infinte loops.\n",
+	"#\n",
+	"# Items in (...) are an extended regular expression applied to the filenames.  All files which do not.\n",
+	"# match are ignored.\n",
+    NULL
+};
+
 static const char *const config_contents[] = {
     "# Set this to `no' if pserver shouldn't check system users/passwords\n",
     "#SystemAuth=yes\n",
     "\n",
     "# Put CVS lock files in this directory rather than directly in the repository.\n",
+    "# (Depreciated.  Only honoured if LockServer=none)\n",
     "#LockDir=/var/lock/cvs\n",
     "\n",
-    "# Use a CVS Lock server (overrides LockDir setting).\n",
+    "# Alternate location of CVS LockServer.  Set to 'none' to disable..\n",
 	"#LockServer=localhost:2402\n",
     "\n",
     "# Set `TopLevelAdmin' to `yes' to create a CVS directory at the top\n",
@@ -290,9 +317,9 @@ static const char *const config_contents[] = {
     "# history file, or a subset as needed (ie `TMAR' logs all write operations)\n",
     "#LogHistory=TOFEWGCMAR\n",
     "\n",
-    "# Set `AtomicCommits' to `yes' to do atomic commits on systems that support this.\n",
-    "#AtomicCommits=no\n",
-    "\n",
+//    "# Set `AtomicCommits' to `yes' to do atomic commits on systems that support this.\n",
+//    "#AtomicCommits=no\n",
+//    "\n",
     "# Set `RereadLogAfterVerify` to control rereading of the log file after a verifymsg\n",
     "#   `always` or `yes` to always reread the log regardless\n",
     "#   `never` or `no` (default) to never reread the log\n",
@@ -303,7 +330,7 @@ static const char *const config_contents[] = {
 static const char *const postcommit_contents[] = {
     "# The \"postcommit\" file is used to run post-commit commands.\n",
     "# The filter on the right is invoked with the repository name.  A non-zero\n",
-	"# exit of the filter program will cause the commit to \be aborted.\n",
+	"# exit of the filter program will cause the commit to be aborted.\n",
     "#\n",
     "# The first entry on a line is a regular expression which is tested\n",
     "# against the directory that the change is being committed to, relative\n",
@@ -376,6 +403,9 @@ static const struct admin_file filelist[] = {
 	/* modules is special-cased in mkmodules.  */
 	NULL,
 	modules_contents},
+    {CVSROOTADM_MODULES2,
+	"a %s file specifies logical directory mappings",
+	modules2_contents},
     {CVSROOTADM_READERS,
 	"a %s file specifies read-only users",
 	NULL},
@@ -447,7 +477,7 @@ mkmodules (dir)
      * First, do the work necessary to update the "modules" database.
      */
     temp = make_tempfile ();
-    switch (checkout_file (CVSROOTADM_MODULES, temp))
+    switch (checkout_file (CVSROOTADM_MODULES, dir, temp))
     {
 
 	case 0:			/* everything ok */
@@ -479,7 +509,7 @@ mkmodules (dir)
 	if (fileptr->errormsg == NULL)
 	    continue;
 	temp = make_tempfile ();
-	if (checkout_file (fileptr->filename, temp) == 0)
+	if (checkout_file (fileptr->filename, dir, temp) == 0)
 	    rename_rcsfile (temp, fileptr->filename);
 #if 0
 	/*
@@ -533,8 +563,11 @@ mkmodules (dir)
 			continue;
 		}
 
+	    if(isabsolute(fname) || pathname_levels(fname)>0)
+		error(1,0,"Invalid filename '%s' in checkoutlist", fname);
+
 	    temp = make_tempfile ();
-	    if (checkout_file (fname, temp) == 0)
+	    if (checkout_file (fname, dir, temp) == 0)
 	    {
 		rename_rcsfile (temp, fname);
 	    }
@@ -603,35 +636,31 @@ make_tempfile ()
    there is an error, print a message and return 1 (FIXME: probably
    not a very clean convention).  On success, return 0.  */
 
-static int
-checkout_file (file, temp)
-    char *file;
-    char *temp;
+static int checkout_file (const char *file, const char *directory, const char *temp)
 {
     char *rcs;
     RCSNode *rcsnode;
     int retcode = 0;
 
     if (noexec)
-	return 0;
+		return 0;
 
-    rcs = xmalloc (strlen (file) + 5);
-    strcpy (rcs, file);
-    strcat (rcs, RCSEXT);
+    rcs = xmalloc (strlen (file) + strlen(directory) + 5);
+	sprintf(rcs,"%s/%s%s",directory,file,RCSEXT);
     if (!isfile (rcs))
     {
-	xfree (rcs);
-	return (1);
+		xfree (rcs);
+		return (1);
     }
     rcsnode = RCS_parsercsfile (rcs);
-    retcode = RCS_checkout (rcsnode, NULL, NULL, NULL, "-kb", temp, /* Win32 - ensure config files are unix compatible */
+    retcode = RCS_checkout (rcsnode, NULL, NULL, NULL, "-kb", (char*)temp, /* Win32 - ensure config files are unix compatible */
 			    (RCSCHECKOUTPROC) NULL, (void *) NULL, NULL);
     if (retcode != 0)
     {
-	/* Probably not necessary (?); RCS_checkout already printed a
-	   message.  */
-	error (0, 0, "failed to check out %s file",
-	       file);
+		/* Probably not necessary (?); RCS_checkout already printed a
+		message.  */
+		error (0, 0, "failed to check out %s file",
+			file);
     }
     freercsnode (&rcsnode);
     xfree (rcs);
@@ -838,42 +867,25 @@ rename_dbmfile (temp)
 
 #endif				/* !MY_NDBM */
 
-static void
-rename_rcsfile (temp, real)
-    char *temp;
-    char *real;
+static void rename_rcsfile (char *temp, char *real)
 {
     char *bak;
-    struct stat statbuf;
-    char *rcs;
 
-    /* Set "x" bits if set in original. */
-    rcs = xmalloc (strlen (real) + sizeof (RCSEXT) + 10);
-    (void) sprintf (rcs, "%s%s", real, RCSEXT);
-    statbuf.st_mode = 0; /* in case rcs file doesn't exist, but it should... */
-    if (CVS_STAT (rcs, &statbuf) < 0
-	&& !existence_error (errno))
-	error (0, errno, "cannot stat %s", rcs);
-    xfree (rcs);
+	xchmod(temp,0);
 
-    if (chmod (temp, 0444 | (statbuf.st_mode & 0111)) < 0)
-	error (0, errno, "warning: cannot chmod %s", temp);
-    bak = xmalloc (strlen (real) + sizeof (BAKPREFIX) + 10);
-    (void) sprintf (bak, "%s%s", BAKPREFIX, real);
+	bak = xmalloc (strlen (real) + sizeof (BAKPREFIX) + 10);
+    sprintf (bak, "%s%s", BAKPREFIX, real);
 
     /* rm .#loginfo */
-    if (unlink_file (bak) < 0
-	&& !existence_error (errno))
-	error (0, errno, "cannot remove %s", bak);
+    if (unlink_file (bak) < 0 && !existence_error (errno))
+		error (0, errno, "cannot remove %s", bak);
 
     /* mv loginfo .#loginfo */
-    if (CVS_RENAME (real, bak) < 0
-	&& !existence_error (errno))
+    if (CVS_RENAME (real, bak) < 0 && !existence_error (errno))
 	error (0, errno, "cannot rename %s to %s", real, bak);
 
     /* mv "temp" loginfo */
-    if (CVS_RENAME (temp, real) < 0
-	&& !existence_error (errno))
+    if (CVS_RENAME (temp, real) < 0 && !existence_error (errno))
 	error (0, errno, "cannot rename %s to %s", temp, real);
 
     xfree (bak);
@@ -929,7 +941,7 @@ init (argc, argv)
        thus nuking the need for CVS_CHDIR here, but I haven't looked
        closely (e.g. see wrappers calls within add_rcs_file).  */
     if ( CVS_CHDIR (adm) < 0)
-	error (1, errno, "cannot change to directory %s", adm);
+	error (1, errno, "cannot change to directory %s", fn_root(adm));
 
     /* Make Emptydir so it's there if we need it */
     mkdir_if_needed (CVSNULLREPOS);
@@ -999,7 +1011,9 @@ init (argc, argv)
         /* Make the new history file world-writeable, since every CVS
            user will need to be able to write to it.  We use chmod()
            because xchmod() is too shy. */
+#ifndef _WIN32
         chmod (info, 0666);
+#endif
     }
 
     /* Make an empty val-tags file to prevent problems creating it later.  */
@@ -1017,7 +1031,9 @@ init (argc, argv)
         /* Make the new val-tags file world-writeable, since every CVS
            user will need to be able to write to it.  We use chmod()
            because xchmod() is too shy. */
+#ifndef _WIN32
         chmod (info, 0666);
+#endif
     }
 
     xfree (info);

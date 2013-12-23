@@ -69,7 +69,7 @@ ign_setup ()
        know about the files and letting it decide whether to ignore
        them based on CVSROOOTADM_IGNORE.  */
 #ifdef CLIENT_SUPPORT
-    if (!current_parsed_root->isremote)
+    if (current_parsed_root && !current_parsed_root->isremote)
 #endif
     {
 	char *file = xmalloc (strlen (current_parsed_root->directory) + sizeof (CVSROOTADM)
@@ -307,11 +307,6 @@ void ign_add (const char *ign, int hold)
     }
 }
 
-/* Set to 1 if filenames should be matched in a case-insensitive
-   fashion.  Note that, contrary to the name and placement in ignore.c,
-   this is no longer just for ignore patterns.  */
-int ign_case;
-
 /* Return 1 if the given filename should be ignored by update or import. */
 int
 ign_name (name)
@@ -320,45 +315,14 @@ ign_name (name)
     const char **cpp = ign_list;
 
     if (cpp == NULL)
-	return (0);
+		return (0);
 
-    if (ign_case)
-    {
-	/* We do a case-insensitive match by calling fnmatch on copies of
-	   the pattern and the name which have been converted to
-	   lowercase.  FIXME: would be much cleaner to just unify this
-	   with the other case-insensitive fnmatch stuff (FOLD_FN_CHAR
-	   in lib/fnmatch.c; os2_fnmatch in emx/system.c).  */
-	char *name_lower;
-	char *pat_lower;
-	char *p;
-
-	name_lower = xstrdup (name);
-	for (p = name_lower; *p != '\0'; ++p)
-	    *p = tolower (*p);
 	while (*cpp)
 	{
-	    pat_lower = xstrdup (*cpp++);
-	    for (p = pat_lower; *p != '\0'; ++p)
-		*p = tolower (*p);
-	    if (CVS_FNMATCH (pat_lower, name_lower, 0) == 0)
-		goto matched;
-	    xfree (pat_lower);
-	}
-	xfree (name_lower);
-	return 0;
-      matched:
-	xfree (name_lower);
-	xfree (pat_lower);
-	return 1;
-    }
-    else
-    {
-	while (*cpp)
 	    if (CVS_FNMATCH (*cpp++, name, 0) == 0)
-		return 1;
+			return 1;
+	}
 	return 0;
-    }
 }
 
 /* FIXME: This list of dirs to ignore stuff seems not to be used.
@@ -500,19 +464,11 @@ ignore_files (ilist, entries, update_dir, proc)
 	    continue;
 
 	if (
-#ifdef DT_DIR
-		dp->d_type != DT_UNKNOWN ||
-#endif
 		CVS_LSTAT(file, &sb) != -1) 
 	{
 
 	    if (
-#ifdef DT_DIR
-		dp->d_type == DT_DIR
-		|| (dp->d_type == DT_UNKNOWN && S_ISDIR (sb.st_mode))
-#else
 		S_ISDIR (sb.st_mode)
-#endif
 		)
 	    {
 		if (! subdirs)
@@ -531,12 +487,7 @@ ignore_files (ilist, entries, update_dir, proc)
 	    }
 #ifdef S_ISLNK
 	    else if (
-#ifdef DT_DIR
-		     dp->d_type == DT_LNK
-		     || (dp->d_type == DT_UNKNOWN && S_ISLNK(sb.st_mode))
-#else
 		     S_ISLNK (sb.st_mode)
-#endif
 		     )
 	    {
 		continue;
@@ -583,3 +534,35 @@ void ign_send ()
 	send_to_server ("\012", 0);
 }
 #endif /* CLIENT_SUPPORT */
+
+int ign_close()
+{
+	if(ign_list)
+	{
+		int i;
+		for(i=0; i<ign_count; i++)
+			xfree(ign_list[i]);
+		xfree(ign_list);
+		ign_count=0;
+	}
+	return 0;
+}
+
+void ign_display()
+{
+    int i;
+
+	if(ign_inhibit_server)
+	  printf("! ");
+	if(ign_list)
+	{
+		for(i=0; i<ign_count; i++)
+		{
+			if(ign_list[i])
+			{
+				printf("%s ",ign_list[i]);
+			}
+		}
+	}
+	printf("\n");
+}

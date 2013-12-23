@@ -13,7 +13,7 @@
 ## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ## GNU General Public License for more details.
 
-INCLUDES = -I$(top_srcdir)/lib -I$(top_srcdir)/src
+AM_CPPFLAGS = -I$(top_srcdir)/lib -I$(top_srcdir)/src
 AM_CFLAGS = -DCVSGUI -DCVSGUI_PIPE
 
 noinst_LIBRARIES = libcvsgui.a

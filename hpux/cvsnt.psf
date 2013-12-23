@@ -1,0 +1,45 @@
+# PSF file for cvsnt
+# 
+# Useful commands:
+#
+# swpackage -p -vv -s /depot/psf_files/xxx.psf -d /depot/s700_opt
+# swmodify -p -d -vv -s /depot/psf_files/xxx.psf xxx @ /depot/s700_opt  
+# swremove -p -v -d xxx,r=yyy @ /depot/s700_opt
+# swinstall -p -v -s /depot/s700_opt xxx
+#
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# 
+# This section is optional -- delete it if you don't want it.
+#
+vendor
+	tag march-hare
+        title "March Hare Software Pty"
+        description "CVSNT by March Hare - see http://www.cvsnt.com"
+end
+#
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+#
+# Describe the product below.  Search and replace vvv, xxx, yyy. Delete what
+# you don't use.  Either define filesets by file or by whole directory.
+#
+product
+        tag cvsnt
+        title "CVSNT"
+        description "CVSNT advanced version control system"
+        revision REVISION
+        #
+        architecture S700/S800_HPUX_10/11
+        machine_type 9000/[78]*
+        os_name HP-UX
+        os_release ?.10.*|?.11.*
+        os_version *
+        #
+        fileset
+                tag exec
+                title "cvsnt"
+
+                directory tmp = /
+                file_permissions -u 222 -g bin -o bin
+                file *
+        end
+end

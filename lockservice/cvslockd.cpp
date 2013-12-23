@@ -1,8 +1,15 @@
 #include <stdio.h>
 #include <unistd.h>
-#include <getopt.h>
 #include <stdlib.h>
 #include <vector>
+
+#include "config.h"
+#include "daemon.h"
+#include "getopt1.h"
+
+#ifdef HAVE_GETOPT_H
+#include <getopt.h>
+#endif
 
 #define SOCKET int
 #define DEFAULT_PORT 2402
@@ -51,7 +58,7 @@ int main(int argc, char *argv[])
   }
   if(optind < argc)
     usage(argv[0]);
-    
+
   if(!g_bTestMode)
   {
     if(daemon(0,0))
@@ -60,8 +67,8 @@ int main(int argc, char *argv[])
       return -1;
     }
   }
- 
-  run_server(listen_port,0);
+
+  run_server(listen_port,0,0);
 
   return 0;
 }

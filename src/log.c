@@ -13,6 +13,7 @@
  */
 
 #include "cvs.h"
+#include "timegm.h"
 
 /* This structure holds information parsed from the -r option.  */
 
@@ -86,6 +87,10 @@ struct log_data
     /* Nonzero if the -N option was seen, meaning that tag information
        should not be printed.  */
     int notags;
+    /* Process dates as local time */
+    int local_time;
+	/* Offset to local time from UTC */
+	int local_time_offset;
     /* Nonzero if the -b option was seen, meaning that only revisions
        on the default branch should be printed.  */
     int default_branch;
@@ -114,12 +119,13 @@ struct log_data_and_rcs
     RCSNode *rcs;
 };
 
+
 static int rlog_proc PROTO((int argc, char **argv, char *xwhere,
 			    char *mwhere, char *mfile, int shorten,
 			    int local_specified, char *mname, char *msg));
 static Dtype log_dirproc PROTO ((void *callerdat, char *dir,
 				 char *repository, char *update_dir,
-				 List *entries));
+				 List *entries, const char *virtual_repository, Dtype hint));
 static int log_fileproc PROTO ((void *callerdat, struct file_info *finfo));
 static struct option_revlist *log_parse_revlist PROTO ((const char *));
 static void log_parse_date PROTO ((struct log_data *, const char *));
@@ -148,12 +154,13 @@ static int is_rlog, is_rcs, supress_extra_fields;
 
 static const char *const log_usage[] =
 {
-    "Usage: %s %s [-lRhtNb] [-r[revisions]] [-d dates] [-s states]\n",
+    "Usage: %s %s [-lRhtNbT] [-r[revisions]] [-d dates] [-s states]\n",
     "    [-w[logins]] [files...]\n",
     "\t-l\tLocal directory only, no recursion.\n",
     "\t-R\tOnly print name of RCS file.\n",
     "\t-h\tOnly print header.\n",
     "\t-t\tOnly print header and descriptive text.\n",
+    "\t-T\tUse local time not GMT.\n",
 	"\t-S\tSupress header information when no revisions are selected.\n",
     "\t-N\tDo not list tags.\n",
     "\t-b\tOnly list revisions on the default branch.\n",
@@ -230,7 +237,7 @@ cvslog (argc, argv)
 
 	is_rcs = (strcmp (command_name, "rcsfile") == 0);
     is_rlog = is_rcs || (strcmp (command_name, "rlog") == 0);
-	supress_extra_fields = is_rcs;
+	supress_extra_fields = is_rcs || fake_unix_cvs;
 
     if (argc == -1)
 		usage (log_usage);
@@ -238,8 +245,9 @@ cvslog (argc, argv)
     memset (&log_data, 0, sizeof log_data);
     prl = &log_data.revlist;
 
+	log_data.local_time_offset = get_local_time_offset();
     optind = 0;
-	while ((c = getopt (argc, argv, "+bd:hSlNRxXr::s:tw::")) != -1)
+	while ((c = getopt (argc, argv, "+bd:hSlNRxXr::s:tw::To:")) != -1)
     {
 	switch (c)
 	{
@@ -274,6 +282,9 @@ cvslog (argc, argv)
 	    case 't':
 		log_data.long_header = 1;
 		break;
+	    case 'T':
+		log_data.local_time = 1;
+		break;
 	    case 'w':
 		if (optarg != NULL)
 		    log_parse_list (&log_data.authorlist, optarg);
@@ -285,6 +296,9 @@ cvslog (argc, argv)
 			break;
 		case 'X':
 			supress_extra_fields = 1;
+			break;
+		case 'o':
+			log_data.local_time_offset=atoi(optarg);
 			break;
 	    case '?':
 	    default:
@@ -358,6 +372,13 @@ cvslog (argc, argv)
 		send_arg("-R");
 	if (log_data.long_header)
 		send_arg("-t");
+	if (log_data.local_time)
+	{
+		char tmp[64];
+		send_arg("-T");
+		sprintf(tmp,"%d",log_data.local_time_offset);
+		option_with_arg("-o",tmp);
+	}
 
 	while (log_data.revlist != NULL)
 	{
@@ -532,7 +553,7 @@ rlog_proc (argc, argv, xwhere, mwhere, mfile, shorten, local, mname, msg)
     char *myargv[2];
     int err = 0;
     int which;
-    char *repository;
+    char *repository, *mapped_repository;
     char *where;
 
     if (is_rlog)
@@ -581,14 +602,18 @@ rlog_proc (argc, argv, xwhere, mwhere, mfile, shorten, local, mname, msg)
 	    xfree (path);
 	}
 
+	mapped_repository = map_repository(repository);
+
 	/* cd to the starting repository */
-	if ( CVS_CHDIR (repository) < 0)
+	if ( CVS_CHDIR (mapped_repository) < 0)
 	{
-	    error (0, errno, "cannot chdir to %s", repository);
+	    error (0, errno, "cannot chdir to %s", fn_root(repository));
 	    xfree (repository);
+	    xfree (mapped_repository);
 	    return (1);
 	}
 	xfree (repository);
+	xfree (mapped_repository);
 	/* End section which is identical to patch_proc.  */
 
 	which = W_REPOS | W_ATTIC;
@@ -599,7 +624,7 @@ rlog_proc (argc, argv, xwhere, mwhere, mfile, shorten, local, mname, msg)
         which = W_LOCAL | W_REPOS | W_ATTIC;
     }
 
-    err = start_recursion (log_fileproc, (FILESDONEPROC) NULL, log_dirproc,
+    err = start_recursion (log_fileproc, (FILESDONEPROC) NULL, (PREDIRENTPROC) NULL, log_dirproc,
 			   (DIRLEAVEPROC) NULL, (void *) &log_data,
 			   argc - 1, argv + 1, local, which, 0, 1,
 			   where, 1, verify_read);
@@ -883,7 +908,7 @@ log_fileproc (callerdat, finfo)
 	}
 	
 	if (!really_quiet)
-	    error (0, 0, "nothing known about %s", finfo->file);
+	    error (0, 0, "nothing known about %s", fn_root(finfo->file));
 	
 	return (1);
     }
@@ -922,7 +947,25 @@ log_fileproc (callerdat, finfo)
 
 		if (log_data->nameonly)
 		{
-		cvs_output (fn_root(rcsfile->path), 0);
+		if(is_rcs)
+		    cvs_output (rcsfile->path, 0);
+		else
+		{
+			/* We lie... */
+			char *repo,*tmp;
+			if(is_rlog)
+			{
+				repo = xmalloc(strlen(current_parsed_root->directory)+strlen(finfo->update_dir)+10);
+				sprintf(repo,"%s/%s",current_parsed_root->directory,finfo->update_dir);
+			}
+			else
+				repo = Name_Repository(NULL,NULL);
+			tmp = xmalloc(strlen(repo)+strlen(finfo->file)+sizeof(RCSEXT)+10);
+			sprintf(tmp,"%s/%s%s",repo,finfo->file,RCSEXT);
+		    cvs_output (fn_root(tmp), 0);
+			xfree(tmp);
+			xfree(repo);
+		}
 		cvs_output ("\n", 1);
 		return 0;
 		}
@@ -933,7 +976,22 @@ log_fileproc (callerdat, finfo)
 		if(is_rcs)
 		    cvs_output (rcsfile->path, 0);
 		else
-		    cvs_output (fn_root(rcsfile->path), 0);
+		{
+			/* We lie... */
+			char *repo,*tmp;
+			if(is_rlog)
+			{
+				repo = xmalloc(strlen(current_parsed_root->directory)+strlen(finfo->update_dir)+10);
+				sprintf(repo,"%s/%s",current_parsed_root->directory,finfo->update_dir);
+			}
+			else
+				repo = Name_Repository(NULL,NULL);
+			tmp = xmalloc(strlen(repo)+strlen(finfo->file)+sizeof(RCSEXT)+10);
+			sprintf(tmp,"%s/%s%s",repo,finfo->file,RCSEXT);
+		    cvs_output (fn_root(tmp), 0);
+			xfree(tmp);
+			xfree(repo);
+		}
 
 		if (!is_rlog || is_rcs)
 		{
@@ -944,6 +1002,7 @@ log_fileproc (callerdat, finfo)
 				if(strlen(tmp)>(sizeof(RCSEXT)-1) && !strcmp(tmp+strlen(tmp)-(sizeof(RCSEXT)-1),RCSEXT))
 					*(tmp+strlen(tmp)-(sizeof(RCSEXT)-1))='\0';
 				cvs_output (tmp,0);
+				xfree(tmp);
 			}
 			else
 			{
@@ -1389,10 +1448,10 @@ log_version_requested (log_data, revlist, rcs, vnode)
 	{
 	    int cmp;
 
-	    cmp = RCS_datecmp (vnode->date, d->start);
+		cmp = RCS_datecmp (vnode->date, d->start);
 	    if (cmp > 0 || (cmp == 0 && d->inclusive))
 	    {
-		cmp = RCS_datecmp (vnode->date, d->end);
+	    	cmp = RCS_datecmp (vnode->date, d->end);
 		if (cmp < 0 || (cmp == 0 && d->inclusive))
 		    break;
 	    }
@@ -1642,7 +1701,6 @@ log_version (log_data, revlist, rcs, ver, trunk)
     int trunk;
 {
     Node *p;
-    int year, mon, mday, hour, min, sec;
     char buf[100];
     Node *padd, *pdel;
 
@@ -1661,12 +1719,18 @@ log_version (log_data, revlist, rcs, ver, trunk)
     }
 
     cvs_output ("\ndate: ", 0);
-    (void) sscanf (ver->date, SDATEFORM, &year, &mon, &mday, &hour, &min,
-		   &sec);
-    if (year < 1900)
-	year += 1900;
-    sprintf (buf, "%04d/%02d/%02d %02d:%02d:%02d", year, mon, mday,
-	     hour, min, sec);
+	{
+		struct tm tm;
+		time_t rcstime;
+
+		date_to_tm(&tm, ver->date);
+		if(log_data->local_time)
+		{
+			rcstime=timegm(&tm) + log_data->local_time_offset;
+			tm=*gmtime(&rcstime);
+		}
+		strftime(buf, sizeof(buf), "%Y/%m/%d %H:%M:%S", &tm);
+	}
     cvs_output (buf, 0);
 
     cvs_output (";  author: ", 0);
@@ -1734,6 +1798,13 @@ log_version (log_data, revlist, rcs, ver, trunk)
 			cvs_output(p->data, 0);
 	        cvs_output (";", 1);
 		}
+		p = findnode(ver->other_delta,"filename");
+		if(p && p->data)
+		{
+			cvs_output("  filename: ", 0);
+			cvs_output(p->data, 0);
+	        cvs_output (";", 1);
+		}
 	}
 
 	if (ver->branches != NULL)
@@ -1794,19 +1865,13 @@ log_branch (p, closure)
  * Print a warm fuzzy message
  */
 /* ARGSUSED */
-static Dtype
-log_dirproc (callerdat, dir, repository, update_dir, entries)
-    void *callerdat;
-    char *dir;
-    char *repository;
-    char *update_dir;
-    List *entries;
+static Dtype log_dirproc (void *callerdat, char *dir, char *repository, char *update_dir, List *entries, const char *virtual_repository, Dtype hint)
 {
-    if (!isdir (dir))
-	return (R_SKIP_ALL);
+	if(hint!=R_PROCESS)
+		return hint;
 
     if (!quiet)
-	error (0, 0, "Logging %s", update_dir);
+		error (0, 0, "Logging %s", update_dir);
     return (R_PROCESS);
 }
 

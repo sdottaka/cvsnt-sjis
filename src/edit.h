@@ -30,4 +30,4 @@ extern void notify_do(int type, char *filename, const char *who,
 
 /* Take note of the fact that FILE is up to date (this munges CVS/Base;
    processing of CVS/Entries is done separately).  */
-extern void mark_up_to_date PROTO ((char *file));
+extern void mark_up_to_date(char *file);

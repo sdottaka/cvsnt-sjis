@@ -1,10 +1,10 @@
-#pragma once
-#include "afxwin.h"
+#ifndef SSLSETTINGPAGE__H
+#define SSLSETTINGPAGE__H
 
-
+#include "TooltipPropertyPage.h"
 // CSslSettingPage dialog
 
-class CSslSettingPage : public CPropertyPage
+class CSslSettingPage : public CTooltipPropertyPage
 {
 	DECLARE_DYNAMIC(CSslSettingPage)
 
@@ -29,3 +29,5 @@ public:
 	afx_msg void OnBnClickedSslcert();
 	afx_msg void OnBnClickedPrivatekey();
 };
+
+#endif

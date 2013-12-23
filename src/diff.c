@@ -27,7 +27,7 @@ enum diff_file
 
 static Dtype diff_dirproc PROTO ((void *callerdat, char *dir,
 				  char *pos_repos, char *update_dir,
-				  List *entries));
+				  List *entries, const char *virtual_repository, Dtype hint));
 static int diff_filesdoneproc PROTO ((void *callerdat, int err,
 				      char *repos, char *update_dir,
 				      List *entries));
@@ -401,7 +401,7 @@ int diff (int argc, char **argv)
 		which |= W_REPOS | W_ATTIC;
 
 		/* start the recursion processor */
-		err = start_recursion (diff_fileproc, diff_filesdoneproc, diff_dirproc,
+		err = start_recursion (diff_fileproc, diff_filesdoneproc, (PREDIRENTPROC) NULL, diff_dirproc,
 				diff_dirleaveproc, NULL, argc, argv, local,
 				which, 0, 1, (char *) NULL, 1, verify_read);
 	}
@@ -431,7 +431,6 @@ diff_fileproc (callerdat, finfo)
     Vers_TS *vers;
     enum diff_file empty_file = DIFF_DIFFERENT;
     char *tmp;
-    char *tocvsPath;
     char *fname;
     char *label1;
     char *label2;
@@ -443,7 +442,7 @@ diff_fileproc (callerdat, finfo)
     fname = NULL;
 
     user_file_rev = 0;
-    vers = Version_TS (finfo, NULL, NULL, NULL, 1, 0);
+    vers = Version_TS (finfo, NULL, NULL, NULL, 1, 0, 0);
 	if(vers->tag && RCS_isbranch(finfo->rcs, vers->tag))
 		default_branch = vers->tag;
 	else
@@ -484,7 +483,7 @@ diff_fileproc (callerdat, finfo)
 		    Vers_TS *xvers;
 
 			xvers = Version_TS (finfo, NULL, diff_rev1?diff_rev1:default_branch, diff_date1,
-					1, 0);
+					1, 0, 0);
 		    exists = xvers->vn_rcs != NULL;
 		    freevers_ts (&xvers);
 		}
@@ -636,23 +635,6 @@ diff_fileproc (callerdat, finfo)
 		cvs_output ("\n", 1);
 	}
 
-    tocvsPath = wrap_tocvs_process_file(finfo->file);
-    if (tocvsPath)
-    {
-	/* Backup the current version of the file to CVS/,,filename */
-	fname = xmalloc (strlen (finfo->file)
-			 + sizeof CVSADM
-			 + sizeof CVSPREFIX
-			 + 10);
-	sprintf(fname,"%s/%s%s",CVSADM, CVSPREFIX, finfo->file);
-	if (unlink_file_dir (fname) < 0)
-	    if (! existence_error (errno))
-		error (1, errno, "cannot remove %s", fname);
-	rename_file (finfo->file, fname);
-	/* Copy the wrapped file to the current directory then go to work */
-	copy_file (tocvsPath, finfo->file, 0, 1);
-    }
-
     /* Set up file labels appropriate for compatibility with the Larry Wall
      * implementation of patch if the user didn't specify.  This is irrelevant
      * according to the POSIX.2 specification.
@@ -765,18 +747,6 @@ RCS file: ", 0);
 	    break;
     }
 
-    if (tocvsPath)
-    {
-	if (unlink_file_dir (finfo->file) < 0)
-	    if (! existence_error (errno))
-		error (1, errno, "cannot remove %s", finfo->file);
-
-	rename_file (fname, finfo->file);
-	if (unlink_file (tocvsPath) < 0)
-	    error (1, errno, "cannot remove %s", tocvsPath);
-	xfree (fname);
-    }
-
     if (empty_file == DIFF_REMOVED
 	|| (empty_file == DIFF_ADDED && use_rev2 != NULL))
     {
@@ -807,19 +777,13 @@ diff_mark_errors (err)
  * Don't try to diff directories that don't exist! -- DW
  */
 /* ARGSUSED */
-static Dtype
-diff_dirproc (callerdat, dir, pos_repos, update_dir, entries)
-    void *callerdat;
-    char *dir;
-    char *pos_repos;
-    char *update_dir;
-    List *entries;
+static Dtype diff_dirproc (void *callerdat, char *dir, char *repos, char *update_dir, List *entries, const char *virtual_repository, Dtype hint)
 {
     /* XXX - check for dirs we don't want to process??? */
 
     /* YES ... for instance dirs that don't exist!!! -- DW */
-    if (!isdir (dir))
-	return (R_SKIP_ALL);
+	if(hint!=R_PROCESS)
+		return hint;
 
     if (!quiet)
 	error (0, 0, "Diffing %s", update_dir);
@@ -880,7 +844,7 @@ static enum diff_file diff_file_nodiff(struct file_info *finfo, Vers_TS *vers, e
 			: RCS_branch_head (vers->srcfile, vers->vn_rcs));
 	else
 	{
-		xvers = Version_TS(finfo, NULL, diff_rev1?diff_rev1:default_branch, diff_date1, 1, 0);
+		xvers = Version_TS(finfo, NULL, diff_rev1?diff_rev1:default_branch, diff_date1, 1, 0, 0);
 	    if (xvers->vn_rcs != NULL)
 		use_rev1 = xstrdup (xvers->vn_rcs);
 	    freevers_ts (&xvers);
@@ -895,7 +859,7 @@ static enum diff_file diff_file_nodiff(struct file_info *finfo, Vers_TS *vers, e
 			: RCS_branch_head (vers->srcfile, vers->vn_rcs));
 	else
 	{
-	    xvers = Version_TS(finfo, NULL, diff_rev2?diff_rev2:default_branch, diff_date2, 1, 0);
+	    xvers = Version_TS(finfo, NULL, diff_rev2?diff_rev2:default_branch, diff_date2, 1, 0, 0);
 	    if (xvers->vn_rcs != NULL)
 		use_rev2 = xstrdup (xvers->vn_rcs);
 	    freevers_ts (&xvers);

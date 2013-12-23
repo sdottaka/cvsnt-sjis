@@ -43,8 +43,4 @@ public:
 // Microsoft Visual C++ will insert additional declarations immediately before the previous line.
 /* Compatibility with old headers */
 
-#ifndef BIF_NEWDIALOGSTYLE
-#define BIF_NEWDIALOGSTYLE 0
-#endif
-
 #endif // !defined(AFX_cvsntCPL_H__F52337E7_30FF_11D2_8EED_00A0C94457BF__INCLUDED_)

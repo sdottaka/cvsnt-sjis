@@ -19,7 +19,9 @@
 # when compiling savecwd.c
 #
 # $(includeopt) is CVS specific and set by configure
-INCLUDES = -I$(top_srcdir)/src -I$(top_srcdir)/lib $(includeopt)
+AM_CPPFLAGS = -I$(top_srcdir)/src -I$(top_srcdir)/lib $(includeopt)
+AM_CFLAGS=-DCVS_CONFIG_DIR=\"$(cvs_config_dir)\" -DCVS_LIBRARY_DIR=\"$(cvs_library_dir)\"
+
 libdir=$(cvs_library_dir)
 
 if PSERVER_PROTOCOL_SUPPORT

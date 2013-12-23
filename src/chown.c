@@ -74,8 +74,8 @@ chowner (argc, argv)
 	  send_arg (argv[0]); /* Send the user name */
       argc--;
       argv++;
-      send_file_names (argc, argv, SEND_EXPAND_WILD);
       send_files (argc, argv, 0, 0, SEND_NO_CONTENTS);
+      send_file_names (argc, argv, SEND_EXPAND_WILD);
       send_to_server ("chown\012", 0);
       return get_responses_and_close ();
    }
@@ -93,14 +93,14 @@ chowner (argc, argv)
       (void) sprintf (dname, "%s/%s", repository, argv[i]);
       if (!isdir (dname))
       {
-	 error (0, 0, "`%s' is not a directory", dname);
+	 error (0, 0, "`%s' is not a directory", fn_root(dname));
 	 err++;
       }
       else
       {
 	 if (!verify_owner (dname))
 	 {
-	    error (0, 0, "'%s' does not own '%s'\n", CVS_Username, argv[i]);
+	    error (0, 0, "'%s' does not own '%s'\n", CVS_Username, fn_root(argv[i]));
 	    err++;
 	 }
 	 else
@@ -116,7 +116,7 @@ chowner (argc, argv)
 			}
 			else
 			{
-			   error (0,0, "Changing owner of %s to %s", argv[i], user);
+			   error (0,0, "Changing owner of %s to %s", fn_root(argv[i]), user);
 			   change_owner (dname, user);
 			}
 			free_passwd_list();

@@ -29,7 +29,9 @@ enum
 	elemPassword = 0x0002,
 	elemHostname = 0x0004,
 	elemPort	 = 0x0008,
-	elemTunnel	 = 0x0010
+	elemTunnel	 = 0x0010,
+
+	flagAlwaysEncrypted = 0x8000
 };
 
 struct protocol_interface
@@ -67,7 +69,6 @@ struct protocol_interface
 
 	void* __reserved; // Used by cvs main code to store context data
 
-
 	/* The following should be filled in by auth_protocol_connect before it returns SUCCESS */
 	int verify_only;
 	char *auth_username;
@@ -80,6 +81,8 @@ struct server_interface
 	cvsroot_t *current_root;
 	const char *library_dir;
 	const char *cvs_command;
+	int in_fd; /* FD for server input */
+	int out_fd; /* FD for server output */
 
 	int (*get_config_data)(const struct server_interface *server, const char *key, const char *value, char *buffer, int buffer_len);
 	int (*set_config_data)(const struct server_interface *server, const char *key, const char *value, const char *buffer);
@@ -104,7 +107,9 @@ enum
 
 /* Exported from each shared library to get interface data */
 CVS_EXPORT struct protocol_interface *get_protocol_interface(const struct server_interface *server);
+
+typedef struct protocol_interface *(*tGPI)(const struct server_interface *server);
 		
-#define PROTOCOL_INTERFACE_VERSION 0x0120
+#define PROTOCOL_INTERFACE_VERSION 0x0130
 
 #endif

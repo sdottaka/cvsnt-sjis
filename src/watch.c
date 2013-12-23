@@ -349,7 +349,7 @@ watch_addremove (argc, argv)
     lock_tree_for_write (argc, argv, local, W_LOCAL, 0);
 
     err = start_recursion (addremove_fileproc, addremove_filesdoneproc,
-			   (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL, NULL,
+			   (PREDIRENTPROC) NULL, (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL, NULL,
 			   argc, argv, local, W_LOCAL, 0, 0, (char *)NULL,
 			   1, verify_write);
 
@@ -520,7 +520,7 @@ watchers (argc, argv)
 #endif /* CLIENT_SUPPORT */
 
     return start_recursion (watchers_fileproc, (FILESDONEPROC) NULL,
-			    (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL, NULL,
+			    (PREDIRENTPROC) NULL, (DIRENTPROC) NULL, (DIRLEAVEPROC) NULL, NULL,
 			    argc, argv, local, W_LOCAL, 0, 1, (char *)NULL,
 			    1, verify_write);
 }

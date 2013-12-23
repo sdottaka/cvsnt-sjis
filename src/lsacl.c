@@ -24,9 +24,7 @@ lsacl (argc, argv)
    char **argv;
 {
 #ifdef SERVER_SUPPORT
-//   char *user;
    int i;
-//   char *permptr;
 #endif
    char *repository;
    int c;
@@ -90,7 +88,7 @@ lsacl (argc, argv)
       (void) sprintf (dname, "%s/%s", repository, argv[i]);
       if (!isdir (dname))
       {
-	 error (0, 0, "`%s' is not a directory", dname);
+	 error (0, 0, "`%s' is not a directory", fn_root(dname));
 	 err++;
       }
       else

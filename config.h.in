@@ -9,24 +9,21 @@
 /* Support for CVSGUI protocol */
 #undef CVSGUI_PIPE
 
-/* Directory to search for config files */
-#undef CVS_CONFIG_DIR
-
 /* Define to OS specific seek routine */
 #undef CVS_FSEEK
 
 /* Define to OS specific tell routine */
 #undef CVS_FTELL
 
-/* Directory to search for protocol libraries */
-#undef CVS_LIBRARY_DIR
-
 /* Define to an alternative value if GSS_C_NT_HOSTBASED_SERVICE isn't defined
    in the gssapi.h header file. MIT Kerberos 1.2.1 requires this. Only
    relevant when using GSSAPI. */
 #undef GSS_C_NT_HOSTBASED_SERVICE
 
-/* Define if ocnnect is supported */
+/* Define to 1 if you have the <arpa/inet.h> header file. */
+#undef HAVE_ARPA_INET_H
+
+/* Define if connect is supported */
 #undef HAVE_CONNECT
 
 /* Define if crypt is supported */
@@ -84,11 +81,26 @@
 /* Define to 1 if you have the `getaddrinfo' function. */
 #undef HAVE_GETADDRINFO
 
+/* Define to 1 if you have the `getdelim' function. */
+#undef HAVE_GETDELIM
+
 /* Define to 1 if you have the `getgroups' function. */
 #undef HAVE_GETGROUPS
 
+/* Define to 1 if you have the `getline' function. */
+#undef HAVE_GETLINE
+
 /* Define to 1 if you have the `getnameinfo' function. */
 #undef HAVE_GETNAMEINFO
+
+/* Define to 1 if you have the `getopt' function. */
+#undef HAVE_GETOPT
+
+/* Define to 1 if you have the <getopt.h> header file. */
+#undef HAVE_GETOPT_H
+
+/* Define to 1 if you have the `getopt_long' function. */
+#undef HAVE_GETOPT_LONG
 
 /* Define to 1 if you have the `getpagesize' function. */
 #undef HAVE_GETPAGESIZE
@@ -141,6 +153,9 @@
 /* Define to 1 if you support file names longer than 14 characters. */
 #undef HAVE_LONG_FILE_NAMES
 
+/* Define to 1 if you have the <malloc.h> header file. */
+#undef HAVE_MALLOC_H
+
 /* Define to 1 if you have the `memchr' function. */
 #undef HAVE_MEMCHR
 
@@ -171,6 +186,12 @@
 /* Define to 1 if you have the <ndir.h> header file, and it defines `DIR'. */
 #undef HAVE_NDIR_H
 
+/* Define to 1 if you have the <netinet/in.h> header file. */
+#undef HAVE_NETINET_IN_H
+
+/* Support for PAM authentication */
+#undef HAVE_PAM
+
 /* Define to 1 if you have the <paths.h> header file. */
 #undef HAVE_PATHS_H
 
@@ -180,8 +201,14 @@
 /* Define to 1 if you have the `readlink' function. */
 #undef HAVE_READLINK
 
+/* Define to 1 if you have the `regcomp' function. */
+#undef HAVE_REGCOMP
+
 /* Define to 1 if you have the `rename' function. */
 #undef HAVE_RENAME
+
+/* Define to 1 if you have the <security/pam_misc.h> header file. */
+#undef HAVE_SECURITY_PAM_MISC_H
 
 /* Define to 1 if you have the `select' function. */
 #undef HAVE_SELECT
@@ -304,6 +331,9 @@
 /* Define to 1 if you have the `tempnam' function. */
 #undef HAVE_TEMPNAM
 
+/* Define to 1 if you have the `timegm' function. */
+#undef HAVE_TIMEGM
+
 /* Define to 1 if you have the `timezone' function. */
 #undef HAVE_TIMEZONE
 
@@ -348,6 +378,9 @@
 
 /* Support CVS lock server */
 #undef LOCKSERVER_SUPPORT
+
+/* Name of package */
+#undef PACKAGE
 
 /* Define to the address where bug reports for this package should be sent. */
 #undef PACKAGE_BUGREPORT
@@ -400,14 +433,14 @@
 /* Define if utime requires write access to the file. */
 #undef UTIME_EXPECTS_WRITABLE
 
+/* Version number of package */
+#undef VERSION
+
 /* Number of bits in a file offset, on hosts where this is settable. */
 #undef _FILE_OFFSET_BITS
 
 /* Define for large files, on AIX-style hosts. */
 #undef _LARGE_FILES
-
-/* Define to force lib/regex.c to define re_comp et al. */
-#undef _REGEX_RE_COMP
 
 /* Define to `int' if <sys/types.h> doesn't define. */
 #undef gid_t
@@ -429,6 +462,9 @@
 
 /* Define to `unsigned' if <sys/types.h> does not define. */
 #undef size_t
+
+/* Define to `int' if neither <sys/types.h> nor <sys/socket.h> define. */
+#undef socklen_t
 
 /* Define to `int' if <sys/types.h> doesn't define. */
 #undef uid_t

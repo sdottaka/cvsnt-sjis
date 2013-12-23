@@ -1,4 +1,5 @@
 /* JT thinks BeOS is worth the trouble. */
+/* It wasn't... */
 
 /* CVS client-related stuff.
 
@@ -16,7 +17,6 @@
 #include "config.h"
 #endif /* HAVE_CONFIG_H */
 
-#include <assert.h>
 #include "cvs.h"
 #include "getline.h"
 #include "edit.h"
@@ -26,6 +26,10 @@
 #ifdef CLIENT_SUPPORT
 
 #include "md5.h"
+
+int client_overwrite_existing;
+int client_max_dotdot;
+int is_cvsnt = 1;
 
 /* The protocol layer that the client is connected to */
 const struct protocol_interface *client_protocol;
@@ -62,6 +66,7 @@ static void handle_merged(char *, int);
 static void handle_patched(char *, int);
 static void handle_rcs_diff(char *, int);
 static void handle_removed(char *, int);
+static void handle_renamed(char *, int);
 static void handle_remove_entry(char *, int);
 static void handle_set_static_directory(char *, int);
 static void handle_clear_static_directory(char *, int);
@@ -261,6 +266,8 @@ change_mode (filename, mode_string, respect_umask)
     char *p;
     int writeable = 0;
 
+    TRACE(3,"change_mode (%s,%s,%d)",PATCH_NULL(filename),PATCH_NULL(mode_string),respect_umask);
+
     /* We can only distinguish between
          1) readable
          2) writeable
@@ -298,6 +305,8 @@ change_mode (filename, mode_string, respect_umask)
     char *p;
     mode_t mode = 0;
     mode_t oumask;
+
+    TRACE(3,"change_mode (%s,%s,%d)",PATCH_NULL(filename),PATCH_NULL(mode_string),respect_umask);
 
     p = mode_string;
     while (*p != '\0')
@@ -801,12 +810,7 @@ static List *last_entries;
 
 static char *last_dir_name;
 
-static void
-call_in_directory (pathname, func, data)
-    char *pathname;
-    void (*func) PROTO((char *data, List *ent_list, char *short_pathname,
-			  char *filename));
-    char *data;
+static void call_in_directory (char *pathname, void (*func)(char *data, List *ent_list, char *short_pathname, char *filename), char *data)
 {
     char *dir_name;
     char *filename;
@@ -842,6 +846,8 @@ call_in_directory (pathname, func, data)
     read_line (&reposname);
     assert (reposname != NULL);
 
+	TRACE(3,"call_in_directory '%s'",PATCH_NULL(pathname));
+
     reposdirname_absolute = 0;
     if (strncmp (reposname, toplevel_repos, strlen (toplevel_repos)) != 0)
     {
@@ -866,6 +872,18 @@ call_in_directory (pathname, func, data)
     }
     else
 	*p = '\0';
+
+	if(isabsolute(pathname) || pathname_levels(pathname)>client_max_dotdot)
+    {
+		error (0, 0,
+               "Server attempted to update a file via an invalid pathname:");
+        error (1, 0, "'%s'.", pathname);
+    }
+
+	if(pathname_levels(pathname))
+	{
+		TRACE(3,"Upward relative path '%s' allowed by client_max_dotdot of %d",PATCH_NULL(pathname),client_max_dotdot);
+	}
 
     dir_name = xstrdup (pathname);
     p = strrchr (dir_name, '/');
@@ -904,7 +922,7 @@ call_in_directory (pathname, func, data)
 
 	if (toplevel_wd == NULL)
 	{
-	    toplevel_wd = xgetwd ();
+	    toplevel_wd = xgetwd_mapped ();
 	    if (toplevel_wd == NULL)
 		error (1, errno, "could not get working directory");
 	}
@@ -1029,11 +1047,11 @@ call_in_directory (pathname, func, data)
 		    strcpy (dir, dir_name);
 		}
 
-		if (fncmp (dir, CVSADM) == 0)
+		if (fncmp (dir, CVSADM) == 0 
+			|| fncmp(dir, CVSDUMMY) == 0)
 		{
 		    error (0, 0, "cannot create a directory named %s", dir);
-		    error (0, 0, "because CVS uses \"%s\" for its own uses",
-			   CVSADM);
+		    error (0, 0, "because CVS uses \"%s\" for its own uses", dir);
 		    error (1, 0, "rename the directory and try again");
 		}
 
@@ -1157,7 +1175,7 @@ warning: server is not creating directories one at a time");
 		List *dirlist;
 
 		dirlist = Find_Directories ((char *) NULL, W_LOCAL,
-					    last_entries);
+					    last_entries, NULL);
 		dellist (&dirlist);
 	    }
 	}
@@ -1466,7 +1484,9 @@ update_entries (data_arg, ent_list, short_pathname, filename)
     char *tag_or_date;
     char *scratch_entries = NULL;
     int binr,binw,unicode;
+	encoding_type encoding;
 	char *merge_tag1, *merge_tag2;
+	time_t rcs_timestamp;
 
 #ifdef UTIME_EXPECTS_WRITABLE
     int change_it_back = 0;
@@ -1522,6 +1542,7 @@ update_entries (data_arg, ent_list, short_pathname, filename)
 	char *temp_filename;
 	int use_gzip;
 	int patch_failed;
+	char *realfilename;
 
 	read_line (&mode_string);
 	
@@ -1552,8 +1573,12 @@ update_entries (data_arg, ent_list, short_pathname, filename)
 	    error (0, 0, "warning: %s unexpectedly disappeared",
 		   short_pathname);
 
-	if (data->existp == UPDATE_ENTRIES_NEW
-	    && isfile (filename))
+	if (filenames_case_insensitive && client_overwrite_existing && isfile(filename) && !case_isfile(filename,&realfilename))
+	{
+		xfree(realfilename);
+	}
+	else
+	if (data->existp == UPDATE_ENTRIES_NEW && !client_overwrite_existing && isfile (filename))
 	{
 	    /* Emit a warning and refuse to update the file; we don't want
 	       to clobber a user's file.  */
@@ -1566,32 +1591,39 @@ update_entries (data_arg, ent_list, short_pathname, filename)
 
 	    char buf[8192];
 
-	    /* This error might be confusing; it isn't really clear to
-	       the user what to do about it.  Keep in mind that it has
-	       several causes: (1) something/someone creates the file
-	       during the time that CVS is running, (2) the repository
-	       has two files whose names clash for the client because
-	       of case-insensitivity or similar causes, (3) a special
-	       case of this is that a file gets renamed for example
-	       from a.c to A.C.  A "cvs update" on a case-insensitive
-	       client will get this error.  Repeating the update takes
-	       care of the problem, but is it clear to the user what
-	       is going on and what to do about it?, (4) the client
-	       has a file which the server doesn't know about (e.g. "?
-	       foo" file), and that name clashes with a file the
-	       server does know about, (5) classify.c will print the same
-	       message for other reasons.
+	if (filenames_case_insensitive && !case_isfile(filename,&realfilename))
+	{
+		if(!quiet)
+			error(0,0,"Case ambiguity between %s and %s.  Using %s.",filename,realfilename,realfilename);
+		xfree(realfilename);
+		goto discard_file_and_return;
+	}
+		/* This error might be confusing; it isn't really clear to
+		the user what to do about it.  Keep in mind that it has
+		several causes: (1) something/someone creates the file
+		during the time that CVS is running, (2) the repository
+		has two files whose names clash for the client because
+		of case-insensitivity or similar causes, (3) a special
+		case of this is that a file gets renamed for example
+		from a.c to A.C.  A "cvs update" on a case-insensitive
+		client will get this error.  Repeating the update takes
+		care of the problem, but is it clear to the user what
+		is going on and what to do about it?, (4) the client
+		has a file which the server doesn't know about (e.g. "?
+		foo" file), and that name clashes with a file the
+		server does know about, (5) classify.c will print the same
+		message for other reasons.
 
-	       I hope the above paragraph makes it clear that making this
-	       clearer is not a one-line fix.  */
-	    error (0, 0, "move away %s; it is in the way", short_pathname);
-	    if (updated_fname != NULL)
-	    {
+		I hope the above paragraph makes it clear that making this
+		clearer is not a one-line fix.  */
+		error (0, 0, "move away %s; it is in the way", short_pathname);
+		if (updated_fname != NULL)
+		{
 		cvs_output ("C ", 0);
 		cvs_output (updated_fname, 0);
 		cvs_output ("\n", 1);
-	    }
-	    failure_exit = 1;
+		}
+		failure_exit = 1;
 
 	discard_file_and_return:
 	    /* Now read and discard the file contents.  */
@@ -1654,21 +1686,27 @@ update_entries (data_arg, ent_list, short_pathname, filename)
 
 	if (options)
 	{
-		options_flags = RCS_get_kflags(options);
-	    binr = options_flags&(KFLAG_BINARY|KFLAG_UNICODE);
-		binw = options_flags&(KFLAG_BINARY|KFLAG_UNIX);
-		unicode = options_flags&KFLAG_UNICODE;
+		options_flags = RCS_get_kflags(options, 0);
+	    binr = options_flags.flags&(KFLAG_BINARY|KFLAG_ENCODED);
+		binw = options_flags.flags&(KFLAG_BINARY|KFLAG_UNIX);
+		unicode = options_flags.flags&KFLAG_ENCODED;
+		encoding = options_flags.encoding;
 	}
 	else
 	{
 	    binr = binw = 0;
 		unicode = 0;
+		encoding=ENC_UNKNOWN;
 	}
 
 	/* Talking to a Unix CVS server.  In theory options can't be '-ku'
 	   but it's good to check, just in case. */
 	if(!supported_request("Utf8"))
-	  unicode = 0;
+	{
+		if(unicode)
+			error(0,0,"Unicode not supported by server.  Results may not be correct");
+		unicode = 0;
+	}
 
 	if (data->contents == UPDATE_ENTRIES_RCS_DIFF)
 	{
@@ -1710,14 +1748,14 @@ update_entries (data_arg, ent_list, short_pathname, filename)
 		if (use_gzip)
 		{
 		    if (gunzip_and_write (fd, short_pathname, 
-					  (unsigned char *) buf, size, unicode))
+					(unsigned char *) buf, size, unicode?encoding:ENC_UNKNOWN))
 			error (1, 0, "aborting due to compression error");
 		}
 		else
 		{
 			if(unicode)
 			{
-				if(output_utf8_as_unicode(fd,buf,size))
+				if(output_utf8_as_encoding(fd,buf,size,encoding))
 					error(1, errno, "Cannot write %s", short_pathname);
 			}
 			else
@@ -1782,8 +1820,8 @@ update_entries (data_arg, ent_list, short_pathname, filename)
 	    filebufsize = 0;
 	    nread = 0;
 
-	    get_file (filename, short_pathname, binr ? FOPEN_BINARY_READ : "r",
-		      &filebuf, &filebufsize, &nread);
+	    get_file (filename, short_pathname, (binr&KFLAG_BINARY) ? FOPEN_BINARY_READ : "r",
+		      &filebuf, &filebufsize, &nread, options_flags);
 	    /* At this point the contents of the existing file are in
                FILEBUF, and the length of the contents is in NREAD.
                The contents of the patch from the network are in BUF,
@@ -1823,18 +1861,17 @@ update_entries (data_arg, ent_list, short_pathname, filename)
 		{
 		    FILE *e;
 
+			e = open_file (temp_filename,
+					binw ? FOPEN_BINARY_WRITE : "w");
 			if(unicode)
 			{
-				e = open_file(temp_filename,"wb"); // expansion done by output routine
-				if(output_utf8_as_unicode(fileno(e),patchedbuf,patchedlen))
+				if(output_utf8_as_encoding(fileno(e),patchedbuf,patchedlen,encoding))
 					error(1, errno, "Cannot write %s", temp_filename);
 			}
 			else
 			{
-			    e = open_file (temp_filename,
-					   binw ? FOPEN_BINARY_WRITE : "w");
 			    if (fwrite (patchedbuf, 1, patchedlen, e) != patchedlen)
-				error (1, errno, "cannot write %s", temp_filename);
+					error (1, errno, "cannot write %s", temp_filename);
 			}
 			if (fclose (e) == EOF)
 				error (1, errno, "cannot close %s", temp_filename);
@@ -1897,7 +1934,7 @@ update_entries (data_arg, ent_list, short_pathname, filename)
 	    }
 	}
 
-	if (patch_failed)
+	if (patch_failed) 
 	{
 	    /* Save this file to retrieve later.  */
 	    failed_patches = (char **) xrealloc ((char *) failed_patches,
@@ -1971,13 +2008,17 @@ update_entries (data_arg, ent_list, short_pathname, filename)
     if (strcmp (command_name, "export") != 0)
     {
 	char *local_timestamp;
+	char *localtime_timestamp;
 	char *file_timestamp;
 
 	(void) time (&last_register_time);
 
 	local_timestamp = data->timestamp;
 	if (local_timestamp == NULL || ts[0] == '+')
-	    file_timestamp = time_stamp (filename);
+	{
+	    file_timestamp = time_stamp (filename,0);
+	    localtime_timestamp = time_stamp (filename,1);
+	}
 	else
 	    file_timestamp = NULL;
 
@@ -2002,14 +2043,15 @@ update_entries (data_arg, ent_list, short_pathname, filename)
 	       cvsclient.texi accordingly.  */
 
 	    if (!strcmp (command_name, "commit"))
-		mark_up_to_date (filename);
+			mark_up_to_date (filename);
 	}
 
 	/* Get the data for Entries.Extra */
 	merge_tag1 = merge_tag2 = NULL;
+	rcs_timestamp = (time_t)-1;
 	while(extra_entry && extra_entry[0]=='/')
 	{
-		char *fn, *tag1, *tag2;
+		char *fn, *tag1, *tag2, *rcs_timestamp_string;
 		
 		fn = extra_entry  + 1;
 		if ((cp = strchr (fn, '/')) == NULL)
@@ -2027,10 +2069,25 @@ update_entries (data_arg, ent_list, short_pathname, filename)
 		*cp++ = '\0';
 		merge_tag1 = tag1;
 		merge_tag2 = tag2;
+
+		rcs_timestamp_string=cp;
+		if ((cp = strchr (rcs_timestamp_string, '/')) == NULL)
+			break;
+		*cp++ = '\0';
+
+#if defined(TIME_64BIT) && defined(_WIN32)
+		if(sscanf(rcs_timestamp_string,"%I64d",&rcs_timestamp)!=1)
+			rcs_timestamp=(time_t)-1;
+#else
+		if(sscanf(rcs_timestamp_string,"%ld",&rcs_timestamp)!=1)
+			rcs_timestamp=(time_t)-1;
+#endif
+
+		break;
 	}
 
 	Register (ent_list, filename, vn, local_timestamp,
-		  options, tag, date, ts[0] == '+' ? file_timestamp : NULL, merge_tag1, merge_tag2);
+		  options, tag, date, ts[0] == '+' ? file_timestamp : NULL, merge_tag1, merge_tag2, rcs_timestamp);
 
 	if (file_timestamp)
 	    xfree (file_timestamp);
@@ -2161,12 +2218,7 @@ handle_remove_entry (args, len)
     call_in_directory (args, remove_entry, (char *)NULL);
 }
 
-static void
-remove_entry_and_file (data, ent_list, short_pathname, filename)
-    char *data;
-    List *ent_list;
-    char *short_pathname;
-    char *filename;
+static void remove_entry_and_file (char *data, List *ent_list, char *short_pathname, char *filename)
 {
     Scratch_Entry (ent_list, filename);
     /* Note that we don't ignore existence_error's here.  The server
@@ -2175,17 +2227,38 @@ remove_entry_and_file (data, ent_list, short_pathname, filename)
        file halfway through a cvs command, we should be printing an
        error.  */
     if (unlink_file (filename) < 0)
-	error (0, errno, "unable to remove %s", short_pathname);
+		error (0, errno, "unable to remove %s", short_pathname);
 }
 
-static void
-handle_removed (args, len)
-    char *args;
-    int len;
+static void rename_entry_and_file (char *data, List *ent_list, char *short_pathname, char *filename)
+{
+	char *renamed_to;
+
+    read_line (&renamed_to);
+
+    Rename_Entry (ent_list, filename, renamed_to);
+
+    /* Note that we don't ignore existence_error's here.  The server
+       should be sending Remove-entry rather than Removed in cases
+       where the file does not exist.  And if the user removes the
+       file halfway through a cvs command, we should be printing an
+       error.  */
+    if (CVS_RENAME(filename,renamed_to) < 0)
+		error (0, errno, "unable to rename %s", short_pathname);
+
+	xfree(renamed_to);
+}
+
+static void handle_removed (char *args, int len)
 {
     call_in_directory (args, remove_entry_and_file, (char *)NULL);
 }
-
+
+static void handle_renamed (char *args, int len)
+{
+    call_in_directory (args, rename_entry_and_file, (char *)NULL);
+}
+
 /* Is this the top level (directory containing CVSROOT)?  */
 static int
 is_cvsroot_level (pathname)
@@ -2224,21 +2297,19 @@ handle_set_static_directory (args, len)
     call_in_directory (args, set_static, (char *)NULL);
 }
 
-static void
-clear_static (data, ent_list, short_pathname, filename)
-    char *data;
-    List *ent_list;
-    char *short_pathname;
-    char *filename;
+static void clear_static (char *data, List *ent_list, char *short_pathname, char *filename)
 {
     if (unlink_file (CVSADM_ENTSTAT) < 0 && ! existence_error (errno))
         error (1, errno, "cannot remove file %s", CVSADM_ENTSTAT);
 }
 
-static void
-handle_clear_static_directory (pathname, len)
-    char *pathname;
-    int len;
+static void clear_rename (char *data, List *ent_list, char *short_pathname, char *filename)
+{
+	if (unlink_file (CVSADM_RENAME) < 0 && ! existence_error(errno))
+        error (1, errno, "cannot remove file %s", CVSADM_RENAME);
+}
+
+static void handle_clear_static_directory (char *pathname, int len)
 {
     if (strcmp (command_name, "export") == 0)
     {
@@ -2257,7 +2328,27 @@ handle_clear_static_directory (pathname, len)
     }
     call_in_directory (pathname, clear_static, (char *)NULL);
 }
-
+
+static void handle_clear_rename(char *pathname, int len)
+{
+    if (strcmp (command_name, "export") == 0)
+    {
+	/* Swallow the repository.  */
+	read_line (NULL);
+	return;
+    }
+
+    if (is_cvsroot_level (pathname))
+    {
+        /*
+	 * Top level (directory containing CVSROOT).  This seems to normally
+	 * lack a CVS directory, so don't try to create files in it.
+	 */
+	return;
+    }
+    call_in_directory (pathname, clear_rename, (char *)NULL);
+}
+
 static void
 set_sticky (data, ent_list, short_pathname, filename)
     char *data;
@@ -2426,7 +2517,7 @@ process_prune_candidates ()
 			char *dir = xstrdup(p->dir),*qq,*dirnm;
 
 			for(qq=dir+strlen(dir)-1; qq>dir; qq--)
-				if(isslash(*qq))
+				if(ISDIRSEP(*qq))
 					break;
 			if(qq>dir)
 			{
@@ -2457,21 +2548,56 @@ process_prune_candidates ()
 	xfree(saved_cwd);
     prune_candidates = NULL;
 }
-
+
+void send_renames(const char *dir)
+{
+	char from[MAX_PATH],to[MAX_PATH];
+	char *ren = xmalloc(strlen(dir)+sizeof(CVSADM_RENAME)+sizeof(CVSADM_VIRTREPOS)+20);
+	FILE *fp;
+
+	if(!dir[0]) dir="./";
+
+	sprintf(ren,"%s/%s",dir,CVSADM_RENAME);
+	if(isfile(ren) && supported_request("Rename"))
+	{
+		fp = CVS_FOPEN(ren,"r");
+		if(!fp)
+			error(1,errno,"Couldn't open %s",ren);
+		while(fgets(from,sizeof(from),fp) && fgets(to,sizeof(to),fp))
+		{
+			send_to_server("Rename ", 0);
+			send_to_server(from, 0);
+			send_to_server(to, 0);
+		}
+		fclose(fp);
+	}
+
+	sprintf(ren,"%s/%s",dir,CVSADM_VIRTREPOS);
+	if(isfile(ren) && supported_request("VirtualRepository"))
+	{
+		fp = CVS_FOPEN(ren,"r");
+		if(!fp)
+			error(1,errno,"Couldn't open %s",ren);
+		while(fgets(from,sizeof(from),fp))
+		{
+			send_to_server("VirtualRepository ", 0);
+			send_to_server(from, 0);
+		}
+		fclose(fp);
+	}
+	xfree(ren);
+}
+
 /* Send a Repository line.  */
 
 static char *last_repos;
 static char *last_update_dir;
 
-static void send_repository PROTO((char *, char *, char *));
-
-static void
-send_repository (dir, repos, update_dir)
-    char *dir;
-    char *repos;
-    char *update_dir;
+static void send_repository(char *dir, char *repos, char *update_dir)
 {
     char *adm_name;
+	FILE *f;
+    char line[MAX_PATH];
 
     /* FIXME: this is probably not the best place to check; I wish I
      * knew where in here's callers to really trap this bug.  To
@@ -2550,8 +2676,39 @@ send_repository (dir, repos, update_dir)
 	}
     }
     send_to_server ("\012", 1);
-    send_to_server (repos, 0);
-    send_to_server ("\012", 1);
+	adm_name[0] = '\0';
+	if (dir[0] != '\0')
+	{
+	    strcat (adm_name, dir);
+	    strcat (adm_name, "/");
+	}
+	strcat (adm_name, CVSADM_VIRTREPOS);
+	if(isfile(adm_name))
+	{
+	  adm_name[0] = '\0';
+	  if (dir[0] != '\0')
+	  {
+	    strcat (adm_name, dir);
+	    strcat (adm_name, "/");
+	  }
+	  strcat (adm_name, CVSADM_REP);
+	  f = CVS_FOPEN (adm_name, "r");
+	  if (f == NULL)
+		error (1, errno, "reading %s", adm_name);
+	  fgets (line, sizeof (line), f);
+	  line[strlen(line)-1]='\0';
+	  if(!isabsolute(line))
+	  {
+		send_to_server(current_parsed_root->directory,0);
+		send_to_server("/",1);
+	  }
+	  send_to_server(line,0);
+          if (fclose (f) == EOF)
+		error (0, errno, "closing %s", adm_name);
+	}
+	else
+	  send_to_server(repos,0);
+	send_to_server("\012",1);
 
     if (supported_request ("Static-directory"))
     {
@@ -2569,7 +2726,6 @@ send_repository (dir, repos, update_dir)
     }
     if (supported_request ("Sticky"))
     {
-	FILE *f;
 	if (dir[0] == '\0')
 	    strcpy (adm_name, CVSADM_TAG);
 	else
@@ -2583,7 +2739,6 @@ send_repository (dir, repos, update_dir)
 	}
 	else
 	{
-	    char line[80];
 	    char *nl = NULL;
 	    send_to_server ("Sticky ", 0);
 	    while (fgets (line, sizeof (line), f) != NULL)
@@ -2599,6 +2754,7 @@ send_repository (dir, repos, update_dir)
 		error (0, errno, "closing %s", adm_name);
 	}
     }
+	send_renames(dir);
     xfree (adm_name);
     if (last_repos != NULL)
 	xfree (last_repos);
@@ -2610,11 +2766,7 @@ send_repository (dir, repos, update_dir)
 
 /* Send a Repository line and set toplevel_repos.  */
 
-void
-send_a_repository (dir, repository, update_dir)
-    char *dir;
-    char *repository;
-    char *update_dir;
+void send_a_repository (char *dir, char *repository, char *update_dir)
 {
     if (toplevel_repos == NULL && repository != NULL)
     {
@@ -2661,6 +2813,10 @@ send_a_repository (dir, repository, update_dir)
 		 * This gets toplevel_repos wrong for "cvs update ../foo"
 		 * but I'm not sure toplevel_repos matters in that case.
 		 */
+		/* Well actually it does...  It causes the server to try
+		   to traverse outside the repository root, which is a major deal.
+		   We fix this in the server as there are lot of clients that get
+		   this wrong. */
 
 		int repository_len, update_dir_len;
 
@@ -2694,7 +2850,7 @@ send_a_repository (dir, repository, update_dir)
 		}
 		else
 		{
-		    toplevel_repos = xstrdup (current_parsed_root->directory);
+				toplevel_repos = xstrdup (current_parsed_root->directory);
 		}
 	    }
 	}
@@ -2702,7 +2858,7 @@ send_a_repository (dir, repository, update_dir)
 
     send_repository (dir, repository, update_dir);
 }
-
+
 /* The "expanded" modules.  */
 static int modules_count;
 static int modules_allocated;
@@ -2835,7 +2991,32 @@ static void handle_entries_extra(char *args, int len)
 	xfree(extra_entry);
 	extra_entry = xstrdup(args);
 }
-
+
+static void handle_rename(char *args, int len)
+{
+	FILE *fp;
+	char *from, *to;
+
+	fp = fopen(CVSADM_RENAME,"a");
+	if(!fp)
+		error(1,errno,"Couldn't open %s",CVSADM_RENAME);
+
+	from = args;
+    read_line (&to);
+	
+	if (isabsolute(from) || strstr(from,".."))
+		error(1,0,"Protocol error: Bad rename %s",from);
+
+	if (isabsolute(to) || strstr(to,".."))
+		error(1,0,"Protocol error: Bad rename %s",to);
+
+	fprintf(fp,"%s\n%s\n",from,to);
+
+	xfree(to);
+	fclose(fp);
+}
+
+
 static void
 handle_m (args, len)
     char *args;
@@ -3087,6 +3268,7 @@ struct response responses[] =
     RSP_LINE("Mode", handle_mode, response_type_normal, rs_optional),
     RSP_LINE("Mod-time", handle_mod_time, response_type_normal, rs_optional),
     RSP_LINE("Removed", handle_removed, response_type_normal, rs_essential),
+	RSP_LINE("Renamed", handle_renamed, response_type_normal, rs_optional),
     RSP_LINE("Remove-entry", handle_remove_entry, response_type_normal,
        rs_optional),
     RSP_LINE("Set-static-directory", handle_set_static_directory,
@@ -3107,6 +3289,8 @@ struct response responses[] =
     RSP_LINE("Wrapper-rcsOption", handle_wrapper_rcs_option,
        response_type_normal,
        rs_optional),
+    RSP_LINE("Clear-rename", handle_clear_rename, response_type_normal, rs_optional),
+	RSP_LINE("Rename", handle_rename, response_type_normal, rs_optional),
 	RSP_LINE("EntriesExtra", handle_entries_extra, response_type_normal, rs_optional),
     RSP_LINE("M", handle_m, response_type_normal, rs_essential),
     RSP_LINE("Mbinary", handle_mbinary, response_type_normal, rs_optional),
@@ -3607,6 +3791,9 @@ int start_server (int verify_only)
     if (get_server_responses ())
 	error_exit ();
 
+    /* Only CVSNT sends this */
+    is_cvsnt = supported_request("Utf8");
+    
 	if(supported_request("Rootless-stream-modification"))
 		rootless_encryption = 1;
 	else
@@ -3614,14 +3801,10 @@ int start_server (int verify_only)
 
 	if(gzip_level<0 && supported_request("Compression-Requested") || supported_request("Compression-Required"))
 		gzip_level = 3; /* gzip_level doesn't actually make much difference */
-	if(supported_request("Encryption-Requested"))
+	if(supported_request("Encryption-Requested") || supported_request("Encryption-Required"))
 		cvsencrypt = -1;
-	else if(supported_request("Encryption-Required"))
-		cvsencrypt = 1;
-	else if(supported_request("Authentication-Requested"))
+	else if(supported_request("Authentication-Requested") || supported_request("Authentication-Required"))
 		cvsauthenticate = -1;
-	else if(supported_request("Authentication-Required"))
-		cvsauthenticate = 1;
 
     rootless = (strcmp (command_name, "init") == 0);
     if (!rootless_encryption && !rootless)
@@ -3821,16 +4004,6 @@ int start_server (int verify_only)
 			error (1, 0,
 		       "This server does not support the global -t option.");
 	}
-	if (logoff)
-	{
-	    if (have_global)
-	    {
-		send_to_server ("Global_option -l\012", 0);
-	    }
-	    else
-		error (1, 0,
-		       "This server does not support the global -l option.");
-	}
     }
 
     /* Find out about server-side cvswrappers.  An extra network
@@ -3855,12 +4028,30 @@ int start_server (int verify_only)
 	}
     }
 
-#ifdef FILENAMES_CASE_INSENSITIVE
-    if (supported_request ("Case") && !rootless)
+    if (filenames_case_insensitive && supported_request ("Case") && !rootless)
 		send_to_server ("Case\012", 0);
-#endif
 	if (supported_request ("Utf8") && !rootless)
 		send_to_server ("Utf8\012", 0);
+	if(supported_request("Valid-RcsOptions"))
+	{
+		const kflag_t *p;
+
+		char buf[2]={0};
+		send_to_server("Valid-RcsOptions ",0);
+		for(p=kflag_encoding;p->flag;p++)
+		{
+			buf[0]=p->flag;
+			if(buf[0]>0)
+				send_to_server(buf,1);
+		}
+		for(p=kflag_flags;p->flag;p++)
+		{
+			buf[0]=p->flag;
+			if(buf[0]>0)
+				send_to_server(buf,1);
+		}
+		send_to_server("\012",1);
+	}
 
     /* If "Set" is not supported, just silently fail to send the variables.
        Users with an old server should get a useful error message when it
@@ -3915,10 +4106,11 @@ send_modified (file, short_pathname, vers)
     char *mode_string;
     size_t bufsize;
     int bin, unicode;
- 	int newsize;
+	encoding_type encoding;
+ 	size_t newsize;
 	kflag options_flags;
 
-	TRACE(1,"Sending file '%s' to server", file);
+	TRACE(1,"Sending file '%s' to server", PATCH_NULL(file));
 
     /* Don't think we can assume fstat exists.  */
     if ( CVS_STAT (file, &sb) < 0)
@@ -3939,14 +4131,16 @@ send_modified (file, short_pathname, vers)
 
     if (vers && vers->options)
 	{
-		options_flags = RCS_get_kflags(vers->options);
-	    bin = options_flags&(KFLAG_BINARY|KFLAG_UNICODE);
-		unicode = options_flags&KFLAG_UNICODE;
+		options_flags = RCS_get_kflags(vers->options, 0);
+	    bin = options_flags.flags&(KFLAG_BINARY|KFLAG_ENCODED);
+		unicode = options_flags.flags&KFLAG_ENCODED;
+		encoding = options_flags.encoding;
 	}
     else
 	{
       bin = 0;
 	  unicode = 0;
+	  encoding = ENC_UNKNOWN;
 	}
 
     fd = CVS_OPEN (file, O_RDONLY | (bin ? OPEN_BINARY : 0),0);
@@ -3976,13 +4170,30 @@ send_modified (file, short_pathname, vers)
 		if(unicode || !bin)
 		{
 		    if(supported_request("Utf8"))
-				newsize = convert_unicode_to_utf8(&buf,newsize,&newsize,unicode);
+				newsize = convert_encoding_to_utf8(&buf,newsize,&newsize,bin?encoding:ENC_UNKNOWN);
 			else if(unicode)
 				error(0,0,"Remote server does not support Unicode files.  Checkin may be invalid.");
 		}
 	}
 	if (close (fd) < 0)
 	    error (0, errno, "warning: can't close %s", short_pathname);
+
+	if (supported_request ("Checkin-time") && strcmp(command_name,"import"))
+	{
+	    struct stat sb;
+	    char *rcsdate;
+	    char netdate[MAXDATELEN];
+
+	    if (CVS_STAT (file, &sb) < 0)
+			error (1, errno, "cannot stat %s", file);
+	    rcsdate = date_from_time_t (sb.st_mtime);
+	    date_to_internet (netdate, rcsdate);
+	    xfree (rcsdate);
+
+	    send_to_server ("Checkin-time ", 0);
+	    send_to_server (netdate, 0);
+	    send_to_server ("\012", 1);
+	}
 
     {
       char tmp[80];
@@ -4018,15 +4229,12 @@ struct send_data
     int no_contents;
     int backup_modified;
 	int modified;
+	int case_sensitive;
 };
 
-static int send_fileproc PROTO ((void *callerdat, struct file_info *finfo));
 
 /* Deal with one file.  */
-static int
-send_fileproc (callerdat, finfo)
-    void *callerdat;
-    struct file_info *finfo;
+static int send_fileproc (void *callerdat, struct file_info *finfo)
 {
     struct send_data *args = (struct send_data *) callerdat;
     Vers_TS *vers;
@@ -4040,14 +4248,14 @@ send_fileproc (callerdat, finfo)
     xfinfo = *finfo;
     xfinfo.repository = NULL;
     xfinfo.rcs = NULL;
-    vers = Version_TS (&xfinfo, NULL, NULL, NULL, 0, 0);
+    vers = Version_TS (&xfinfo, NULL, NULL, NULL, 0, 0, args->case_sensitive);
 
     if (vers->entdata != NULL)
 	filename = vers->entdata->user;
     else
 	filename = finfo->file;
 
-    if (vers->vn_user != NULL)
+	if (vers->vn_user != NULL)
     {
 	/* The Entries request.  */
 	send_to_server ("Entry /", 0);
@@ -4063,6 +4271,8 @@ send_fileproc (callerdat, finfo)
 	    else
 		send_to_server ("+modified", 0);
 	}
+	else if(is_cvsnt && vers->ts_rcs)
+		send_to_server(vers->ts_rcs,0);
 	send_to_server ("/", 0);
 	send_to_server (vers->entdata != NULL
 			? vers->entdata->options
@@ -4090,6 +4300,8 @@ send_fileproc (callerdat, finfo)
 		send_to_server(vers->entdata->merge_from_tag_1,0);
 		send_to_server ("/", 0);
 		send_to_server(vers->entdata->merge_from_tag_2,0);
+		send_to_server ("/", 0);
+		/* No point in sending RCS checkin time - we know it already */
 		send_to_server ("/\012", 0);
 	}
     }
@@ -4099,34 +4311,6 @@ send_fileproc (callerdat, finfo)
 	   send_dirent_proc doesn't get called if filenames are specified
 	   explicitly on the command line.  */
 	wrap_add_file (CVSDOTWRAPPER, 1);
-
-	if (wrap_name_has (filename, WRAP_RCSOPTION))
-	{
-	    /* No "Entry", but the wrappers did give us a kopt so we better
-	       send it with "Kopt".  As far as I know this only happens
-	       for "cvs add".  Question: is there any reason why checking
-	       for options from wrappers isn't done in Version_TS?
-
-	       Note: it might have been better to just remember all the
-	       kopts on the client side, rather than send them to the server,
-	       and have it send us back the same kopts.  But that seemed like
-	       a bigger change than I had in mind making now.  */
-
-	    if (supported_request ("Kopt"))
-	    {
-		char *opt;
-
-		send_to_server ("Kopt ", 0);
-		opt = wrap_rcsoption (filename, 1);
-		send_to_server (opt, 0);
-		send_to_server ("\012", 1);
-		xfree (opt);
-	    }
-	    else
-		error (0, 0,
-		       "\
-warning: ignoring -k options due to server limitations");
-	}
     }
 
     if (vers->ts_user == NULL)
@@ -4139,8 +4323,7 @@ warning: ignoring -k options due to server limitations");
 	   just happen.  */
     }
     else if (vers->ts_rcs == NULL
-	     || args->force || args->modified 
-	     || strcmp (vers->ts_user, vers->ts_rcs) != 0)
+	     || args->force || strcmp (vers->ts_user, vers->ts_rcs) != 0)
     {
 	if (args->no_contents
 	    && supported_request ("Is-modified"))
@@ -4162,6 +4345,7 @@ warning: ignoring -k options due to server limitations");
                 printf ("(Locally modified %s moved to %s)\n",
                         filename, bakname);
             xfree (bakname);
+			client_overwrite_existing = 1;
         }
     }
     else
@@ -4208,15 +4392,7 @@ send_ignproc (file, dir)
     }
 }
 
-static int send_filesdoneproc PROTO ((void *, int, char *, char *, List *));
-
-static int
-send_filesdoneproc (callerdat, err, repository, update_dir, entries)
-    void *callerdat;
-    int err;
-    char *repository;
-    char *update_dir;
-    List *entries;
+static int send_filesdoneproc (void *callerdat, int err, char *repository, char *update_dir, List *entries)
 {
     /* if this directory has an ignore list, process it then free it */
     if (ignlist)
@@ -4228,8 +4404,6 @@ send_filesdoneproc (callerdat, err, repository, update_dir, entries)
     return (err);
 }
 
-static Dtype send_dirent_proc PROTO ((void *, char *, char *, char *, List *));
-
 /*
  * send_dirent_proc () is called back by the recursion processor before a
  * sub-directory is processed for update.
@@ -4238,13 +4412,7 @@ static Dtype send_dirent_proc PROTO ((void *, char *, char *, char *, List *));
  * recursion code should skip this directory.
  *
  */
-static Dtype
-send_dirent_proc (callerdat, dir, repository, update_dir, entries)
-    void *callerdat;
-    char *dir;
-    char *repository;
-    char *update_dir;
-    List *entries;
+static Dtype send_dirent_proc (void *callerdat, char *dir, char *repository, char *update_dir, List *entries, const char *virtual_repository, Dtype hint)
 {
     struct send_data *args = (struct send_data *) callerdat;
     int dir_exists;
@@ -4372,11 +4540,7 @@ send_option_string (string)
 
 /* Send the names of all the argument files to the server.  */
 
-void
-send_file_names (argc, argv, flags)
-    int argc;
-    char **argv;
-    unsigned int flags;
+void send_file_names (int argc, char **argv, unsigned int flags)
 {
     int i;
     int level;
@@ -4387,34 +4551,41 @@ send_file_names (argc, argv, flags)
     if (flags & SEND_EXPAND_WILD)
 		expand_wild (argc, argv, &argc, &argv);
 
-    /* Send Max-dotdot if needed.  */
-    max_level = 0;
-    for (i = 0; i < argc; ++i)
-    {
-		level = pathname_levels (argv[i]);
-		if (level > max_level)
-			max_level = level;
-    }
-    if (max_level > 0)
-    {
-	if (supported_request ("Max-dotdot"))
+	if(!client_max_dotdot)
 	{
-            char buf[10];
-            sprintf (buf, "%d", max_level);
+		/* Send Max-dotdot if needed.  */
+		max_level = 0;
+		for (i = 0; i < argc; ++i)
+		{
+			if(isabsolute(argv[i]))
+				error(1,0,"Absolute pathname `%s' not allowed",argv[i]);
+			level = pathname_levels (argv[i]);
+			if (level > max_level)
+				max_level = level;
+		}
+		if (max_level > 0)
+		{
+		if (supported_request ("Max-dotdot"))
+		{
+				char buf[10];
+				sprintf (buf, "%d", max_level);
 
-	    send_to_server ("Max-dotdot ", 0);
-	    send_to_server (buf, 0);
-	    send_to_server ("\012", 1);
+			send_to_server ("Max-dotdot ", 0);
+			send_to_server (buf, 0);
+			send_to_server ("\012", 1);
+			client_max_dotdot = max_level;
+			TRACE(3,"client_max_dotdot = %d",client_max_dotdot);
+		}
+		else
+			/*
+			* "leading .." is not strictly correct, as this also includes
+			* cases like "foo/../..".  But trying to explain that in the
+			* error message would probably just confuse users.
+			*/
+			error (1, 0,
+			"leading .. not supported by old (pre-Max-dotdot) servers");
+		}
 	}
-	else
-	    /*
-	     * "leading .." is not strictly correct, as this also includes
-	     * cases like "foo/../..".  But trying to explain that in the
-	     * error message would probably just confuse users.
-	     */
-	    error (1, 0,
-		   "leading .. not supported by old (pre-Max-dotdot) servers");
-    }
 
     for (i = 0; i < argc; ++i)
     {
@@ -4431,44 +4602,45 @@ send_file_names (argc, argv, flags)
 		continue;
 	}
 
-#ifdef FILENAMES_CASE_INSENSITIVE
-	/* We want to send the file name as it appears
-	   in CVS/Entries.  We put this inside an ifdef
-	   to avoid doing all these system calls in
-	   cases where fncmp is just strcmp anyway.  */
-	/* For now just do this for files in the local
-	   directory.  Would be nice to handle the
-	   non-local case too, though.  */
-	/* The isdir check could more gracefully be replaced
-	   with a way of having Entries_Open report back the
-	   error to us and letting us ignore existence_error.
-	   Or some such.  */
-	if (p == last_component (p) && isdir (CVSADM))
+	if(filenames_case_insensitive && !(flags&SEND_CASE_SENSITIVE))
 	{
-	    List *entries;
-	    Node *node;
+		/* We want to send the file name as it appears
+		in CVS/Entries.  We put this inside an ifdef
+		to avoid doing all these system calls in
+		cases where fncmp is just strcmp anyway.  */
+		/* For now just do this for files in the local
+		directory.  Would be nice to handle the
+		non-local case too, though.  */
+		/* The isdir check could more gracefully be replaced
+		with a way of having Entries_Open report back the
+		error to us and letting us ignore existence_error.
+		Or some such.  */
+		if (p == last_component (p) && isdir (CVSADM))
+		{
+			List *entries;
+			Node *node;
 
-	    /* If we were doing non-local directory,
-	       we would save_cwd, CVS_CHDIR
-	       like in update.c:isemptydir.  */
-	    /* Note that if we are adding a directory,
-	       the following will read the entry
-	       that we just wrote there, that is, we
-	       will get the case specified on the
-	       command line, not the case of the
-	       directory in the filesystem.  This
-	       is correct behavior.  */
-	    entries = Entries_Open (0, NULL);
-	    node = findnode_fn (entries, p);
-	    if (node != NULL)
-	    {
-		line = xstrdup (node->key);
-		p = line;
-		delnode (node);
-	    }
-	    Entries_Close (entries);
+			/* If we were doing non-local directory,
+			we would save_cwd, CVS_CHDIR
+			like in update.c:isemptydir.  */
+			/* Note that if we are adding a directory,
+			the following will read the entry
+			that we just wrote there, that is, we
+			will get the case specified on the
+			command line, not the case of the
+			directory in the filesystem.  This
+			is correct behavior.  */
+			entries = Entries_Open (0, NULL);
+			node = findnode_fn (entries, p);
+			if (node != NULL)
+			{
+			line = xstrdup (node->key);
+			p = line;
+			delnode (node);
+			}
+			Entries_Close (entries);
+		}
 	}
-#endif /* FILENAMES_CASE_INSENSITIVE */
 
 	send_to_server ("Argument ", 0);
 
@@ -4514,43 +4686,75 @@ send_file_names (argc, argv, flags)
   SEND_NO_CONTENTS means that this command only needs to know
   _whether_ a file is modified, not the contents.  Also sends Argument
   lines for argc and argv, so should be called after options are sent.  */
-void
-send_files (argc, argv, local, aflag, flags)
-    int argc;
-    char **argv;
-    int local;
-    int aflag;
-    unsigned int flags;
+void send_files (int argc, char **argv, int local, int aflag, unsigned int flags)
 {
     struct send_data args;
-    int err;
+    int err,i,max_level,level;
 
-    /*
+	if(!client_max_dotdot)
+	{
+		/* Send Max-dotdot if needed.  */
+		max_level = 0;
+		for (i = 0; i < argc; ++i)
+		{
+			if(isabsolute(argv[i]))
+				error(1,0,"Absolute pathname `%s' not allowed",argv[i]);
+			level = pathname_levels (argv[i]);
+			if (level > max_level)
+				max_level = level;
+		}
+		if (max_level > 0)
+		{
+		if (supported_request ("Max-dotdot"))
+		{
+				char buf[10];
+				sprintf (buf, "%d", max_level);
+
+			send_to_server ("Max-dotdot ", 0);
+			send_to_server (buf, 0);
+			send_to_server ("\012", 1);
+			client_max_dotdot = max_level;
+			TRACE(3,"client_max_dotdot = %d",client_max_dotdot);
+		}
+		else
+			/*
+			* "leading .." is not strictly correct, as this also includes
+			* cases like "foo/../..".  But trying to explain that in the
+			* error message would probably just confuse users.
+			*/
+			error (1, 0,
+			"leading .. not supported by old (pre-Max-dotdot) servers");
+		}
+	}
+
+	/*
      * aflag controls whether the tag/date is copied into the vers_ts.
      * But we don't actually use it, so I don't think it matters what we pass
      * for aflag here.
      */
     args.build_dirs = flags & SEND_BUILD_DIRS;
     args.force = flags & SEND_FORCE;
-	args.modified = flags & SEND_FORCE_MODIFIED;
+	args.case_sensitive = flags & SEND_CASE_SENSITIVE;
     args.no_contents = flags & SEND_NO_CONTENTS;
     args.backup_modified = flags & BACKUP_MODIFIED_FILES;
     err = start_recursion
-	(send_fileproc, send_filesdoneproc,
+	(send_fileproc, send_filesdoneproc, (PREDIRENTPROC) NULL,
 	 send_dirent_proc, send_dirleave_proc, (void *) &args,
 	 argc, argv, local, W_LOCAL, aflag, 0, (char *)NULL, 0,
 	 (PERMPROC) NULL);
     if (err)
-	error_exit ();
+		error_exit ();
     if (toplevel_repos == NULL)
-	/*
-	 * This happens if we are not processing any files,
-	 * or for checkouts in directories without any existing stuff
-	 * checked out.  The following assignment is correct for the
-	 * latter case; I don't think toplevel_repos matters for the
-	 * former.
-	 */
-	toplevel_repos = xstrdup (current_parsed_root->directory);
+	{
+		/*
+		* This happens if we are not processing any files,
+		* or for checkouts in directories without any existing stuff
+		* checked out.  The following assignment is correct for the
+		* latter case; I don't think toplevel_repos matters for the
+		* former.
+		*/
+		toplevel_repos = xstrdup (current_parsed_root->directory);
+	}
     send_repository ("", toplevel_repos, ".");
 }
 
@@ -4690,19 +4894,26 @@ notified_a_file (data, ent_list, short_pathname, filename)
     char *p;
 
     fp = open_file (CVSADM_NOTIFY, "r");
+	if(!fp)
+	{
+		if(!existence_error(errno))
+			error(0,errno,"cannot read %s", CVSADM_NOTIFY);
+		goto error_exit;
+	}
+	
     if (getline (&line, &line_len, fp) < 0)
     {
-	if (feof (fp))
-	    error (0, 0, "cannot read %s: end of file", CVSADM_NOTIFY);
-	else
-	    error (0, errno, "cannot read %s", CVSADM_NOTIFY);
-	goto error_exit;
+		if (feof (fp))
+			error (0, 0, "cannot read %s: end of file", CVSADM_NOTIFY);
+		else
+			error (0, errno, "cannot read %s", CVSADM_NOTIFY);
+		goto error_exit;
     }
     cp = strchr (line, '\t');
     if (cp == NULL)
     {
-	error (0, 0, "malformed %s file", CVSADM_NOTIFY);
-	goto error_exit;
+		error (0, 0, "malformed %s file", CVSADM_NOTIFY);
+		goto error_exit;
     }
     *cp = '\0';
     if (strcmp (filename, line + 1) != 0)
@@ -4775,10 +4986,10 @@ notified_a_file (data, ent_list, short_pathname, filename)
 
     return;
   error2:
-    (void) fclose (newf);
+    if(newf) fclose (newf);
   error_exit:
     xfree (line);
-    (void) fclose (fp);
+    if(fp) fclose (fp);
 }
 
 static void

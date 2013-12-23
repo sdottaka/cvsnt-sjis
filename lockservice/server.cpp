@@ -1,6 +1,9 @@
+#include "config.h"
+
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define STRICT
+#define FD_SETSIZE 1024
 #include <windows.h>
 #include <stdio.h>
 #include <tchar.h>
@@ -8,7 +11,10 @@
 #include <ws2tcpip.h>
 #define SOCKET_ERRNO WSAGetLastError()
 #else
+#include <sys/types.h>
+#include <sys/time.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
 #include <netdb.h>
 #include <errno.h>
 #include <unistd.h>
@@ -42,7 +48,9 @@ bool g_bStop = false;
 extern bool g_bTestMode;
 
 #ifndef _WIN32
+#ifndef FALSE
 enum { FALSE, TRUE };
+#endif
 void ReportError(int error, char *fmt,...)
 {
   char buf[512];
@@ -57,7 +65,7 @@ void ReportError(BOOL bError, LPCSTR szError, ...);
 BOOL NotifySCM(DWORD dwState, DWORD dwWin32ExitCode, DWORD dwProgress);
 #endif
 
-void run_server(int port, int seq)
+void run_server(int port, int seq, int local_only)
 {
 	int err;
     addrinfo *pAddrInfo;
@@ -69,7 +77,7 @@ void run_server(int port, int seq)
 	hint.ai_family=PF_UNSPEC;
 	hint.ai_socktype=SOCK_STREAM;
 	hint.ai_protocol=IPPROTO_TCP;
-	hint.ai_flags=AI_PASSIVE;
+	hint.ai_flags=local_only?0:AI_PASSIVE;
 	pAddrInfo=NULL;
 	if(g_bTestMode)
 	{
@@ -96,12 +104,12 @@ void run_server(int port, int seq)
 #ifdef _WIN32
 	if(!g_bTestMode)
 		NotifySCM(SERVICE_START_PENDING, 0, seq++);
-#endif 
- 
+#endif
+
 	if(g_bTestMode)
 			printf("Starting lock server on port %d/tcp...\n",port);
- 
-    
+
+
 	addrinfo* ai;
 	for(ai=pAddrInfo;ai;ai=ai->ai_next)
 	{
@@ -122,7 +130,7 @@ void run_server(int port, int seq)
 #endif
 				freeaddrinfo(pAddrInfo);
 				return;
-			} 
+			}
 			SocketState st(s, ListenSocket);
 			g_Sockets.push_back(st);
 		}
@@ -159,10 +167,10 @@ void run_server(int port, int seq)
 		fd_set rfd;
 		sockaddr_storage sin;
 		size_t n;
-#ifdef _WIN32
-		int addrlen;
+#ifndef __hpux__ // hpux has a broken accept() definition
+		socklen_t addrlen;
 #else
-		size_t addrlen;
+		int addrlen;
 #endif
  		int maxdesc = -1;
 
@@ -181,7 +189,7 @@ void run_server(int port, int seq)
 		{
 			if(FD_ISSET(g_Sockets[n].s,&rfd))
 			{
-				if(g_Sockets[n].type==ListenSocket) // Socket listening on port 2401
+				if(g_Sockets[n].type==ListenSocket && g_Sockets.size()<FD_SETSIZE) // Socket listening on port 2401
 				{
 					addrlen=sizeof(sockaddr_storage);
 					SocketState st(accept(g_Sockets[n].s,(struct sockaddr*)&sin,&addrlen),LockSocket);

@@ -13,7 +13,6 @@
 #include "cvs.h"
 #include "getline.h"
 #include "fileattr.h"
-#include <assert.h>
 
 static void fileattr_read PROTO ((void));
 static int writeattr_proc PROTO ((Node *, void *));
@@ -41,15 +40,14 @@ static struct unrecog *unrecog_head;
 
 /* Note that if noone calls fileattr_get, this is very cheap.  No stat(),
    no open(), no nothing.  */
-void
-fileattr_startdir (repos)
-    char *repos;
+void fileattr_startdir (char *repos)
 {
     assert (fileattr_stored_repos == NULL);
     fileattr_stored_repos = xstrdup (repos);
     assert (attrlist == NULL);
     attr_read_attempted = 0;
     assert (unrecog_head == NULL);
+	TRACE(3,"fileattr_startdir(%s)",PATCH_NULL(repos));
 }
 
 static void

@@ -274,7 +274,6 @@ static char **mod_list;		/* Ptr to array of ptrs to module names */
 static int mod_max;		/* Number of elements allocated */
 static int mod_count;		/* Number of elements used */
 
-static char *histfile;		/* Ptr to the history file name */
 static char *history_line;  /* Current history line for historyinfo proc */
 
 /* This is pretty unclear.  First of all, separating "flags" vs.
@@ -445,7 +444,7 @@ history (argc, argv)
     backto = xstrdup ("");
     rec_types = xstrdup ("");
     optind = 0;
-    while ((c = getopt (argc, argv, "+Tacelow?D:b:f:m:n:p:r:t:u:x:X:z:")) != -1)
+    while ((c = getopt (argc, argv, "+Tacelow?D:b:f:m:n:p:r:t:u:x:z:")) != -1)
     {
 	switch (c)
 	{
@@ -475,9 +474,6 @@ history (argc, argv)
 		break;
 	    case 'w':			/* Match Working Dir (CurDir) fields */
 		working = 1;
-		break;
-	    case 'X':			/* Undocumented debugging flag */
-		histfile = optarg;
 		break;
 	    case 'D':			/* Since specified date */
 		if (*since_rev || *since_tag || *backto)
@@ -619,8 +615,6 @@ history (argc, argv)
 	    send_arg("-o");
 	if (working)
 	    send_arg("-w");
-	if (histfile)
-	    send_arg("-X");
 	if (since_date)
 	    client_senddate (since_date);
 	if (backto[0] != '\0')
@@ -724,15 +718,10 @@ history (argc, argv)
 	(void) strcat (rec_types, "T");
     }
 
-    if (histfile)
-	fname = xstrdup (histfile);
-    else
-    {
 	fname = xmalloc (strlen (current_parsed_root->directory) + sizeof (CVSROOTADM)
 			 + sizeof (CVSROOTADM_HISTORY) + 10);
 	(void) sprintf (fname, "%s/%s/%s", current_parsed_root->directory,
 			CVSROOTADM, CVSROOTADM_HISTORY);
-    }
 
     read_hrecs (fname);
     if(hrec_count>0)
@@ -772,8 +761,6 @@ history_write (type, update_dir, revs, name, repository)
     static char *tilde = "";
     static char *PrCurDir = NULL;
 
-    if (logoff)			/* History is turned off by cmd line switch */
-	return;
     if ( strchr(logHistory, type) == NULL )	
 	return;
     fname = xmalloc (strlen (current_parsed_root->directory) + sizeof (CVSROOTADM)
@@ -783,7 +770,7 @@ history_write (type, update_dir, revs, name, repository)
 
     if (isfile (fname))
     {
-		TRACE(1,"fopen(%s,a)",fname);
+		TRACE(1,"fopen(%s,a)",PATCH_NULL(fname));
 		if (noexec)
 			goto out;
 		fd = CVS_OPEN (fname, O_WRONLY | O_APPEND | O_CREAT | OPEN_BINARY, 0666);
@@ -828,7 +815,7 @@ history_write (type, update_dir, revs, name, repository)
 
 		if ( CVS_CHDIR (pwdir) >= 0)
 		{
-			homedir = xgetwd ();
+			homedir = xgetwd_mapped ();
 			if (homedir == NULL)
 				error (1, errno, "can't getwd in %s", pwdir);
 
@@ -922,14 +909,10 @@ history_write (type, update_dir, revs, name, repository)
 	revs = "";
     line = xmalloc (strlen (username) + strlen (real_workdir) + strlen (repos)
 		    + strlen (revs) + strlen (name) + 100);
-#ifdef TIME_64BIT
-#ifdef _WIN32
+#if defined(TIME_64BIT) && defined(_WIN32)
     sprintf (line, "%c%08I64x|%s|%s|%s|%s|%s\n",
 	     type, now,
 	     username, workdir, repos, revs, name);
-#else
-	#error "64bit time_t not standardised for Unix"
-#endif
 #else
     sprintf (line, "%c%08lx|%s|%s|%s|%s|%s\n",
 	     type, now,
@@ -1338,8 +1321,7 @@ select_hrec (hr)
 	finfo.entries = NULL;
 	finfo.rcs = NULL;
 
-	vers = Version_TS (&finfo, (char *) NULL, since_rev, (char *) NULL,
-			   1, 0);
+	vers = Version_TS (&finfo, (char *) NULL, since_rev, (char *) NULL, 1, 0, 0);
 	if (vers->vn_rcs)
 	{
 	    if ((t = RCS_getrevtime (vers->srcfile, vers->vn_rcs, (char *) 0, 0))

@@ -15,6 +15,7 @@ typedef struct cvsroot_s {
 	char *proxyuser; /* Username for proxy */
 	char *proxypassword; /* Password for proxy */
 	char *unparsed_directory; /* unparsed directory name */
+	char *mapped_directory; /* Original directory, mapped to filesystem */
 	char *optional_1; /* Protocol defined keyword - also text between {...} */
 	char *optional_2; /* Protocol defined keyword */
 	char *optional_3; /* Protocol defined keyword */

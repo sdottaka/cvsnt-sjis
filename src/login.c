@@ -67,6 +67,9 @@ login (argc, argv)
     else
 		typed_password = GETPASS ("CVS password: ");
 
+    if(!typed_password)
+	    return 1;
+    
 	if(client_protocol->login(client_protocol,typed_password))
 		return 1;
 	if(start_server(1)) /* Verify the new password */

@@ -10,11 +10,10 @@
  */
 
 #include "cvs.h"
-#include <assert.h>
 
 static Dtype admin_dirproc PROTO ((void *callerdat, char *dir,
 				   char *repos, char *update_dir,
-				   List *entries));
+				   List *entries, const char *virtual_repository, Dtype hint));
 static int admin_fileproc PROTO ((void *callerdat, struct file_info *finfo));
 
 static const char *const admin_usage[] =
@@ -24,13 +23,17 @@ static const char *const admin_usage[] =
     "\tValid flags are one of:\n",
 	"\tt\tText file (default)\n",
     "\tb\tBinary file (merges not allowed).\n",
-    "\tu\tUnicode (UCS-2) file.\n",
+    "\tB\tBinary file using binary deltas (merges not allowed).\n",
+    "\tu\tUnicode (UCS-2) file with BOM.\n",
+	"\t{encoding}\tExtended encoding type\n",
     "\tFollowed by any of:\n",
+	"\tc\tForce reserved edit.\n",
     "\tk\tSubstitute keyword.\n",
     "\tv\tSubstitute value.\n",
     "\tl\tGenerate lockers name.\n",
 	"\to\tDon't change keywords.\n",
 	"\tL\tGenerate Unix line endings on checkout.\n",
+	"\tz\tCompress deltas within RCS files.\n",
     "\t-l[rev]    Lock revision (latest revision on branch,\n",
     "\t           latest revision on trunk if omitted). (DEPRECIATED)\n",
     "\t-m rev:msg  Replace revision's log message.\n",
@@ -302,9 +305,10 @@ admin (argc, argv)
 		{
 		    size_t bufsize = 0;
 		    size_t len;
+			kflag kf_empty = {0};
 
 		    get_file (optarg, optarg, "r", &admin_data.desc,
-			      &bufsize, &len);
+			      &bufsize, &len, kf_empty);
 		}
 		break;
 
@@ -453,7 +457,7 @@ admin (argc, argv)
 
     lock_tree_for_write (argc, argv, 0, W_LOCAL, 0);
 
-    err = start_recursion (admin_fileproc, (FILESDONEPROC) NULL, admin_dirproc,
+	err = start_recursion (admin_fileproc, (FILESDONEPROC) NULL, (PREDIRENTPROC) NULL, admin_dirproc,
 			   (DIRLEAVEPROC) NULL, (void *)&admin_data,
 			   argc, argv, 0,
 			   W_LOCAL, 0, 0, (char *) NULL, 1, verify_write);
@@ -494,14 +498,14 @@ admin_fileproc (callerdat, finfo)
     int status = 0;
     RCSNode *rcs, *rcs2;
 
-    vers = Version_TS (finfo, NULL, NULL, NULL, 0, 0);
+    vers = Version_TS (finfo, NULL, NULL, NULL, 0, 0, 0);
 
     version = vers->vn_user;
     if (version == NULL)
 	goto exitfunc;
     else if (strcmp (version, "0") == 0)
     {
-	error (0, 0, "cannot admin newly added file `%s'", finfo->file);
+	error (0, 0, "cannot admin newly added file `%s'", fn_root(finfo->file));
 	goto exitfunc;
     }
 
@@ -823,7 +827,7 @@ admin_fileproc (callerdat, finfo)
 
     if (status == 0)
     {
-	RCS_rewrite (rcs, NULL, NULL);
+	RCS_rewrite (rcs, NULL, NULL, 0);
 	if (!really_quiet)
 	    cvs_output ("done\n", 5);
     }
@@ -834,7 +838,7 @@ admin_fileproc (callerdat, finfo)
 	   additional message is to make it clear that the previous problems
 	   caused CVS to forget about the idea of modifying the RCS file.  */
 	if (!really_quiet)
-	    error (0, 0, "RCS file for `%s' not modified.", finfo->file);
+	    error (0, 0, "RCS file for `%s' not modified.", fn_root(finfo->file));
 	RCS_abandon (rcs);
     }
 
@@ -847,14 +851,11 @@ admin_fileproc (callerdat, finfo)
  * Print a warm fuzzy message
  */
 /* ARGSUSED */
-static Dtype
-admin_dirproc (callerdat, dir, repos, update_dir, entries)
-    void *callerdat;
-    char *dir;
-    char *repos;
-    char *update_dir;
-    List *entries;
+static Dtype admin_dirproc (void *callerdat, char *dir, char *repos, char *update_dir, List *entries, const char *virtual_repository, Dtype hint)
 {
+	if(hint!=R_PROCESS)
+		return hint;
+
     if (!quiet)
 	error (0, 0, "Administrating %s", update_dir);
     return (R_PROCESS);

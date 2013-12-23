@@ -8,7 +8,6 @@
  */
 
 #include "cvs.h"
-#include <assert.h>
 
 /* Global caches.  The idea is that we maintain a linked list of "free"d
    nodes or lists, and get new items from there.  It has been suggested
@@ -128,8 +127,7 @@ dellist (listp)
 /*
  * get a new list node
  */
-Node *
-getnode ()
+Node *getnode ()
 {
     Node *p;
 
@@ -155,12 +153,10 @@ getnode ()
 /*
  * remove a node from it's list (maybe hash list too) and free it
  */
-void
-delnode (p)
-    Node *p;
+void delnode (Node *p)
 {
     if (p == (Node *) NULL)
-	return;
+		return;
 
     /* take it out of the list */
     p->next->prev = p->prev;
@@ -169,8 +165,8 @@ delnode (p)
     /* if it was hashed, remove it from there too */
     if (p->hashnext != (Node *) NULL)
     {
-	p->hashnext->hashprev = p->hashprev;
-	p->hashprev->hashnext = p->hashnext;
+		p->hashnext->hashprev = p->hashprev;
+		p->hashprev->hashnext = p->hashnext;
     }
 
     /* free up the storage */
@@ -188,7 +184,7 @@ freenode_mem (p)
 	p->delproc (p);			/* call the specified delproc */
     else
     {
-	if (p->data != NULL)		/* otherwise xfree() it if necessary */
+	if (p->data != NULL && p->data!=(void*)0x1)		/* otherwise xfree() it if necessary */
 	    xfree (p->data);
     }
     if (p->key != NULL)			/* free the key if necessary */
@@ -202,9 +198,7 @@ freenode_mem (p)
 /*
  * free up the storage associated with a node and recycle it
  */
-void
-freenode (p)
-    Node *p;
+void freenode (Node *p)
 {
     /* first free the memory */
     freenode_mem (p);
@@ -219,6 +213,34 @@ freenode (p)
 #endif
 }
 
+int freenodecache()
+{
+	Node *p = nodecache, *q;
+	while(p)
+	{
+		q=p->next;
+		xfree(p);
+		p=q;
+	}
+
+
+	return 0;
+}
+
+int freelistcache()
+{
+	List *p = listcache, *q;
+	while(p)
+	{
+		q=p->next;
+		xfree(p->list);
+		xfree(p);
+		p=q;
+	}
+
+
+	return 0;
+}
 /*
  * Link item P into list LIST before item MARKER.  If P->KEY is non-NULL and
  * that key is already in the hash table, return -1 without modifying any
@@ -353,11 +375,7 @@ findnode_fn (list, key)
 /*
  * walk a list with a specific proc
  */
-int
-walklist (list, proc, closure)
-    List *list;
-    int (*proc)(Node *, void *);
-    void *closure;
+int walklist (List *list, int (*proc)(Node *, void *), void *closure)
 {
     Node *head, *p;
     int err = 0;

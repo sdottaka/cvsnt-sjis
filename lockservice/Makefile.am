@@ -12,6 +12,9 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+AM_CPPFLAGS = -I$(top_srcdir)/lib $(includeopt)
+AM_CFLAGS = -DCVS_CONFIG_DIR=\"$(cvs_config_dir)\" -DCVS_LIBRARY_DIR=\"$(cvs_library_dir)\"
+
 cvs_targets = cvslockd
 
 cvslockd_SOURCES = \
@@ -20,6 +23,9 @@ cvslockd_SOURCES = \
 	server.cpp 
 
 bin_PROGRAMS=$(cvs_targets)
+
+cvslockd_LDADD = \
+	../lib/libcvs.a 
 
 EXTRA_DIST = \
 	.cvsignore 

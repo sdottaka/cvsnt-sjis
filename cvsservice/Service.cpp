@@ -26,12 +26,7 @@
 #define SERVICE_NAME _T("CVS")
 #define DISPLAY_NAMEA "CVSNT"
 #define DISPLAY_NAME _T("CVSNT")
-
-namespace 
-{
-const char ntservice_version_string[] = 
-    "CVSNT Service " CVSNT_PRODUCTVERSION_STRING "\n";
-}
+#define NTSERVICE_VERSION_STRING "CVSNT Service " CVSNT_PRODUCTVERSION_STRING
 
 static void CALLBACK ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv);
 static void CALLBACK ServiceHandler(DWORD fdwControl);
@@ -41,7 +36,6 @@ static LPCSTR GetErrorString();
 static void AddEventSource(LPCTSTR szService, LPCTSTR szModule);
 static void ReportError(BOOL bError, LPCSTR szError, ...);
 static DWORD CALLBACK DoCvsThread(LPVOID lpParam);
-static DWORD CALLBACK DoPipeThread(LPVOID lpParam);
 
 static DWORD   g_dwCurrentState;
 static SERVICE_STATUS_HANDLE  g_hService;
@@ -69,18 +63,107 @@ int main(int argc, char* argv[])
 		// not running as a service
 		if(!StartServiceCtrlDispatcher(ServiceTable)) return 0;
 	}
-	if(argc<2 || (strcmp(argv[1],"-i") && strcmp(argv[1],"-u") && strcmp(argv[1],"-test") && strcmp(argv[1],"-v") ))
+	if(argc<2 || (strcmp(argv[1],"-i") && strcmp(argv[1],"-reglsa") && strcmp(argv[1],"-u") && strcmp(argv[1],"-unreglsa") && strcmp(argv[1],"-test") && strcmp(argv[1],"-v") ))
 	{
 		fprintf(stderr, "CVSNT Service Handler\n\n"
                         "Arguments:\n"
                         "\t%s -i [cvsroot]\tInstall\n"
+                        "\t%s -reglsa\tRegister LSA helper\n"
                         "\t%s -u\tUninstall\n"
+                        "\t%s -unreglsa\tUnregister LSA helper\n"
                         "\t%s -test\tInteractive run\n"
                         "\t%s -v\tReport version number\n",
                         basename(argv[0]),basename(argv[0]),
+                        basename(argv[0]), basename(argv[0]), 
                         basename(argv[0]), basename(argv[0]) 
                         );
 		return -1;
+	}
+
+	if(!strcmp(argv[1],"-reglsa"))
+	{
+		TCHAR lsaBuf[10240];
+		DWORD dwLsaBuf;
+
+		if(RegOpenKeyEx(HKEY_LOCAL_MACHINE,_T("SYSTEM\\CurrentControlSet\\Control\\Lsa"),0,KEY_ALL_ACCESS,&hk))
+		{
+			fprintf(stderr,"Couldn't open LSA registry key, error %d\n",GetLastError());
+			return -1;
+		}
+		dwLsaBuf=sizeof(lsaBuf);
+		if(RegQueryValueEx(hk,_T("Authentication Packages"),NULL,&dwType,(BYTE*)lsaBuf,&dwLsaBuf))
+		{
+			fprintf(stderr,"Couldn't read LSA registry key, error %d\n",GetLastError());
+			return -1;
+		}
+		if(dwType!=REG_MULTI_SZ)
+		{
+			fprintf(stderr,"LSA key isn't REG_MULTI_SZ!!!\n");
+			return -1;
+		}
+		lsaBuf[dwLsaBuf]='\0';
+		TCHAR *p = lsaBuf;
+		while(*p)
+		{
+			if(!_tcscmp(p,"setuid"))
+				break;
+			p+=strlen(p)+1;
+		}
+		if(!*p)
+		{
+			strcpy(p,"setuid");
+			dwLsaBuf+=strlen(p)+1;
+			lsaBuf[dwLsaBuf]='\0';
+			if(RegSetValueEx(hk,_T("Authentication Packages"),NULL,dwType,(BYTE*)lsaBuf,dwLsaBuf))
+			{
+				fprintf(stderr,"Couldn't write LSA registry key, error %d\n",GetLastError());
+				return -1;
+			}
+		}
+		return 0;
+	}
+
+	if(!strcmp(argv[1],"-unreglsa"))
+	{
+		TCHAR lsaBuf[10240];
+		DWORD dwLsaBuf;
+
+		if(RegOpenKeyEx(HKEY_LOCAL_MACHINE,_T("SYSTEM\\CurrentControlSet\\Control\\Lsa"),0,KEY_ALL_ACCESS,&hk))
+		{
+			fprintf(stderr,"Couldn't open LSA registry key, error %d\n",GetLastError());
+			return -1;
+		}
+		dwLsaBuf=sizeof(lsaBuf);
+		if(RegQueryValueEx(hk,_T("Authentication Packages"),NULL,&dwType,(BYTE*)lsaBuf,&dwLsaBuf))
+		{
+			fprintf(stderr,"Couldn't read LSA registry key, error %d\n",GetLastError());
+			return -1;
+		}
+		if(dwType!=REG_MULTI_SZ)
+		{
+			fprintf(stderr,"LSA key isn't REG_MULTI_SZ!!!\n");
+			return -1;
+		}
+		lsaBuf[dwLsaBuf]='\0';
+		TCHAR *p = lsaBuf;
+		while(*p)
+		{
+			if(!_tcscmp(p,"setuid"))
+				break;
+			p+=strlen(p)+1;
+		}
+		if(*p)
+		{
+			size_t l = strlen(p)+1;
+			memcpy(p,p+l,(dwLsaBuf-((p+l)-lsaBuf))+1);
+			dwLsaBuf-=l;
+			if(RegSetValueEx(hk,_T("Authentication Packages"),NULL,dwType,(BYTE*)lsaBuf,dwLsaBuf))
+			{
+				fprintf(stderr,"Couldn't write LSA registry key, error %d\n",GetLastError());
+				return -1;
+			}
+		}
+		return 0;
 	}
 
 	if(RegCreateKeyEx(HKEY_LOCAL_MACHINE,_T("Software\\CVS\\Pserver"),NULL,_T(""),REG_OPTION_NON_VOLATILE,KEY_ALL_ACCESS,NULL,&hk,NULL))
@@ -90,7 +173,7 @@ int main(int argc, char* argv[])
 	}
 
     if (!strcmp(argv[1],"-v")) {
-        puts(ntservice_version_string);
+        puts(NTSERVICE_VERSION_STRING);
         return 0;
         }
 
@@ -122,12 +205,24 @@ int main(int argc, char* argv[])
 
 		GetModuleFileName(NULL,szImagePath,MAX_PATH);
 		if ((hService = CreateService(hSCManager,SERVICE_NAME,DISPLAY_NAME,
-						STANDARD_RIGHTS_REQUIRED, SERVICE_WIN32_OWN_PROCESS|SERVICE_INTERACTIVE_PROCESS,
+						STANDARD_RIGHTS_REQUIRED|SERVICE_CHANGE_CONFIG, SERVICE_WIN32_OWN_PROCESS|SERVICE_INTERACTIVE_PROCESS,
 						SERVICE_AUTO_START, SERVICE_ERROR_NORMAL,
 						szImagePath, NULL, NULL, NULL, NULL, NULL)) == NULL)
 		{
 			fprintf(stderr,"CreateService Failed: %s\n",GetErrorString());
 			return -1;
+		}
+		{
+			BOOL (WINAPI *pChangeServiceConfig2)(SC_HANDLE,DWORD,LPVOID);
+			pChangeServiceConfig2=(BOOL (WINAPI *)(SC_HANDLE,DWORD,LPVOID))GetProcAddress(GetModuleHandle("advapi32"),"ChangeServiceConfig2A");
+			if(pChangeServiceConfig2)
+			{
+				SERVICE_DESCRIPTION sd = { NTSERVICE_VERSION_STRING };
+				if(!pChangeServiceConfig2(hService,SERVICE_CONFIG_DESCRIPTION,&sd))
+				{
+					0;
+				}
+			}
 		}
 		CloseServiceHandle(hService);
 		CloseServiceHandle(hSCManager);
@@ -195,7 +290,7 @@ void CALLBACK ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv)
 	{ 
 		ReportError(TRUE,"Unable to start "SERVICE_NAMEA" - Couldn't open environment key"); 
 		if(!g_bTestMode)
-			NotifySCM(SERVICE_STOPPED,0,1);
+			NotifySCM(SERVICE_STOPPED,0,0);
 		return;
 	}
 
@@ -204,7 +299,7 @@ void CALLBACK ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv)
 	{
 		ReportError(TRUE,"Unable to start "SERVICE_NAMEA" - PATH environment variable not defined in system environment");
 		if(!g_bTestMode)
-			NotifySCM(SERVICE_STOPPED,0,1);
+			NotifySCM(SERVICE_STOPPED,0,0);
 		return;
 	}
 	ExpandEnvironmentStrings(szTmp,szTmp2,sizeof(szTmp));
@@ -216,7 +311,7 @@ void CALLBACK ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv)
 	{
 		ReportError(TRUE,"Unable to start "SERVICE_NAMEA" - Couldn't open HKLM\\Software\\CVS\\Pserver key");
 		if(!g_bTestMode)
-			NotifySCM(SERVICE_STOPPED,0,1);
+			NotifySCM(SERVICE_STOPPED,0,0);
 		return;
 	}
 
@@ -234,13 +329,6 @@ void CALLBACK ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv)
 	if(g_bTestMode)
 		_tprintf(_T("TEMP/TMP currently set to %s\n"),szTmp);
 
-	bool NTServer = true;
-	dwTmp=sizeof(DWORD);
-	if(!RegQueryValueEx(hk,_T("StartNTServer"),NULL,&dwType,(BYTE*)szTmp,&dwTmp))
-	{
-		if(!*(DWORD*)szTmp)
-			NTServer=false;
-	}
 	dwTmp=sizeof(DWORD);
 	if(!RegQueryValueEx(hk,_T("PServerPort"),NULL,&dwType,(BYTE*)szTmp,&dwTmp))
 	{
@@ -255,7 +343,7 @@ void CALLBACK ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv)
 	{
 		ReportError(TRUE,"WSAStartup failed... aborting - Error %d\n",WSAGetLastError());
 		if(!g_bTestMode)
-			NotifySCM(SERVICE_STOPPED,0,1);
+			NotifySCM(SERVICE_STOPPED,0,0);
 		return;
 	}
 
@@ -330,7 +418,7 @@ void CALLBACK ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv)
 			{
 				ReportError(TRUE,"Listen on socket failed: %s\n",gai_strerror(WSAGetLastError()));
 				if(!g_bTestMode)
-					NotifySCM(SERVICE_STOPPED,0,1);
+					NotifySCM(SERVICE_STOPPED,0,0);
 				freeaddrinfo(pAddrInfo);
 				return;
 			} 
@@ -349,16 +437,8 @@ void CALLBACK ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv)
 	{
 		ReportError(TRUE,"All socket binds failed.");
 		if(!g_bTestMode)
-			NotifySCM(SERVICE_STOPPED,0,1);
+			NotifySCM(SERVICE_STOPPED,0,0);
 		return;
-	}
-
-	// Startup the named pipe listener for ntserver mode
-	if(NTServer)
-	{
-		if(g_bTestMode)
-			printf("Starting named pipe server...\n");
-		CloseHandle(CreateThread(NULL,0,DoPipeThread,NULL,0,NULL));
 	}
 
 	DWORD (WINAPI *pDsServerRegisterSpn)(DS_SPN_WRITE_OP Operation, LPCTSTR ServiceClass, LPCTSTR UserObjectDN);
@@ -430,14 +510,15 @@ void CALLBACK ServiceHandler(DWORD fdwControl)
 	{      
 	case SERVICE_CONTROL_STOP:
 		OutputDebugString(SERVICE_NAME _T(": Stop\n"));
-		NotifySCM(SERVICE_STOP_PENDING, 0, 1);
+		NotifySCM(SERVICE_STOP_PENDING, 0, 0);
 		g_bStop=TRUE;
+		return;
+	case SERVICE_CONTROL_INTERROGATE:
+	default:
 		break;
-    case SERVICE_CONTROL_INTERROGATE:
-		OutputDebugString(SERVICE_NAME _T(": Interrogate\n"));
-		NotifySCM(g_dwCurrentState, 0, 0);
-		break;
-   }
+	}
+	OutputDebugString(SERVICE_NAME _T(": Interrogate\n"));
+	NotifySCM(g_dwCurrentState, 0, 0);
 }
 
 BOOL NotifySCM(DWORD dwState, DWORD dwWin32ExitCode, DWORD dwProgress)
@@ -551,22 +632,19 @@ void AddEventSource(LPCTSTR szService, LPCTSTR szModule)
 DWORD CALLBACK DoCvsThread(LPVOID lpParam)
 {
 	HANDLE hConn = (HANDLE)lpParam;
+	TCHAR buf[1024];
 
 	STARTUPINFO si= { sizeof(STARTUPINFO) };
 	PROCESS_INFORMATION pi = { 0 };
-	HANDLE hReadPipeClient,hWritePipeClient,hErrorPipeClient;
 
-	DuplicateHandle(GetCurrentProcess(),hConn,GetCurrentProcess(),&hErrorPipeClient,0,TRUE,DUPLICATE_SAME_ACCESS);
-	DuplicateHandle(GetCurrentProcess(),hConn,GetCurrentProcess(),&hReadPipeClient,0,TRUE,DUPLICATE_SAME_ACCESS);
-	DuplicateHandle(GetCurrentProcess(),hConn,GetCurrentProcess(),&hWritePipeClient,0,TRUE,DUPLICATE_SAME_ACCESS);
+	si.dwFlags = STARTF_USESHOWWINDOW;
+	si.wShowWindow = SW_HIDE;
 
-	si.dwFlags=STARTF_USESTDHANDLES|STARTF_USESHOWWINDOW;
-	si.hStdInput=hReadPipeClient;
-	si.hStdOutput=hWritePipeClient;
-	si.hStdError=hErrorPipeClient;
-	si.wShowWindow=SW_HIDE;
+	if(g_bTestMode)
+		printf("I/O Socket is %p\n",hConn);
 
-	if(!CreateProcess(NULL,_T("cvs authserver"),NULL,NULL,TRUE,0,NULL,NULL,&si,&pi))
+	_sntprintf(buf,sizeof(buf),_T("cvs --win32_socket_io=%ld authserver"),(long)hConn);
+	if(!CreateProcess(NULL,buf,NULL,NULL,TRUE,0,NULL,NULL,&si,&pi))
 	{
 		ReportError(TRUE,"Couldn't start cvs.exe.  Error %d\n",GetLastError());
 		return -1;
@@ -574,10 +652,6 @@ DWORD CALLBACK DoCvsThread(LPVOID lpParam)
 
 	if(g_bTestMode)
 		printf("%08x: Process %08x started\n",GetTickCount(),pi.hProcess);
-
-	CloseHandle(hReadPipeClient);
-	CloseHandle(hWritePipeClient);
-	CloseHandle(hErrorPipeClient);
 
 	while(!g_bStop && (WaitForSingleObject(pi.hProcess,200)==WAIT_TIMEOUT))
 		;
@@ -590,96 +664,8 @@ DWORD CALLBACK DoCvsThread(LPVOID lpParam)
 	CloseHandle(pi.hProcess);
 	CloseHandle(pi.hThread);
 
-	DWORD flags,ob,ib,mi;
-	if(!GetNamedPipeInfo(hConn,&flags,&ob,&ib,&mi))
-	{
-		shutdown((SOCKET)hConn,SD_BOTH);
-		closesocket((SOCKET)hConn);
-	}
-	else
-	{
-		FlushFileBuffers(hConn);
-		CloseHandle(hConn);
-	}
+	shutdown((SOCKET)hConn,SD_BOTH);
+	closesocket((SOCKET)hConn);
 
 	return 0;
 }
-
-DWORD CALLBACK DoPipeThread(LPVOID lpParam)
-{
-	SECURITY_ATTRIBUTES sa;
-	PSECURITY_DESCRIPTOR pSD;
- 
-    // create a security descriptor that allows anyone to write to 
-    //  the pipe...
-	// 
-    pSD = (PSECURITY_DESCRIPTOR) malloc( SECURITY_DESCRIPTOR_MIN_LENGTH );  
-    if (pSD == NULL)
-		return FALSE;
-    if (!InitializeSecurityDescriptor(pSD, SECURITY_DESCRIPTOR_REVISION)) 
-		return FALSE;
-	// add a NULL disc. ACL to the security descriptor. 
-    //
-	if (!SetSecurityDescriptorDacl(pSD, TRUE, (PACL) NULL, FALSE)) 
-		return FALSE;
-
-	sa.nLength = sizeof(sa);
-    sa.lpSecurityDescriptor = pSD;
-	sa.bInheritHandle = TRUE;
-
-	HANDLE hPipe = CreateNamedPipe(_T("\\\\.\\pipe\\CVS_PIPE"),PIPE_ACCESS_DUPLEX,PIPE_TYPE_BYTE|PIPE_READMODE_BYTE|PIPE_WAIT,PIPE_UNLIMITED_INSTANCES,0,0,5000,&sa);
-	if(hPipe==INVALID_HANDLE_VALUE)
-	{
-		ReportError(TRUE,"Couldn't create named pipe - error %d\n",GetLastError());
-		return -1;
-	}
-
-	while(!g_bStop)
-	{
-		BOOL bRes = ConnectNamedPipe(hPipe,NULL);
-		DWORD dwErr = 0;
-
-		// Change submitted by Egor Shokurov on 8/31/2001
-		//
-		// We don't need error code if function succeed
-		if (!bRes)
-			dwErr = GetLastError();
-		if(bRes || dwErr==ERROR_PIPE_CONNECTED)
-		{
-			// Here we store the handle and create new one before forking cvs.exe
-			// to prevent two concurrent connections to the same pipe.
-
-			HANDLE hOldPipe = hPipe;
-			hPipe = CreateNamedPipe(_T("\\\\.\\pipe\\CVS_PIPE"),PIPE_ACCESS_DUPLEX,PIPE_TYPE_BYTE|PIPE_READMODE_BYTE|PIPE_WAIT,PIPE_UNLIMITED_INSTANCES,0,0,5000,&sa);
-			if(hPipe==INVALID_HANDLE_VALUE)
-			{
-				ReportError(TRUE, "Couldn't create named pipe - error %d\n",GetLastError());
-				return -1;
-			}
-	
-			CloseHandle(CreateThread(NULL,0,DoCvsThread,(void*)hOldPipe,0,NULL));
-		}
-		// Here we check for disconnected pipe
-		// This code is not needed in normal function just paranoid check
-		// 
-		else if (dwErr == ERROR_NO_DATA)
-		{
-			DisconnectNamedPipe(hPipe);
-			CloseHandle(hPipe);
-			hPipe = CreateNamedPipe(_T("\\\\.\\pipe\\CVS_PIPE"),PIPE_ACCESS_DUPLEX,PIPE_TYPE_BYTE|PIPE_READMODE_BYTE|PIPE_WAIT,PIPE_UNLIMITED_INSTANCES,0,0,5000,&sa);
-			if(hPipe==INVALID_HANDLE_VALUE)
-			{
-				ReportError(TRUE,"Couldn't create named pipe - error %d\n",GetLastError());
-				return -1;
-			}
-			continue;
-		}
-		else
-		{
-			ReportError(TRUE,"ConnectNamedPipe returned error %d\n",dwErr);
-		}
-		Sleep(1000);
-	}
-	return 0;
-}
-

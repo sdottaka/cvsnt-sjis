@@ -1,10 +1,10 @@
 /*
  * Copyright (c) 1992, Brian Berliner and Jeff Polk
  * Copyright (c) 1989-1992, Brian Berliner
- * 
+ *
  * You may distribute under the terms of the GNU General Public License as
  * specified in the README file that comes with the CVS source distribution.
- * 
+ *
  * Various useful functions for the CVS support code.
  */
 
@@ -12,14 +12,11 @@
 #include "getline.h"
 
 #ifdef _WIN32
-#include <assert.h>
-#endif
-
-#ifdef _WIN32
 #include <io.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #else
+#include <sys/socket.h>
 #include <netdb.h>
 #endif
 #include <errno.h>
@@ -28,6 +25,7 @@
 
 #ifdef _WIN32
 #define socket_errno WSAGetLastError()
+#define EWOULDBLOCK WSAEWOULDBLOCK
 #else
 #define closesocket close
 #define socket_errno errno
@@ -43,7 +41,6 @@
 #endif /* !HAVE_NANOSLEEP */
 
 extern char *getlogin ();
-static int is_unicode(const char *buf, int len, int *swap);
 
 #ifdef CVSGUI_PIPE
 #include "cvsgui_protocol.h"
@@ -52,7 +49,11 @@ static int is_unicode(const char *buf, int len, int *swap);
 /*
  * malloc some data and die if it fails
  */
+#ifdef _DEBUG
+void *dbg_xmalloc(size_t bytes, const char *file, int line)
+#else
 void *xmalloc (size_t bytes)
+#endif
 {
     char *cp;
 
@@ -62,7 +63,11 @@ void *xmalloc (size_t bytes)
     if (bytes == 0)
 		bytes = 1;
 
+#ifdef _DEBUG
+    cp = _malloc_dbg(bytes,_NORMAL_BLOCK,file,line);
+#else
     cp = malloc (bytes);
+#endif
     if (cp == NULL)
     {
 		char buf[80];
@@ -78,27 +83,25 @@ void *xmalloc (size_t bytes)
  * a "malloc" if the argument is NULL, but you can't depend on it.  Here, I
  * can *force* it.
  */
+#ifdef _DEBUG
+void *dbg_xrealloc(void *ptr, size_t bytes, const char *file, int line)
+#else
 void *xrealloc (void *ptr, size_t bytes)
+#endif
 {
     char *cp;
 
+#ifdef _DEBUG
     if (!ptr)
-		cp = xmalloc (bytes);
+		cp = _malloc_dbg(bytes?bytes:1,_NORMAL_BLOCK,file,line);
 	else
-	{
-#if 0
-		/* Force the memory to move during a realloc...  
-		   not a good idea during release */
-		cp = xmalloc (bytes);
-		if(cp)
-		{
-			memcpy(cp, ptr, _msize(ptr)>bytes?bytes:_msize(ptr));
-			xfree(ptr);
-		}
+		cp = _realloc_dbg(ptr, bytes,_NORMAL_BLOCK,file,line);
 #else
+    if (!ptr)
+		cp = malloc (bytes?bytes:1);
+	else
 		cp = realloc(ptr, bytes);
 #endif
-	}
 
     if (cp == NULL)
     {
@@ -110,7 +113,7 @@ void *xrealloc (void *ptr, size_t bytes)
     return (cp);
 }
 
-/* This is #defined from xfree() 
+/* This is #defined from xfree()
    Automatically null the pointer after freeing it */
 void xfree_s(void **ptr)
 {
@@ -235,7 +238,7 @@ pathname_levels (path)
 		q=q1;
 	else if(q1==NULL && (q1>q2))
 		q=q2;
-	else 
+	else
 		q=q1; /* Probably NULL */
 #else
 	q = strchr (p, '/');
@@ -243,14 +246,14 @@ pathname_levels (path)
 
 	if (q != NULL)
 	    ++q;
-	if (p[0] == '.' && p[1] == '.' && (p[2] == '\0' || isslash(p[2])))
+	if (p[0] == '.' && p[1] == '.' && (p[2] == '\0' || ISDIRSEP(p[2])))
 	{
 	    --level;
 	    if (-level > max_level)
 		max_level = -level;
 	}
-	else if (p[0] == '\0' || isslash(p[0]) ||
-		 (p[0] == '.' && (p[1] == '\0' || isslash(p[1]))))
+	else if (p[0] == '\0' || ISDIRSEP(p[0]) ||
+		 (p[0] == '.' && (p[1] == '\0' || ISDIRSEP(p[1]))))
 	    ;
 	else
 	    ++level;
@@ -530,7 +533,7 @@ gca (rev1, rev2)
 	int i;
 	char c[2];
 	char *s[2];
-	
+
 	for (i = 0; i < 2; ++i)
 	{
 	    /* swap out the dot */
@@ -538,10 +541,10 @@ gca (rev1, rev2)
 	    if (s[i] != NULL) {
 		c[i] = *s[i];
 	    }
-	    
+
 	    /* read an int */
 	    j[i] = atoi (p[i]);
-	    
+
 	    /* swap back the dot... */
 	    if (s[i] != NULL) {
 		*s[i] = c[i];
@@ -552,9 +555,9 @@ gca (rev1, rev2)
 		/* or mark us at the end */
 		p[i] = NULL;
 	    }
-	    
+
 	}
-	
+
 	/* use the lowest. */
 	(void) sprintf (gca + strlen (gca), "%d.",
 			j[0] < j[1] ? j[0] : j[1]);
@@ -589,11 +592,11 @@ gca (rev1, rev2)
 	{
 	    /* we have a minor number.  use it.  */
 	    q = gca + strlen (gca);
-	    
+
 	    *q++ = '.';
 	    for ( ; *s != '.' && *s != '\0'; )
 		*q++ = *s++;
-	    
+
 	    *q = '\0';
 	}
     }
@@ -601,7 +604,7 @@ gca (rev1, rev2)
     {
 	/* if we have an even number of dots, then we have a branch.
 	   remove the last number in order to make it a revision.  */
-	
+
 	char *s;
 
 	s = strrchr(gca, '.');
@@ -636,7 +639,7 @@ check_numeric (rev, argc, argv)
        file or whether it contains more than one.  I strongly suspect this
        is the least confusing behavior.  */
     if (argc != 1
-	|| (!wrap_name_has (argv[0], WRAP_TOCVS) && isdir (argv[0])))
+	|| isdir (argv[0]))
     {
 	error (0, 0, "while processing more than one file:");
 	error (1, 0, "attempt to specify a numeric revision");
@@ -694,9 +697,7 @@ make_message_rcslegal (message)
    unresolved conflicts is kind of bogus (people do want to manage files
    which contain those patterns not as conflict markers), but for now it
    is what we do.  */
-int
-file_has_markers (finfo)
-    const struct file_info *finfo;
+int file_has_markers (const struct file_info *finfo)
 {
     FILE *fp;
     char *line = NULL;
@@ -709,21 +710,21 @@ file_has_markers (finfo)
 	error (1, errno, "cannot open %s", fn_root(finfo->fullname));
     while (getline (&line, &line_allocated, fp) > 0)
     {
-	if (strncmp (line, RCS_MERGE_PAT_1, sizeof RCS_MERGE_PAT_1 - 1) == 0 ||
-	    strncmp (line, RCS_MERGE_PAT_2, sizeof RCS_MERGE_PAT_2 - 1) == 0 ||
-	    strncmp (line, RCS_MERGE_PAT_3, sizeof RCS_MERGE_PAT_3 - 1) == 0)
-	{
-	    result = 1;
-	    goto out;
-	}
+		if (strncmp (line, RCS_MERGE_PAT_1, sizeof RCS_MERGE_PAT_1 - 1) == 0 ||
+			strncmp (line, RCS_MERGE_PAT_2, sizeof RCS_MERGE_PAT_2 - 1) == 0 ||
+			strncmp (line, RCS_MERGE_PAT_3, sizeof RCS_MERGE_PAT_3 - 1) == 0)
+		{
+			result = 1;
+			goto out;
+		}
     }
     if (ferror (fp))
-	error (0, errno, "cannot read %s", fn_root(finfo->fullname));
+		error (0, errno, "cannot read %s", fn_root(finfo->fullname));
 out:
     if (fclose (fp) < 0)
-	error (0, errno, "cannot close %s", fn_root(finfo->fullname));
+		error (0, errno, "cannot close %s", fn_root(finfo->fullname));
     if (line != NULL)
-	xfree (line);
+		xfree (line);
     return result;
 }
 
@@ -736,7 +737,7 @@ out:
    is FULLNAME.  MODE is "r" for text or "rb" for binary.  */
 
 void get_file (const char *name, const char *fullname, const char *mode,
-			char **buf, size_t *bufsize, size_t *len)
+			char **buf, size_t *bufsize, size_t *len, kflag kf)
 {
     struct stat s;
     size_t nread;
@@ -747,7 +748,7 @@ void get_file (const char *name, const char *fullname, const char *mode,
 	size_t siz;
 	int unicode=0;
 
-	TRACE(2,"get_file(%s,%s,%s)",name?name:"stdin",fullname,mode);
+	TRACE(2,"get_file(%s,%s,%s,%04x)",name?name:"stdin",PATCH_NULL(fullname),PATCH_NULL(mode),kf);
 
     if (name == NULL)
     {
@@ -775,7 +776,7 @@ void get_file (const char *name, const char *fullname, const char *mode,
 			/* Text file with even number of characters, might be unicode */
 			e = open_file (name, "rb");
 			siz = fread(tmp,1,sizeof(tmp),e);
-			if(is_unicode(tmp,siz,NULL))
+			if(file_encoding(tmp,siz,NULL,(kf.flags&KFLAG_ENCODED)?kf.encoding:ENC_UNKNOWN))
 			{
 				mode="rb";
 				unicode=1;
@@ -832,7 +833,7 @@ void get_file (const char *name, const char *fullname, const char *mode,
 	/* Also converts crlf->lf if required as the routine above will not
 	have done it */
 	if(unicode)
-		nread=convert_unicode_to_utf8(buf,nread,bufsize,unicode);
+		nread=convert_encoding_to_utf8(buf,nread,bufsize,ENC_UCS2LE);
 
 	*len = nread;
 
@@ -843,7 +844,7 @@ void get_file (const char *name, const char *fullname, const char *mode,
 
 	if(trace>1)
 	{
-		TRACE(2,"get_file -> %s",*buf);
+		TRACE(2,"get_file -> %s",PATCH_NULL(*buf));
 	}
 }
 
@@ -873,7 +874,7 @@ resolve_symlink (filename)
 #else
 	error (1, 0, "internal error: islink doesn't like readlink");
 #endif
-	
+
 #ifdef HAVE_READLINK
 	if (isabsolute (newname))
 	{
@@ -882,7 +883,7 @@ resolve_symlink (filename)
 	}
 	else
 	{
-	    char *oldname = last_component (*filename);
+	    const char *oldname = last_component (*filename);
 	    int dirlen = oldname - *filename;
 	    char *fullnewname = xmalloc (dirlen + strlen (newname) + 1);
 	    strncpy (fullnewname, *filename, dirlen);
@@ -1020,243 +1021,6 @@ sleep_past (desttime)
     }
 }
 
-int is_unicode(const char *buf, int len, int *swap)
-{
-	const unsigned short *c;
-	int lowchar_count, swap_lowchar_count;
-
-	if(len<2 || len&1)
-		return 0; // Odd length files (by definition) can't be unicode
-
-	// Check for unicode header
-	if(*(unsigned short *)buf == 0xfeff)
-	{
-		if(swap) *swap=0;
-		return 1;
-	}
-
-	// Byteswap unicode header
-	if(*(unsigned short *)buf == 0xfffe)
-	{
-		if(swap) *swap=1;
-		return 1;
-	}
-
-	// Into uncertain territory...  For stuff like US-ANSI encodings then we can be fairly
-	// certain, but once it gets into arabic and stuff there is no good method of autodetection
-	lowchar_count=0;
-	swap_lowchar_count=0;
-	for(c=(const unsigned short*)buf; ((const char *)c)<(buf+len); c++)
-	{
-		if((*c)<128) lowchar_count++;
-		if(((((*c)>>8)+(((*c)&0xff)<<8)))<128) swap_lowchar_count++;
-	}
-	// If >80% of the buffer is unicode<128
-	if(lowchar_count>((len*8)/10))
-	{
-		if(swap) *swap=0;
-		return 1;
-	}
-	// same for byteswapped
-	if(swap_lowchar_count>((len*8)/10))
-	{
-		if(swap) *swap=1;
-		return 1;
-	}
-
-	return 0; // Not unicode
-}
-
-/* NT doesn't support UCS-4 only UCS-2 
-   Therefore this routine doesn't attempt to encode full UCS-4 unicode */
-int convert_unicode_to_utf8(char **buf, int len, int *bufsize, int force_convert)
-{
-	const unsigned short *source;
-	unsigned char *dest;
-	unsigned char *destbuf;
-	unsigned short c;
-	int swap;
-
-	if(is_unicode(*buf,len,&swap) || force_convert)
-	{
-		// unicode
-		destbuf=xmalloc(len*4); // dest shouldn't be more than 4* source...
-		source=(const unsigned short*)((*buf)+2);
-		dest=destbuf+3;
-		// UTF8 header
-		destbuf[0]=0xef;
-		destbuf[1]=0xbb;
-		destbuf[2]=0xbf;
-	
-		while(source<(const unsigned short *)((*buf)+len))
-		{
-			c=*(source++);
-			if(swap)
- 				c=(c>>8)+((c&0xff)<<8);
-			if(c==0x0d)
-			{
-				unsigned short d = *source;
-				if(swap)
-					d=(d>>8)+((d&0xff)<<8);
-				if(d==0x0a)
-				{
-					source++;
-					c=0x0a;
-				}
-			}
-			if(c<0x80)
-			{
-				*(dest++)=c;
-			}
-			else if(c<0x800)
-			{
-				*(dest++)=0xc0+(c>>6);
-				*(dest++)=0x80+(c&0x3f);
-			}
-			else /* 0x800-0xFFFF */
-			{
-				*(dest++)=0xe0+(c>>12);
-				*(dest++)=0x80+((c>>6)&0x3f);
-				*(dest++)=0x80+(c&0x3f);
-			}
-		}
-		xfree(*buf);
-		*bufsize=(dest-destbuf)+32;
-		*buf=xrealloc(destbuf,*bufsize);
-		return dest-destbuf;
-	}
-	else
-		return len;
-}
-
-int output_utf8_as_unicode(int fd, const unsigned char *buf, int len)
-{
-	int expand_crlf = 0;
-	const unsigned char *p = buf+3;
-	unsigned char c,d,e;
-	unsigned short *dest;
-	unsigned short *destbuf = (unsigned short *)xmalloc(len*4);
-
-#ifdef _WIN32
-	if(getmode(fd)==_O_TEXT)
-		expand_crlf = 1;
-#endif
-
-// If the user has specifically requested unicode, it's probably best
-// to give them it...
-//
-//	if(buf[0]!=0xef || buf[1]!=0xbb || buf[2]!=0xbf)
-//	{
-//		/* File isn't utf8, write as ANSI text */
-//		if(write(fd,buf,len)<len)
-//			return 1;
-//		return 0;
-//	}
-
-	if(buf[0]!=0xef || buf[1]!=0xbb || buf[2]!=0xbf)
-		p=buf;
-	else
-		p=buf+3;
-#ifdef _WIN32
-	setmode(fd,_O_BINARY); // Don't want CRLF default stuff
-#endif
-	*destbuf=0xfeff; // For now we only output a single unicode type
-	dest = destbuf+1;
-	while(p<buf+len)
-	{
-		c=*(p++);
-		if(c<0x80)
-		{
-			if(c==0x0a && expand_crlf)
-				*(dest++)=0x0d;
-			*(dest++)=c;
-		}
-		else if(c<0xe0)
-		{
-			d=*(p++);
-			*(dest++)=((c&0x1f)<<6)+(d&0x3f);
-		}
-		else
-		{
-			d=*(p++);
-			e=*(p++);
-			*(dest++)=((c&0x0f)<<12)+((d&0x3f)<<6)+(e&0x3f);
-		}
-	}
-	len=(dest-destbuf)*2;
-	if(write(fd,destbuf,len)<len)
-	{
-		/* error - reported by caller */
-		xfree(destbuf);
-		return 1;
-	}
-	xfree(destbuf);
-	return 0;
-}
-
-int convert_unicode_buffer_to_utf8(const char *inbuf, int inlen, char *outbuf, int *outlen, int first, int swap)
-{
-	const unsigned short *source;
-	unsigned char *dest;
-	unsigned short c;
-
-	if(first && inlen>2 && (*(unsigned short *)inbuf == 0xfeff || *(unsigned short *)inbuf == 0xfffe))
-	{
-		// Skip over header
-		inbuf+=2;
-		inlen-=2;
-	}
-
-	source=(const unsigned short*)inbuf;
-	dest = outbuf;
-
-	if(first)
-	{
-		// UTF8 header
-		dest[0]=0xef;
-		dest[1]=0xbb;
-		dest[2]=0xbf;
-		dest+=3;
-	}
-	
-	while(source<(const unsigned short *)(inbuf+inlen))
-	{
-		c=*(source++);
-		if(swap)
- 			c=(c>>8)+((c&0xff)<<8);
-#ifdef _WIN32
-		if(c==0x0d)
-		{
-			unsigned short d = *source;
-			if(swap)
-				d=(d>>8)+((d&0xff)<<8);
-			if(d==0x0a)
-			{
-				source++;
-				c=0x0a;
-			}
-		}
-#endif
-		if(c<0x80)
-		{
-			*(dest++)=c;
-		}
-		else if(c<0x800)
-		{
-			*(dest++)=0xc0+(c>>6);
-			*(dest++)=0x80+(c&0x3f);
-		}
-		else /* 0x800-0xFFFF */
-		{
-			*(dest++)=0xe0+(c>>12);
-			*(dest++)=0x80+((c>>6)&0x3f);
-			*(dest++)=0x80+(c&0x3f);
-		}
-	}
-	*outlen=dest-(unsigned char *)outbuf;
-	return 0;
-}
-
 /* Like strtok, but can return empty tokens */
 char *cvs_strtok(char *buffer, const char *tokens)
 {
@@ -1283,14 +1047,19 @@ char *cvs_strtok(char *buffer, const char *tokens)
 
 void cvs_trace(int level, const char *fmt, ...)
 {
-	if(trace >= level)
+	if((!server_active || allow_trace) && trace >= level)
 	{
 		va_list va;
+		char str[1024];
 
 		va_start(va, fmt);
 		fprintf(stderr,"%c -> ",server_active?'S':' ');
-		vfprintf(stderr, fmt, va);
-		fprintf(stderr,"\n");
+		vsnprintf(str, 1024, fmt, va);
+		fprintf(stderr,"%s\n",str);
+#ifdef _DEBUG
+		OutputDebugString(str);
+		OutputDebugString("\n");
+#endif
 		va_end(va);
 	}
 }
@@ -1378,31 +1147,80 @@ void cvs_putenv(const char *variable, const char *value)
 }
 #endif
 
-int cvs_tcp_connect(const char *servername, const char *port)
+int cvs_tcp_connect(const char *servername, const char *port, int supress_errors)
 {
 	struct addrinfo hint = {0};
 	struct addrinfo *tcp_addrinfo;
 	int res,sock;
+	size_t b;
+	int err;
 
-	hint.ai_flags=AI_CANONNAME;
+	hint.ai_flags=supress_errors?0:AI_CANONNAME;
 	hint.ai_socktype=SOCK_STREAM;
 	if((res=getaddrinfo(servername,port,&hint,&tcp_addrinfo))!=0)
 	{
-		error(0,0, "Error connecting to host %s: %s\n", servername, gai_strerror(socket_errno));
+		if(!supress_errors)
+			error(0,0, "Error connecting to host %s: %s\n", servername, gai_strerror(socket_errno));
 		return -1;
 	}
 
     sock = socket(tcp_addrinfo->ai_family, tcp_addrinfo->ai_socktype, tcp_addrinfo->ai_protocol);
     if (sock == -1)
 	{
-		error(0,0, "cannot create socket: %s", gai_strerror(socket_errno));
+		if(!supress_errors)
+			error(0,0, "cannot create socket: %s", gai_strerror(socket_errno));
 		return -1;
 	}
 
-    if(connect (sock, (struct sockaddr *) tcp_addrinfo->ai_addr, tcp_addrinfo->ai_addrlen) <0)
+	if(supress_errors)
 	{
-		error(0,0, "connect to %s(%s):%s failed: %s", servername, tcp_addrinfo->ai_canonname, port, gai_strerror(socket_errno));
-		return -1;
+#ifdef _WIN32
+		b=1;
+		ioctlsocket(sock,FIONBIO,&b);
+#else	
+		b=fcntl(sock,F_GETFL,0);
+		fcntl(sock,F_SETFL,b|O_NONBLOCK);
+#endif
+	}
+
+	/* If errors are supressed we use a nonblocking connect with a 1000us select... this is enough
+	   for a connect to localhost (used by the agent code) and isn't going to be noticed by the user */
+	if(connect (sock, (struct sockaddr *) tcp_addrinfo->ai_addr, tcp_addrinfo->ai_addrlen) <0)
+	{
+		err = socket_errno;
+		if(err==EWOULDBLOCK)
+		{
+			fd_set fds;
+			struct timeval tv = { 0,1000 };
+			FD_ZERO(&fds);
+			FD_SET(sock,&fds);
+			err = select(sock,NULL,&fds,NULL,&tv);
+			if(err!=1)
+			{
+				if(!supress_errors)
+					error(0,0, "connect to %s(%s):%s failed: %s", servername, tcp_addrinfo->ai_canonname, port, gai_strerror(socket_errno));
+				closesocket(sock);
+				return -1;
+			}
+		}
+		else
+		{
+			if(!supress_errors)
+				error(0,0, "connect to %s(%s):%s failed: %s", servername, tcp_addrinfo->ai_canonname, port, gai_strerror(socket_errno));
+			closesocket(sock);
+			return -1;
+		}
+	}
+
+	if(supress_errors)
+	{
+#ifdef _WIN32
+		b=0;
+		ioctlsocket(sock,FIONBIO,&b);
+#else	
+		b=fcntl(sock,F_GETFL,0);
+		fcntl(sock,F_SETFL,b&~O_NONBLOCK);
+#endif
 	}
 
 	freeaddrinfo(tcp_addrinfo);
@@ -1410,38 +1228,35 @@ int cvs_tcp_connect(const char *servername, const char *port)
 	return sock;
 }
 
+int cvs_tcp_close(int sock)
+{
+	return closesocket(sock);
+}
+
 /* Remove repository prefix from displayed paths */
 const char *fn_root(const char *path)
 {
-	const char *endp,*p;
-	static char fnroot[4096]; /* Would use MAX_PATH here but Linux doesn't seem to support it */
+	const char *endp;
+	static char fnroot[MAX_PATH]; 
 
-	if(!(path && CVSroot_prefix && strlen(path)>strlen(CVSroot_prefix) && !pathncmp(path,CVSroot_prefix,strlen(CVSroot_prefix),&endp)))
-		endp=path;
-	if(atomic_commits && (p=strstr(endp,CVSCOPY))!=NULL)
+	if(!path)
+	  return NULL;
+
+	if(!current_parsed_root || !current_parsed_root->directory || !current_parsed_root->unparsed_directory)
+	  return path;
+
+	if(!pathncmp(path,current_parsed_root->directory,strlen(current_parsed_root->directory),&endp))
 	{
-		int prefix_len = p-endp;
-		memcpy(fnroot,endp,prefix_len);
-		p+=sizeof(CVSCOPY)-1;
-		strcpy(fnroot+prefix_len,p);
+		strcpy(fnroot,current_parsed_root->unparsed_directory);
+		strcat(fnroot,endp);
 		return fnroot;
 	}
-	return endp;
+	else
+		return path;
 }
 
 const char *client_where(const char *path)
 {
-#ifdef SERVER_SUPPORT
-	static char clientwhere[4096];
-
-	if(global_where && !strncmp(path,DIR_REPLACE_TAG,sizeof(DIR_REPLACE_TAG)-1))
-	{
-		strcpy(clientwhere,global_where);
-		strcat(clientwhere,path+sizeof(DIR_REPLACE_TAG)-1);
-		return clientwhere;
-	}
-	else
-#endif
 		return path;
 }
 
@@ -1556,7 +1371,7 @@ char *fullpathname(const char *name, const char **shortname)
 		path = xstrdup (name);
     else
     {
-		char *dir = xgetwd();
+		char *dir = xgetwd_mapped();
 		path = (char *) xmalloc (strlen(dir) + strlen(name) + 2);
 		sprintf (path, "%s/%s", dir, name);
 		xfree (dir);
@@ -1567,7 +1382,7 @@ char *fullpathname(const char *name, const char **shortname)
 		char *p = path;
 		*shortname = p;
 		for(;*p;p++)
-			if(isslash(*p))
+			if(ISDIRSEP(*p))
 				*shortname = p+1;
 	}
 	return path;
@@ -1600,21 +1415,147 @@ char *find_rcs_filename(const char *path)
 			break;
 		if(p)
 		{
-			sprintf(tmp,"%-*.*s/Attic/%s,v",p-path,p-path,path,p+1);
+			sprintf(tmp,"%-*.*s/Attic/%s,v",(int)(p-path),(int)(p-path),path,p+1);
 			if(isfile(tmp))
 				break;
-			sprintf(tmp,"%-*.*s/Attic/%s",p-path,p-path,path,p);
+			sprintf(tmp,"%-*.*s/Attic/%s",(int)(p-path),(int)(p-path),path,p);
 			if(isfile(tmp))
 				break;
-			sprintf(tmp,"RCS/%-*.*s/Attic/%s,v",p-path,p-path,path,p);
+			sprintf(tmp,"RCS/%-*.*s/Attic/%s,v",(int)(p-path),(int)(p-path),path,p);
 			if(isfile(tmp))
 				break;
-			sprintf(tmp,"RCS/%-*.*s/Attic/%s",p-path,p-path,path,p);
+			sprintf(tmp,"RCS/%-*.*s/Attic/%s",(int)(p-path),(int)(p-path),path,p);
 			if(isfile(tmp))
 				break;
 		}
 
 		xfree(tmp);
 	} while(0);
+
+	if(tmp)
+		tmp=normalize_path(tmp);
 	return tmp;
+}
+
+int case_isfile(char *name, char **realname)
+{
+    struct dirent *dp;
+    DIR *dirp;
+    char *dir;
+    char *fname;
+	int ret=0;
+
+    /* Separate NAME into directory DIR and filename within the directory
+       FNAME.  */
+    dir = xstrdup (name);
+    fname = strrchr (dir, '/');
+    if (fname == NULL)
+	{
+		xfree(dir);
+		dir = xstrdup(".");
+		fname = name;
+	}
+	else
+	{
+	    *fname++ = '\0';
+	}
+
+    dirp = CVS_OPENDIR (dir);
+    if (dirp == NULL)
+    {
+	    /* Give a fatal error; that way the error message can be
+	       more specific than if we returned the error to the caller.  */
+	    error (1, errno, "cannot read directory %s", dir);
+	}
+
+	errno = 0;
+    while ((dp = CVS_READDIR (dirp)) != NULL)
+    {
+		if (strcasecmp (dp->d_name, fname) == 0)
+		{
+			if(realname)
+				*realname = xstrdup(dp->d_name);
+			ret = !strcmp(dp->d_name,name);
+			break;
+		}
+    }
+
+	if(!dp)
+	{
+		if(realname)
+			*realname=NULL;
+		ret=0;
+	}
+    if (errno != 0)
+		error (1, errno, "cannot read directory %s", dir);
+
+	CVS_CLOSEDIR (dirp);
+	xfree(dir);
+	return ret;
+}
+
+int get_local_time_offset()
+{
+	time_t t;
+	struct tm l,g;
+
+	time(&t);
+	l = *localtime (&t);
+	g = *gmtime (&t);
+	return difftm (&l, &g);
+}
+
+char *xgetwd_mapped()
+{
+	char *tmp = xgetwd(),*dir;
+	if(!current_parsed_root || !current_parsed_root->mapped_directory)
+		return tmp;
+
+	if(fnncmp(tmp,current_parsed_root->mapped_directory,strlen(current_parsed_root->mapped_directory)))
+		return tmp;
+	dir = xmalloc(strlen(current_parsed_root->mapped_directory)+strlen(tmp)+2);
+	strcpy(dir,current_parsed_root->directory);
+	strcat(dir,tmp+strlen(current_parsed_root->mapped_directory));
+	xfree(tmp);
+	return dir;
+}
+
+int get_cached_password(const char *key, char *buffer, int buffer_len)
+{
+	int sock;
+
+#ifdef SERVER_SUPPORT
+	/* This should never get called on the server...  just in case */
+	if(server_active)
+		return -1;
+#endif
+	/* No song and dance.. if there's no server listening, do nothing */
+	if((sock = cvs_tcp_connect("127.0.0.1","32401", 1))<0)
+		return -1;
+	if(send(sock,key,strlen(key),0)<=0)
+	{
+		TRACE(1,"Error sending to passwd agent");
+		return -1;
+	}
+	if(recv(sock,buffer,buffer_len,0)<=0)
+	{
+		TRACE(1,"Error receiving from passwd agent");
+		return -1;
+	}
+	if(buffer[0]==-1) /* No passwd */
+	{
+		TRACE(2,"No password stored in passwd agent");
+		return -1;
+	}
+	closesocket(sock);
+	return 0;
+}
+
+const char *relative_repos(const char *directory)
+{
+	if(!strncmp(directory,current_parsed_root->directory,strlen(current_parsed_root->directory)))
+		directory+=strlen(current_parsed_root->directory);
+	if(*directory)
+		directory++;
+	return directory;
 }

@@ -33,8 +33,8 @@
  * edited by the user, if necessary (when the repository is moved, e.g.)
  */
 
-#include <assert.h>
 #include "cvs.h"
+#include "savecwd.h"
 
 static char *findslash(char *start, char *p);
 static int checkout_proc(int argc, char **argv, char *where,
@@ -48,6 +48,9 @@ extern int rcs_update_fileproc(struct file_info *finfo,
     int xbuild, int xaflag, int xprune, int xpipeout,
     int which, char *xjoin_rev1, char *xjoin_rev2,
     int xdotemplate);
+
+extern void set_global_update_options(int _merge_from_branchpoint, int _conflict_3way, int _case_sensitive, int _force_checkout_time);
+
 
 static const char *const checkout_usage[] =
 {
@@ -68,6 +71,13 @@ static const char *const checkout_usage[] =
     "\t-d dir\tCheck out into dir instead of module name.\n",
     "\t-k kopt\tUse RCS kopt -k option on checkout. (is sticky)\n",
     "\t-j rev\tMerge in changes made between current revision and rev.\n",
+	"\t-b\tPerform -j merge from branch point.\n",
+	"\t-m\tPerform -j merge from last merge point (default).\n",
+    "\t-I ign\tMore files to ignore (! to reset).\n",
+    "\t-W spec\tWrappers specification line.\n",
+    "\t-3\tProduce 3-way conflicts.\n",
+	"\t-S\tSelect between conflicting case sensitive names.\n",
+	"\t-t\tUpdate using last checkin time.\n",
     "(Specify the --help global option for a list of other help options)\n",
     NULL
 };
@@ -94,15 +104,19 @@ static int pipeout;
 static int aflag;
 static char *options = NULL;
 static char *tag = NULL;
-static int tag_validated = 0;
-static char *date = NULL;
-static char *join_rev1 = NULL;
-static char *join_rev2 = NULL;
-static int join_tags_validated = 0;
-static char *preload_update_dir = NULL;
-static char *history_name = NULL;
+static int tag_validated;
+static char *date;
+static char *join_rev1;
+static char *join_rev2;
+static int join_tags_validated;
+static char *preload_update_dir;
+static char *history_name;
 static enum mtype m_type;
 static int is_rcs;
+static int merge_from_branchpoint;
+static int conflict_3way;
+static int case_sensitive;
+static int force_checkout_time;
 
 int
 checkout (argc, argv)
@@ -137,7 +151,7 @@ checkout (argc, argv)
     else
     {
         m_type = CHECKOUT;
-	valid_options = "+ANnk:d:flRp::Qqcsr:D:j:P";
+	valid_options = "+ANnk:d:flRp::Qqcsr:D:j:PbmIW3St";
 	valid_usage = checkout_usage;
     }
 
@@ -218,6 +232,27 @@ checkout (argc, argv)
 		else
 		    join_rev1 = optarg;
 		break;
+		case 'b':
+			merge_from_branchpoint = 1;
+			break;
+		case 'm':
+			merge_from_branchpoint = 0;
+			break;
+	    case 'I':
+		ign_add (optarg, 0);
+		break;
+	    case 'W':
+		wrap_add (optarg, 0, 0);
+		break;
+		case '3':
+			conflict_3way = 1;
+			break;
+		case 'S':
+			case_sensitive = 1;
+			break;
+		case 't':
+			force_checkout_time = 1;
+			break;
 	    case '?':
 	    default:
 		usage (valid_usage);
@@ -251,21 +286,18 @@ checkout (argc, argv)
 
 #ifdef SERVER_SUPPORT
     if (server_active && where != NULL)
-	{
-		global_where = where;
-		where = xstrdup(DIR_REPLACE_TAG);
 		server_pathname_check(where);
-	}
 #endif
 
-    if (!is_rcs && !cat && !safe_location()) {
+    if (!is_rcs && !cat && !safe_location())
         error(1, 0, "Cannot check out files into the repository itself");
-    }
 
 #ifdef CLIENT_SUPPORT
     if (!is_rcs && current_parsed_root->isremote)
     {
-	int expand_modules;
+		int expand_modules;
+		struct saved_cwd co_cwd;
+		int ret;
 
 	/* We have to expand names here because the "expand-modules"
            directive to the server has the side-effect of having the
@@ -278,6 +310,44 @@ checkout (argc, argv)
 	expand_modules = (!cat && !pipeout
 			  && supported_request ("expand-modules"));
 	
+	save_cwd(&co_cwd);
+	if(where && strlen(where))
+	{
+		char *p;
+		for(p=where+strlen(where)-1; p>=where; --p)
+			if(ISDIRSEP(*p)) *p='\0';
+			else break;
+	}
+
+	if(where && (isabsolute(where) || pathname_levels(where)>0 || !strcmp(where,".")))
+	{
+		char *p,*w;
+
+		p=(char*)last_component(where);
+		if(p>where)
+		{
+			w=xstrdup(p);
+			*(p-1)='\0';
+			if(CVS_CHDIR(where))
+				error(1,errno,"Couldn't change directory to '%s'",where);
+
+			xfree(where);
+			where=w;
+		}
+
+		if(!strcmp(where,".."))
+		{
+			if(CVS_CHDIR(where))
+				error(1,errno,"Couldn't change directory to '%s'",where);
+			xfree(where);
+		} 
+		else if(!strcmp(where,".") || !strcmp(where,""))
+		{
+			xfree(where); /* This misrepresents the '.' case, which doesn't work anyway */
+		}
+	}
+
+
 	if (expand_modules)
 	{
 	    /* This is done here because we need to read responses
@@ -331,7 +401,9 @@ checkout (argc, argv)
 	}
 
 	send_to_server (m_type == EXPORT ? "export\012" : "co\012", 0);
-	return get_responses_and_close ();
+	ret = get_responses_and_close ();
+	restore_cwd(&co_cwd,NULL);
+	return ret;
     }
 #endif /* CLIENT_SUPPORT */
 
@@ -412,6 +484,8 @@ checkout (argc, argv)
 			history_name = date;
 		}
 
+		set_global_update_options(merge_from_branchpoint,conflict_3way,case_sensitive,force_checkout_time);
+
 		for (i = 0; i < argc; i++)
 		err += do_module (db, argv[i], m_type, "Updating", checkout_proc,
 				where, shorten, local, run_module_prog, !pipeout,
@@ -452,7 +526,9 @@ safe_location ()
     {
         hardpath[x] = '\0';
     }
-    current = xgetwd ();
+    current = xgetwd_mapped ();
+error(0,0,"cwd=%s ,current=%s",xgetwd(), current);
+
     if (current == NULL)
 	error (1, errno, "could not get working directory");
     hardpath_len = strlen (hardpath);
@@ -504,10 +580,6 @@ static void build_one_dir (char *repository, char *dirpath, int sticky)
     }
     else if (m_type == CHECKOUT)
     {
-	/* I suspect that this check could be omitted.  */
-	if (!isdir (repository))
-	    error (1, 0, "there is no repository %s", repository);
-
 	if (Create_Admin (".", dirpath, repository,
 			  sticky ? tag : (char *) NULL,
 			  sticky ? date : (char *) NULL,
@@ -549,6 +621,7 @@ static int checkout_proc (
     char *repository;
     char *oldupdate = NULL;
     char *where;
+	const char *mapped_repository;
 
     /*
      * OK, so we're doing the checkout! Our args are as follows: 
@@ -569,8 +642,9 @@ static int checkout_proc (
 			  + 10);
     (void) sprintf (repository, "%s/%s", current_parsed_root->directory, argv[0]);
     Sanitize_Repository_Name (repository);
+	mapped_repository = map_repository(repository);
 
-    if (! verify_read(repository,tag))
+    if (! verify_read(mapped_repository,tag))
     {
 		if(tag)
 	       error (0, 0, "User %s cannot access %s on tag/branch %s", CVS_Username, fn_root(argv[0]), tag);
@@ -943,7 +1017,7 @@ internal error: %s doesn't start with %s in checkout_proc",
 	    if (!noexec && argc > 1)
 	    {
 		/* I'm not sure whether this check is redundant.  */
-		if (!isdir (repository))
+		if (!isdir (mapped_repository))
 		    error (1, 0, "there is no repository %s", repository);
 
 		Create_Admin (".", preload_update_dir, repository,
@@ -960,7 +1034,7 @@ internal error: %s doesn't start with %s in checkout_proc",
 	    else
 	    {
 		/* I'm not sure whether this check is redundant.  */
-		if (!isdir (repository))
+		if (!isdir (mapped_repository))
 		    error (1, 0, "there is no repository %s", repository);
 
 		Create_Admin (".", preload_update_dir, repository, tag, date,
@@ -983,15 +1057,7 @@ internal error: %s doesn't start with %s in checkout_proc",
 
 	    /* get the contents of the previously existing repository */
 	    repos = Name_Repository ((char *) NULL, preload_update_dir);
-	    if (fncmp (repository, repos) != 0)
-	    {
-		error (0, 0, "existing repository %s does not match %s",
-		       repos, repository);
-		error (0, 0, "ignoring module %s", omodule);
-		xfree (repos);
-		err = 1;
-		goto out;
-	    }
+
 	    xfree (repos);
 	}
     }
@@ -1003,7 +1069,7 @@ internal error: %s doesn't start with %s in checkout_proc",
      */
     if (pipeout)
     {
-	if ( CVS_CHDIR (repository) < 0)
+	if ( CVS_CHDIR (mapped_repository) < 0)
 	{
 	    error (0, errno, "cannot chdir to %s", repository);
 	    err = 1;
@@ -1050,10 +1116,10 @@ internal error: %s doesn't start with %s in checkout_proc",
     {
 	if (m_type == CHECKOUT && !pipeout)
 	    history_write ('O', preload_update_dir, history_name, where,
-			   repository);
+			   mapped_repository);
 	else if (m_type == EXPORT && !pipeout)
 	    history_write ('E', preload_update_dir, tag ? tag : date, where,
-			   repository);
+			   mapped_repository);
 	err += do_update (0, (char **) NULL, options, tag, date,
 			  force_tag_match, 0 /* !local */ ,
 			  1 /* update -d */ , aflag, checkout_prune_dirs,
@@ -1080,22 +1146,22 @@ internal error: %s doesn't start with %s in checkout_proc",
 	    /* Shouldn't be used, so set to arbitrary value.  */
 	    finfo.update_dir = NULL;
 	    finfo.fullname = argv[i];
-	    finfo.repository = repository;
+		finfo.mapped_file = map_filename(repository, finfo.file, (const char **)&finfo.repository);
+		finfo.virtual_repository = repository;
 	    finfo.entries = entries;
 	    /* The rcs slot is needed to get the options from the RCS
                file */
-	    finfo.rcs = RCS_parse (finfo.file, repository);
+	    finfo.rcs = RCS_parse (finfo.mapped_file, finfo.repository);
 
-	    vers = Version_TS (&finfo, options, tag, date,
-			       force_tag_match, 0);
+	    vers = Version_TS (&finfo, options, tag, date, force_tag_match, 0, 0);
 	    if (vers->ts_user == NULL)
 	    {
 		line = xmalloc (strlen (finfo.file) + 15);
-		(void) sprintf (line, "Initial %s", finfo.file);
+		(void) sprintf (line, "Initial %s", fn_root(finfo.file));
 		Register (entries, finfo.file,
 			  vers->vn_rcs ? vers->vn_rcs : "0",
 			  line, vers->options, vers->tag,
-			  vers->date, (char *) 0, NULL, NULL);
+			  vers->date, (char *) 0, NULL, NULL, vers->tt_rcs);
 		xfree (line);
 	    }
 	    freevers_ts (&vers);
@@ -1108,7 +1174,7 @@ internal error: %s doesn't start with %s in checkout_proc",
     /* Don't log "export", just regular "checkouts" */
     if (m_type == CHECKOUT && !pipeout)
 	history_write ('O', preload_update_dir, history_name, where,
-		       repository);
+		       mapped_repository);
 
     /* go ahead and call update now that everything is set */
     err += do_update (argc - 1, argv + 1, options, tag, date,
@@ -1120,6 +1186,7 @@ out:
     preload_update_dir = oldupdate;
     xfree (where);
     xfree (repository);
+	xfree (mapped_repository);
     return (err);
 }
 
@@ -1127,7 +1194,7 @@ static char *findslash (char *start, char *p)
 {
     for (;;)
     {
-		if (isslash(*p)) return p;
+		if (ISDIRSEP(*p)) return p;
 		if (p == start) break;
 		--p;
     }
@@ -1173,7 +1240,7 @@ build_dirs_and_chdir (dirs, sticky)
 
     while (dirs != NULL)
     {
-	char *dir = last_component (dirs->dirpath);
+	const char *dir = last_component (dirs->dirpath);
 
 	if(!*dir && strlen(dirs->dirpath)==3 && dirs->dirpath[1]==':')
 		dir=dirs->dirpath; /* drive:/ */

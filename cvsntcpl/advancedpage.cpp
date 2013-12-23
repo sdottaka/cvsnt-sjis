@@ -4,6 +4,7 @@
 #include "stdafx.h"
 #include "cvsnt.h"
 #include "AdvancedPage.h"
+#include ".\advancedpage.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -14,9 +15,9 @@ static char THIS_FILE[] = __FILE__;
 /////////////////////////////////////////////////////////////////////////////
 // CAdvancedPage property page
 
-IMPLEMENT_DYNCREATE(CAdvancedPage, CPropertyPage)
+IMPLEMENT_DYNCREATE(CAdvancedPage, CTooltipPropertyPage)
 
-CAdvancedPage::CAdvancedPage() : CPropertyPage(CAdvancedPage::IDD)
+CAdvancedPage::CAdvancedPage() : CTooltipPropertyPage(CAdvancedPage::IDD)
 {
 	//{{AFX_DATA_INIT(CAdvancedPage)
 	//}}AFX_DATA_INIT
@@ -29,26 +30,29 @@ CAdvancedPage::~CAdvancedPage()
 
 void CAdvancedPage::DoDataExchange(CDataExchange* pDX)
 {
-	CPropertyPage::DoDataExchange(pDX);
+	CTooltipPropertyPage::DoDataExchange(pDX);
 	//{{AFX_DATA_MAP(CAdvancedPage)
 	DDX_Control(pDX, IDC_NODOMAIN, m_btNoDomain);
-	DDX_Control(pDX, IDC_NTSERVER, m_btNtServer);
 	DDX_Control(pDX, IDC_IMPERSONATE, m_btImpersonate);
 	DDX_Control(pDX, IDC_EDIT1, m_edTempDir);
+	DDX_Control(pDX, IDC_LOCKSERVER, m_edLockServer);
 	DDX_Control(pDX, IDC_ENCRYPTION, m_cbEncryption);
 	DDX_Control(pDX, IDC_COMPRESSION, m_cbCompression);
 	DDX_Control(pDX, IDC_NOREVERSEDNS, m_cbNoReverseDns);
 	DDX_Control(pDX, IDC_SPIN1, m_sbServerPort);
 	DDX_Control(pDX, IDC_SPIN2, m_sbLockPort);
+	DDX_Control(pDX, IDC_LOCKSERVERLOCAL, m_btLockServerLocal);
 	//}}AFX_DATA_MAP
+	DDX_Control(pDX, IDC_FAKEUNIX, m_btFakeUnix);
+	DDX_Control(pDX, IDC_ENABLERENAME, m_btEnableRename);
+	DDX_Control(pDX, IDC_ALLOWTRACE, m_btAllowTrace);
 }
 
 
-BEGIN_MESSAGE_MAP(CAdvancedPage, CPropertyPage)
+BEGIN_MESSAGE_MAP(CAdvancedPage, CTooltipPropertyPage)
 	//{{AFX_MSG_MAP(CAdvancedPage)
 	ON_BN_CLICKED(IDC_CHANGETEMP, OnChangetemp)
 	ON_BN_CLICKED(IDC_IMPERSONATE, OnImpersonate)
-	ON_BN_CLICKED(IDC_NTSERVER, OnNtserver)
 	ON_EN_CHANGE(IDC_PSERVERPORT, OnChangePserverport)
 	ON_EN_CHANGE(IDC_LOCKSERVERPORT, OnChangeLockserverport)
 	ON_BN_CLICKED(IDC_NODOMAIN, OnNodomain)
@@ -56,6 +60,8 @@ BEGIN_MESSAGE_MAP(CAdvancedPage, CPropertyPage)
 	ON_CBN_SELENDOK(IDC_COMPRESSION, OnCbnSelendokCompression)
 	ON_BN_CLICKED(IDC_NOREVERSEDNS, OnBnClickedNoreversedns)
 	//}}AFX_MSG_MAP
+	ON_BN_CLICKED(IDC_FAKEUNIX, OnBnClickedFakeunix)
+	ON_BN_CLICKED(IDC_ENABLERENAME, OnBnClickedEnablerename)
 END_MESSAGE_MAP()
 
 /////////////////////////////////////////////////////////////////////////////
@@ -68,7 +74,7 @@ BOOL CAdvancedPage::OnInitDialog()
 	DWORD bufLen;
 	DWORD dwType;
 
-	CPropertyPage::OnInitDialog();
+	CTooltipPropertyPage::OnInitDialog();
 	
 	if(!m_hServerKey && RegCreateKeyEx(HKEY_LOCAL_MACHINE,_T("Software\\CVS\\Pserver"),NULL,_T(""),REG_OPTION_NON_VOLATILE,KEY_ALL_ACCESS,NULL,&m_hServerKey,NULL))
 	{ 
@@ -76,12 +82,29 @@ BOOL CAdvancedPage::OnInitDialog()
 		return -1;
 	}
 	
-	m_btNtServer.SetCheck((t=QueryDword(_T("StartNtServer")))>=0?t:1);
 	m_btImpersonate.SetCheck((t=QueryDword(_T("Impersonation")))>=0?t:1);
 	m_btNoDomain.SetCheck((t=QueryDword(_T("DontUseDomain")))>=0?t:0);
 	m_cbNoReverseDns.SetCheck((t=QueryDword(_T("NoReverseDns")))>=0?t:0);
+	m_btLockServerLocal.SetCheck((t=QueryDword(_T("LockServerLocal")))>=0?t:1);
+	m_btFakeUnix.SetCheck((t=QueryDword(_T("FakeUnixCvs")))>=0?t:0);
+	m_btEnableRename.SetCheck((t=QueryDword(_T("EnableRename")))>=0?t:0);
+	m_btAllowTrace.SetCheck((t=QueryDword(_T("AllowTrace")))>=0?t:0);
 	SetDlgItemInt(IDC_PSERVERPORT,(t=QueryDword(_T("PServerPort")))>=0?t:2401,FALSE);
-	SetDlgItemInt(IDC_LOCKSERVERPORT,(t=QueryDword(_T("LockServerPort")))>=0?t:2402,FALSE);
+	bufLen=sizeof(buf);
+	if(RegQueryValueEx(m_hServerKey,_T("LockServer"),NULL,&dwType,buf,&bufLen))
+	{
+		SetDlgItemText(IDC_LOCKSERVER,_T("localhost"));
+		SetDlgItemInt(IDC_LOCKSERVERPORT,(t=QueryDword(_T("LockServerPort")))>=0?t:2402,FALSE);
+	}
+	else
+	{
+		RegDeleteValue(m_hServerKey,_T("LockServerPort"));
+		TCHAR *p=_tcschr((TCHAR*)buf,':');
+		if(p)
+			*p='\0';
+		m_edLockServer.SetWindowText((LPCTSTR)buf);
+		SetDlgItemInt(IDC_LOCKSERVERPORT,p?_tstoi(p+1):2402,FALSE);
+	}
 
 	SendDlgItemMessage(IDC_PSERVERPORT,EM_LIMITTEXT,4);
 	SendDlgItemMessage(IDC_LOCKSERVERPORT,EM_LIMITTEXT,4);
@@ -151,11 +174,6 @@ BOOL CAdvancedPage::OnApply()
 	DWORD dwVal;
 	TCHAR fn[MAX_PATH];
 
-	dwVal=m_btNtServer.GetCheck()?1:0;
-
-	if(RegSetValueEx(m_hServerKey,_T("StartNTServer"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
-		AfxMessageBox(_T("RegSetValueEx failed"),MB_ICONSTOP);
-
 	dwVal=m_btImpersonate.GetCheck()?1:0;
 
 	if(RegSetValueEx(m_hServerKey,_T("Impersonation"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
@@ -171,18 +189,39 @@ BOOL CAdvancedPage::OnApply()
 	if(RegSetValueEx(m_hServerKey,_T("NoReverseDns"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
 		AfxMessageBox(_T("RegSetValueEx failed"),MB_ICONSTOP);
 
+	dwVal=m_btLockServerLocal.GetCheck()?1:0;
+
+	if(RegSetValueEx(m_hServerKey,_T("LockServerLocal"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
+		AfxMessageBox(_T("RegSetValueEx failed"),MB_ICONSTOP);
+
+	dwVal=m_btFakeUnix.GetCheck()?1:0;
+
+	if(RegSetValueEx(m_hServerKey,_T("FakeUnixCvs"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
+		AfxMessageBox(_T("RegSetValueEx failed"),MB_ICONSTOP);
+
+	dwVal=m_btEnableRename.GetCheck()?1:0;
+
+	if(RegSetValueEx(m_hServerKey,_T("EnableRename"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
+		AfxMessageBox(_T("RegSetValueEx failed"),MB_ICONSTOP);
+
+	dwVal=m_btAllowTrace.GetCheck()?1:0;
+
+	if(RegSetValueEx(m_hServerKey,_T("AllowTrace"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
+		AfxMessageBox(_T("RegSetValueEx failed"),MB_ICONSTOP);
+
 	dwVal = GetDlgItemInt(IDC_PSERVERPORT,NULL,FALSE);
 	if(RegSetValueEx(m_hServerKey,_T("PServerPort"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
 		AfxMessageBox(_T("RegSetValueEx failed"),MB_ICONSTOP);
 
+	m_edLockServer.GetWindowText(fn,sizeof(fn)-8);
 	dwVal = GetDlgItemInt(IDC_LOCKSERVERPORT,NULL,FALSE);
-	if(RegSetValueEx(m_hServerKey,_T("LockServerPort"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
+	_sntprintf(fn+_tcslen(fn),8,_T(":%d"),dwVal);
+	if(RegSetValueEx(m_hServerKey,_T("LockServer"),NULL,REG_SZ,(BYTE*)fn,(_tcslen(fn)+1)*sizeof(TCHAR)))
 		AfxMessageBox(_T("RegSetValueEx failed"),MB_ICONSTOP);
 
 	m_edTempDir.GetWindowText(fn,sizeof(fn));
 	if(RegSetValueEx(m_hServerKey,_T("TempDir"),NULL,REG_SZ,(BYTE*)fn,(_tcslen(fn)+1)*sizeof(TCHAR)))
 		AfxMessageBox(_T("RegSetValueEx failed"),MB_ICONSTOP);
-
 
 	dwVal = m_cbCompression.GetItemData(m_cbCompression.GetCurSel());
 	if(RegSetValueEx(m_hServerKey,_T("CompressionLevel"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
@@ -192,7 +231,7 @@ BOOL CAdvancedPage::OnApply()
 	if(RegSetValueEx(m_hServerKey,_T("EncryptionLevel"),NULL,REG_DWORD,(BYTE*)&dwVal,sizeof(DWORD)))
 		AfxMessageBox(_T("RegSetValueEx failed"),MB_ICONSTOP);
 
-	return CPropertyPage::OnApply();
+	return CTooltipPropertyPage::OnApply();
 }
 
 DWORD CAdvancedPage::QueryDword(LPCTSTR szKey)
@@ -208,11 +247,6 @@ DWORD CAdvancedPage::QueryDword(LPCTSTR szKey)
 }
 
 void CAdvancedPage::OnImpersonate() 
-{
-	SetModified();
-}
-
-void CAdvancedPage::OnNtserver() 
 {
 	SetModified();
 }
@@ -244,6 +278,16 @@ void CAdvancedPage::OnCbnSelendokCompression()
 }
 
 void CAdvancedPage::OnBnClickedNoreversedns()
+{
+	SetModified();
+}
+
+void CAdvancedPage::OnBnClickedFakeunix()
+{
+	SetModified();
+}
+
+void CAdvancedPage::OnBnClickedEnablerename()
 {
 	SetModified();
 }

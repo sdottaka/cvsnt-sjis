@@ -24,7 +24,9 @@
 # be unecessary now.  Should look more deeply into this
 #
 # $(includeopt) is CVS specific and set by configure
-INCLUDES = -I$(top_srcdir)/src $(includeopt)
+AM_CPPFLAGS = -I$(top_srcdir)/src $(includeopt)
+AM_CFLAGS = -DCVS_CONFIG_DIR=\"$(cvs_config_dir)\" -DCVS_LIBRARY_DIR=\"$(cvs_library_dir)\"
+
 
 noinst_LIBRARIES = libcvs.a
 
@@ -40,23 +42,15 @@ noinst_LIBRARIES = libcvs.a
 # matching?)
 libcvs_a_SOURCES = \
 	argmatch.c \
-	ftruncate.c \
 	getdate.y \
-	getline.c \
-	getopt.c \
-	getopt1.c \
 	md5.c \
-	regex.c \
 	savecwd.c \
 	sighandle.c \
 	stripslash.c \
 	xgetwd.c \
 	yesno.c \
-	getline.h \
-	getopt.h \
 	fnmatch.h \
 	md5.h \
-	regex.h \
 	savecwd.h \
 	system.h \
 	wait.h \

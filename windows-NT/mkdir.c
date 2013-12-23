@@ -1,8 +1,6 @@
 /* mkdir.c --- mkdir for Windows NT
    Jim Blandy <jimb@cyclic.com> --- July 1995  */
 
-#include <assert.h>
-
 #include "cvs.h"
 
 int

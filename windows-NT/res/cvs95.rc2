@@ -10,6 +10,8 @@
 
 /////////////////////////////////////////////////////////////////////////////
 
+#include "..\cvsservice\ServiceMsg.rc"
+
 #define PROJECTNAME "cvs95"
 #define PROJECTDESCRIPTION "cvsnt Windows 95 Compatible version"
 #define PROJECTFILENAME "cvs95.exe"

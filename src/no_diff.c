@@ -16,16 +16,12 @@
 
 #include "cvs.h"
 
-int
-No_Difference (finfo, vers)
-    struct file_info *finfo;
-    Vers_TS *vers;
+int No_Difference (struct file_info *finfo, Vers_TS *vers)
 {
     Node *p;
     int ret;
     char *ts, *options;
     int retcode = 0;
-    char *tocvsPath;
 
     /* If ts_user is "Is-modified", we can only conclude the files are
        different (since we don't have the file's contents).  */
@@ -41,16 +37,15 @@ No_Difference (finfo, vers)
     else
 	options = xstrdup ("");
 
-    tocvsPath = wrap_tocvs_process_file (finfo->file);
     retcode = RCS_cmp_file (vers->srcfile, vers->vn_user, options,
-			    tocvsPath == NULL ? finfo->file : tocvsPath);
+			    finfo->file);
     if (retcode == 0)
     {
 	/* no difference was found, so fix the entries file */
-	ts = time_stamp (finfo->file);
+	ts = time_stamp (finfo->file, 0);
 	Register (finfo->entries, finfo->file,
 		  vers->vn_user ? vers->vn_user : vers->vn_rcs, ts,
-		  options, vers->tag, vers->date, (char *) 0, NULL, NULL);
+		  options, vers->tag, vers->date, (char *) 0, NULL, NULL, vers->tt_rcs);
 #ifdef SERVER_SUPPORT
 	if (server_active)
 	{
@@ -69,15 +64,6 @@ No_Difference (finfo, vers)
     }
     else
 	ret = 1;			/* files were really different */
-
-    if (tocvsPath)
-    {
-	/* Need to call unlink myself because the noexec variable
-	 * has been set to 1.  */
-	TRACE(1,"unlink(%s)",tocvsPath);
-	if ( CVS_UNLINK (tocvsPath) < 0)
-	    error (0, errno, "could not remove %s", tocvsPath);
-    }
 
     xfree (options);
     return (ret);

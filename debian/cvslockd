@@ -1,0 +1,32 @@
+#! /bin/sh
+
+FLAGS="defaults 23"
+DAEMON=/usr/local/bin/cvslockd
+
+#test -f /usr/bin/cvs || exit 0
+
+case "$1" in
+	start)
+		echo -n "Starting CVS Lock server: cvslockd"
+  		start-stop-daemon --start --quiet --exec $DAEMON
+		echo "."
+  		;;
+	stop)
+		echo -n "Stopping CVS Lock server: cvslockd"
+  		start-stop-daemon --stop --quiet --exec $DAEMON
+		echo "."
+  		;;
+	restart|force-reload)
+		echo -n "Restarting CVS Lock server: cvslockd... "
+  		start-stop-daemon --stop --quiet --exec $DAEMON
+  		sleep 2
+  		start-stop-daemon --start --quiet --exec $DAEMON
+		echo "done."
+  		;;
+	*)
+  		echo "Usage: /etc/init.d/cvslockd {start|stop|restart|force-reload}"
+  		exit 1
+		;;
+esac
+
+exit 0

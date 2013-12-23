@@ -40,7 +40,7 @@ extern void server_pathname_check();
 
 /* We have a new Entries line for a file.  TAG or DATE can be NULL.  */
 void server_register(char *name, char *version,  char *timestamp, char *options, char *tag,
-    char *date, char *conflict, char *merge_from_tag_1, char *merge_from_tag_2);
+    char *date, char *conflict, const char *merge_from_tag_1, const char *merge_from_tag_2, time_t rcs_timestamp);
 
 /* Set the modification time of the next file sent.  This must be
    followed by a call to server_updated on the same file.  */
@@ -91,7 +91,13 @@ enum server_updated_arg4
 struct buffer;
 #endif
 
-extern void server_updated();
+void server_updated (
+    struct file_info *finfo,
+    Vers_TS *vers,
+    enum server_updated_arg4 updated,
+    mode_t mode,
+    unsigned char *checksum,
+    struct buffer *filebuf);
 
 /* Whether we should send RCS format patches.  */
 extern int server_use_rcs_diff();
@@ -102,7 +108,7 @@ extern void server_set_entstat();
 extern void server_clear_entstat();
 
 /* Set or clear a per-directory sticky tag or date.  */
-extern void server_set_sticky();
+void server_set_sticky (const char *update_dir, const char *repository, const char *tag, const char *date, int nonbranch, const char *version);
 /* Send Template response.  */
 extern void server_template();
 
@@ -163,8 +169,6 @@ struct request
   /* This is a server request.  The client never sends it */
 #define RQ_SERVER_REQUEST 16
 
- /* This command may be sent cleartext on an encrypted connection. */
-#define RQ_UNENCRYPTED 32
 };
 
 /* Table of requests ending with an entry with a NULL name.  */
@@ -172,6 +176,15 @@ extern struct request requests[];
 
 /* initializes the protocol_requests table */
 void initialize_protocol_requests();
+
+char *normalise_options(const char *options, int quiet, const char *file);
+
+#ifdef SERVER_SUPPORT
+int send_rename_to_client(const char *oldfile, const char *newfile);
+int server_rename_file(const char *oldfile, const char *newfile);
+int client_can_rename();
+int reset_client_mapping(const char *update_dir, const char *repository);
+#endif
 
 #endif
 

@@ -1,10 +1,10 @@
 /* waitpid.c --- waiting for process termination, under Windows NT
    Jim Blandy <jimb@cyclic.com> --- August 1995  */
 
-#include <assert.h>
 #include <stdio.h>
 #include <process.h>
 #include <errno.h>
+#include <assert.h>
 
 #include "config.h"
 

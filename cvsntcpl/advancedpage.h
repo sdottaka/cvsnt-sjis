@@ -9,10 +9,11 @@
 // AdvancedPage.h : header file
 //
 
+#include "TooltipPropertyPage.h"
 /////////////////////////////////////////////////////////////////////////////
 // CAdvancedPage dialog
 
-class CAdvancedPage : public CPropertyPage
+class CAdvancedPage : public CTooltipPropertyPage
 {
 	DECLARE_DYNCREATE(CAdvancedPage)
 
@@ -29,14 +30,15 @@ public:
 	//{{AFX_DATA(CAdvancedPage)
 	enum { IDD = IDD_PAGE2 };
 	CButton	m_btNoDomain;
-	CButton	m_btNtServer;
 	CButton	m_btImpersonate;
 	CEdit	m_edTempDir;
+	CEdit	m_edLockServer;
 	CComboBox m_cbEncryption;
 	CComboBox m_cbCompression;
 	CButton m_cbNoReverseDns;
 	CSpinButtonCtrl m_sbServerPort;
 	CSpinButtonCtrl m_sbLockPort;
+	CButton m_btLockServerLocal;
 	//}}AFX_DATA
 
 
@@ -56,7 +58,6 @@ protected:
 	afx_msg void OnChangetemp();
 	virtual BOOL OnInitDialog();
 	afx_msg void OnImpersonate();
-	afx_msg void OnNtserver();
 	afx_msg void OnChangePserverport();
 	afx_msg void OnChangeLockserverport();
 	afx_msg void OnNodomain();
@@ -65,6 +66,12 @@ protected:
 	afx_msg void OnBnClickedNoreversedns();
 	//}}AFX_MSG
 	DECLARE_MESSAGE_MAP()
+public:
+	CButton m_btFakeUnix;
+	afx_msg void OnBnClickedFakeunix();
+	afx_msg void OnBnClickedEnablerename();
+	CButton m_btEnableRename;
+	CButton m_btAllowTrace;
 };
 
 //{{AFX_INSERT_LOCATION}}

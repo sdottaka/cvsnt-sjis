@@ -177,6 +177,15 @@ library_callback *open_infolibrary(const char *filter)
 	char *copy;
 	char *q=copy=xstrdup(filter+1);
 	int quote=0;
+
+	/* We do this here so it's done before the CRT in the DLL/COM object initialises */
+	if(server_io_socket)
+	{
+		SetStdHandle(STD_INPUT_HANDLE,(HANDLE)_get_osfhandle(server_io_socket));
+		SetStdHandle(STD_OUTPUT_HANDLE,(HANDLE)_get_osfhandle(server_io_socket));
+		SetStdHandle(STD_ERROR_HANDLE,(HANDLE)_get_osfhandle(server_io_socket));
+	}
+
 	while(*p && (quote || !isspace(*p)))
 	{
 		if(!quote && (*p=='"' || *p=='\'' || *p=='\\'))
@@ -251,7 +260,7 @@ library_callback *open_infolibrary(const char *filter)
 #endif
 	if(filter[0]=='@')
 	{
-		HMODULE hLib = LoadLibrary(copy);
+		HMODULE hLib = LoadLibraryA(copy);
 		if(!hLib)
 			return NULL;
 		CVSINFOPROC pCvsInfo = (CVSINFOPROC)GetProcAddress(hLib,"GetCvsInfo");

@@ -12,7 +12,6 @@
  *
  */
 
-#include <assert.h>
 #include "cvs.h"
 #include "library.h"
 #include "config.h"
@@ -61,10 +60,12 @@ int cvswrite = !CVSREAD_DFLT;
 int really_quiet = 0;
 int quiet = 0;
 int trace = 0;
+int allow_trace = 0;
 int noexec = 0;
-int logoff = 0;
 int atomic_commits = 0;
 int no_reverse_dns = 0;
+int server_io_socket = 0;
+int force_network_share = 0;
 
 #ifdef SERVER_SUPPORT
 /* This is set to request/force encryption/compression */
@@ -72,6 +73,7 @@ int no_reverse_dns = 0;
 extern int encryption_level; 
 /* 0=Any, 1=Request compr., 2=Require compr. */
 extern int compression_level;
+
 #endif
 
 /* Set if we should be writing CVSADM directories at top level.  At
@@ -154,7 +156,7 @@ static const struct cmd
     { "history",  "hi",       "his",       history,   CVS_CMD_USES_WORK_DIR },
     { "import",   "im",       "imp",       import,    CVS_CMD_MODIFIES_REPOSITORY | CVS_CMD_USES_WORK_DIR | CVS_CMD_IGNORE_ADMROOT},
     { "init",     NULL,       NULL,        init,      CVS_CMD_MODIFIES_REPOSITORY },
-	{ "info",	  "inf",	  NULL,		   info,	  CVS_CMD_NO_ROOT_NEEDED },
+	{ "info",	  "inf",	  NULL,		   info, CVS_CMD_NO_CONNECT|CVS_CMD_OPTIONAL_ROOT  },
     { "log",      "lo",       NULL,        cvslog,    CVS_CMD_USES_WORK_DIR },
 #ifdef CLIENT_SUPPORT
     { "login",    "logon",    "lgn",       login,     CVS_CMD_NO_CONNECT },
@@ -167,6 +169,7 @@ static const struct cmd
     { "rdiff",    "patch",    "pa",        patch,     0 },
     { "release",  "re",       "rel",       release,   0 },
     { "remove",   "rm",       "delete",    cvsremove, CVS_CMD_MODIFIES_REPOSITORY | CVS_CMD_USES_WORK_DIR },
+	{ "rename",	  "ren",	  "mv",		   cvsrename, CVS_CMD_MODIFIES_REPOSITORY | CVS_CMD_USES_WORK_DIR },
 	{ "rcsfile",  NULL,		  NULL,		   cvsrcs,	  CVS_CMD_NO_ROOT_NEEDED },
     { "rlog",     "rl",       NULL,        cvslog,    0 },
     { "rtag",     "rt",       "rfreeze",   cvstag,    CVS_CMD_MODIFIES_REPOSITORY },
@@ -261,6 +264,7 @@ static const char *const cmd_usage[] =
     "        rdiff        Create 'patch' format diffs between releases\n",
     "        release      Indicate that a Module is no longer in use\n",
     "        remove       Remove an entry from the repository\n",
+	"        rename       Rename a file or directory\n",
     "        rlog         Print out history information for a module\n",
     "        rtag         Add a symbolic tag to a module\n",
 #ifdef SERVER_SUPPORT
@@ -281,13 +285,11 @@ static const char *const opt_usage[] =
 {
     /* Omit -b because it is just for compatibility.  */
     "CVS global options (specified before the command name) are:\n",
-    "    -D prefix       Adds a prefix to CVSROOT\n",
     "    -H              Displays usage information for command.\n",
     "    -Q              Cause CVS to be really quiet.\n",
     "    -q              Cause CVS to be somewhat quiet.\n",
     "    -r              Make checked-out files read-only.\n",
     "    -w              Make checked-out files read-write (default).\n",
-    "    -l              Turn history logging off.\n",
     "    -n              Do not execute anything that will change the disk.\n",
     "    -t              Show trace of program execution (repeat for more verbosity) -- try with -n.\n",
     "    -v              CVS version and copyright.\n",
@@ -295,11 +297,13 @@ static const char *const opt_usage[] =
     "    -e editor       Use 'editor' for editing log information.\n",
     "    -d CVS_root     Overrides $CVSROOT as the root of the CVS tree.\n",
     "    -f              Do not use the ~/.cvsrc file.\n",
+	"    -F file         Read command arguments from file.\n",
 #ifdef CLIENT_SUPPORT
     "    -z #            Use compression level '#' for net traffic.\n",
     "    -x              Encrypt all net traffic (fail if not encrypted).\n",
     "    -y              Encrypt all net traffic (if supported by protocol).\n",
 	"    -a              Authenticate all net traffic.\n",
+	"	 -N				 Supress network share error.\n",
 #endif
     "    -s VAR=VAL      Set CVS user variable.\n",
 	"\n",
@@ -311,6 +315,34 @@ static const char *const opt_usage[] =
     NULL
 };
 
+static void append_args(const char *file, int *argc, char ***argv)
+{
+	FILE *f = fopen(file,"r");
+	char **newargv;
+	int newargc;
+	char *buf;
+	int buflen;
+
+	if(!f)
+		error(1,errno,"Couldn't open args file %s",file);
+	fseek(f,0,SEEK_END);
+	buflen = ftell(f);
+	fseek(f,0,SEEK_SET);
+	buf = (char*)xmalloc(buflen+1);
+	buf[buflen]='\0';
+	if(fread(buf,1,buflen,f)!=buflen)
+		error(1,errno,"Couldn't read args file %s",file);
+
+	line2argv(&newargc,&newargv,buf," \t\r\n");
+
+	newargv=(char**)xrealloc(newargv,sizeof(char*)*(newargc+(*argc)));
+	memmove(newargv+(*argc),newargv,sizeof(char*)*newargc);
+	memcpy(newargv,*argv,sizeof(char*)*(*argc));
+	newargc+=(*argc);
+	*argc=newargc;
+	*argv=newargv;
+	xfree(buf);
+}
 
 static int
 set_root_directory (p, ignored)
@@ -452,11 +484,8 @@ static void winUseDosLineFeed(int useDos)
 void read_global_server_config(void)
 {
 	char token[1024];
-	char buffer[1024];
+	char buffer[MAX_PATH],buffer2[MAX_PATH];
 	int n;
-
-	if(!get_global_config_data("PServer","RepositoryPrefix",buffer,sizeof(buffer)))
-		CVSroot_prefix = xstrdup(buffer);
 
 	if(!get_global_config_data("PServer","EncryptionLevel",buffer,sizeof(buffer)))
 		encryption_level = atoi(buffer);
@@ -467,20 +496,47 @@ void read_global_server_config(void)
 	if(!get_global_config_data("PServer","NoReverseDns",buffer,sizeof(buffer)))
 		no_reverse_dns = atoi(buffer);
 
-	if(CVSroot_prefix && isslash(CVSroot_prefix[strlen(CVSroot_prefix)-1]))
-		CVSroot_prefix[strlen(CVSroot_prefix)-1]='\0';
+	if(!get_global_config_data("PServer","FakeUnixCvs",buffer,sizeof(buffer)))
+		fake_unix_cvs = atoi(buffer);
+
+	if(!get_global_config_data("PServer","LockServer",buffer,sizeof(buffer)))
+	{
+		xfree(lock_server);
+		if(strcasecmp(buffer,"none"))
+			lock_server = xstrdup(buffer);
+		else
+			lock_server = NULL;
+	}
+	else
+		lock_server = xstrdup("127.0.0.1:2402");
+
+	if(!get_global_config_data("PServer","EnableRename",buffer,sizeof(buffer)))
+		can_rename = atoi(buffer);
+	
+	if(!get_global_config_data("PServer","Chroot",buffer,sizeof(buffer)))
+		chroot_base = xstrdup(buffer);
+
+	if(!get_global_config_data("PServer","RunAsUser",buffer,sizeof(buffer)))
+		runas_user = xstrdup(buffer);
+
+	if(!get_global_config_data("PServer","AllowTrace",buffer,sizeof(buffer)))
+		allow_trace = atoi(buffer);
 
 	n=0;
 	while(!enum_global_config_data("PServer",n++,token,sizeof(token),buffer,sizeof(buffer)))
 	{
-		if(!strncasecmp(token,"Repository",10) && strcasecmp(token,"RepositoryPrefix"))
+		if(!strncasecmp(token,"Repository",10) && isdigit(token[10]) && strcasecmp(token+strlen(token)-4,"Name"))
 		{
-			const char *endp;
-			if(*buffer && isslash(buffer[strlen(buffer)-1]))
+			char tmp[32];
+			int prefixnum = atoi(token+10);
+			snprintf(tmp,sizeof(tmp),"Repository%dName",prefixnum);
+			if(get_global_config_data("PServer",tmp,buffer2,sizeof(buffer2)))
+				strcpy(buffer2,buffer);
+			if(*buffer && ISDIRSEP(buffer[strlen(buffer)-1]))
 				buffer[strlen(buffer)-1]='\0';
-			endp = buffer;
-			if(*buffer && (!CVSroot_prefix || (strlen(buffer)>strlen(CVSroot_prefix) && !pathncmp(buffer,CVSroot_prefix,strlen(CVSroot_prefix),&endp))))
-				root_allow_add((char*)endp);
+			if(*buffer2 && ISDIRSEP(buffer2[strlen(buffer2)-1]))
+				buffer[strlen(buffer)-1]='\0';
+			root_allow_add(buffer,buffer2);
 		}
 	}
 }
@@ -489,14 +545,10 @@ void read_global_server_config(void)
 /* Calculate the cvs global session ID */
 static void make_session_id()
 {
-	sprintf(global_session_id,"%x%08x%04x",(int)getpid(),time(NULL),rand()&0xFFFF);
+	sprintf(global_session_id,"%x%08lx%04x",(int)getpid(),(long)time(NULL),rand()&0xFFFF);
 }
 
-#if defined(_UNICODE) && !defined(CVSGUI_PIPE)
-int real_main (int argc, char **argv)
-#else
 int main (int argc, char **argv)
-#endif
 {
     char *CVSroot = CVSROOT_DFLT;
     char *cp, *end;
@@ -507,11 +559,13 @@ int main (int argc, char **argv)
     int free_Editor = 0;
     int free_Tmpdir = 0;
 	int testserver = 0;
+	char *append_file = NULL;
+    int seen_root;
 
     int help = 0;		/* Has the user asked for help?  This
 				   lets us support the `cvs -H cmd'
 				   convention to give help for cmd. */
-    static const char short_options[] = "+Qqrwtnlvb:T:e:d:D:Hfz:s:axy";
+	static const char short_options[] = "+Qqrwtnlvb:T:e:d:HfF:z:s:axyN";
     static struct option long_options[] =
     {
 		{"help", 0, NULL, 'H'},
@@ -528,6 +582,9 @@ int main (int argc, char **argv)
 #endif
 #if defined(SERVER_SUPPORT)
 		{"testserver", 0, NULL, 7 },
+#endif
+#if defined(WIN32) && defined(SERVER_SUPPORT)
+		{"win32_socket_io", required_argument, NULL, 8 },
 #endif
         {0, 0, 0, 0}
     };
@@ -562,7 +619,7 @@ int main (int argc, char **argv)
        which the user types to invoke the program.  */
     program_name = "cvs";
 #else
-    program_name = last_component (argv[0]);
+    program_name = (char*)last_component (argv[0]);
 #ifdef _WIN32
 	if(strlen(program_name)>4 && !stricmp(program_name+strlen(program_name)-4,".exe"))
 		program_name[strlen(program_name)-4]='\0';
@@ -635,6 +692,16 @@ int main (int argc, char **argv)
     {
 	switch (c)
 	{
+#if defined(WIN32) && defined(SERVER_SUPPORT)
+	case 8:
+		/* --win32-socket-io */
+		{
+			long l;
+			sscanf(optarg,"%ld",&l);
+			server_io_socket=win32_makepipe(l);
+		}
+		break;
+#endif
 #if defined(WIN32) && defined(CVSGUI)
             case 5:
 	        /* --crlf */
@@ -663,8 +730,15 @@ int main (int argc, char **argv)
 		usage (opt_usage);
 		break;
 	    case 3:
-		/* --allow-root */
-		root_allow_add (optarg);
+		{
+			/* --allow-root */
+			char *p = strchr(optarg,',');
+			if(p)
+				*(p++)='\0';
+			else
+				p=optarg;
+			root_allow_add (optarg,p);
+		}
 		break;
 	    case 'Q':
 		really_quiet = 1;
@@ -683,8 +757,12 @@ int main (int argc, char **argv)
 		break;
 	    case 'n':
 		noexec = 1;
-	    case 'l':			/* Fall through */
-		logoff = 1;
+		break;
+		case 'N':
+		force_network_share = 1;
+		break;
+	    case 'l':
+		/* Ignore global -l */
 		break;
 	    case 'v':
 		printf ("\n");
@@ -694,7 +772,7 @@ int main (int argc, char **argv)
 		printf ("\
 Copyright (c) 1989-2001 Brian Berliner, david d `zoo' zuhn, \n\
                         Jeff Polk, and other authors\n");
- 		printf ("CVSNT version ("__DATE__") Copyright (c) 1999-2003 Tony Hoyle and others\n");
+ 		printf ("CVSNT version ("__DATE__") Copyright (c) 1999-2004 Tony Hoyle and others\n");
 		printf ("see http://www.cvsnt.org\n",stdout);
 		printf ("\n");
 		printf ("CVS may be copied only under the terms of the GNU General Public License,\n");
@@ -739,15 +817,15 @@ Copyright (c) 1989-2001 Brian Berliner, david d `zoo' zuhn, \n\
 		free_CVSroot = 1;
 		cvs_update_env = 1;	/* need to update environment */
 		break;
-	    case 'D':
-		CVSroot_prefix = xstrdup(optarg);
-		break;
 	    case 'H':
 	        help = 1;
 		break;
             case 'f':
 		use_cvsrc = 0; /* unnecessary, since we've done it above */
 		break;
+		case 'F':
+			append_file = xstrdup(optarg);
+			break;
 	    case 'z':
 #ifdef CLIENT_SUPPORT
 		gzip_level = atoi (optarg);
@@ -806,13 +884,17 @@ Copyright (c) 1989-2001 Brian Berliner, david d `zoo' zuhn, \n\
 
     argc -= optind;
     argv += optind;
+
+	if(append_file)
+		append_args(append_file,&argc,&argv);
+
     if (argc < 1)
 		usage (usg);
 
 	make_session_id(); /* Calculate the cvs global session ID */
 
 	TRACE(1,"Tracelevel set to %d.  PID is %d",trace,(int)getpid());
-	TRACE(1,"Session ID is %s",global_session_id);
+	TRACE(1,"Session ID is %s",PATCH_NULL(global_session_id));
 
     /* Look up the command name. */
 
@@ -871,7 +953,9 @@ Copyright (c) 1989-2001 Brian Berliner, david d `zoo' zuhn, \n\
 
 #ifdef SERVER_SUPPORT
 	server_active = strcmp (command_name, "server") == 0;
-
+	
+	if(server_active)
+		lock_server = xstrdup("127.0.0.1:2402"); /* default lockserver */
 	if(server_active)
 	{
 		struct sockaddr_storage ss = {0};
@@ -886,7 +970,7 @@ Copyright (c) 1989-2001 Brian Berliner, david d `zoo' zuhn, \n\
 		  flags = 0;
 
 #ifdef _WIN32
-		if(!getpeername(_get_osfhandle(0),(struct sockaddr*)&ss,&ss_len))
+		if(!getpeername(_get_osfhandle(server_io_socket),(struct sockaddr*)&ss,&ss_len))
 #else
 		if(!getpeername(0,(struct sockaddr*)&ss,&ss_len))
 #endif
@@ -903,19 +987,22 @@ Copyright (c) 1989-2001 Brian Berliner, david d `zoo' zuhn, \n\
 	}
 #endif
 
-#if defined(_WIN32)
+#if defined(_WIN32) && defined(SERVER_SUPPORT)
 	if(server_active)
 	{
 		_fmode = _O_BINARY; /* In Win32 server pretend we are unix by setting the default to binary */
 		/* we must assume that the connection is expected to be binary. */
-		fflush(stdout);
-		fflush(stdin);
-		fflush(stderr);
-		if(!testserver)
+		if(!server_io_socket)
 		{
-			SET_BINARY_MODE(stdout);
-			SET_BINARY_MODE(stdin);
-			SET_BINARY_MODE(stderr);
+			fflush(stdout);
+			fflush(stdin);
+			fflush(stderr);
+			if(!testserver)
+			{
+				SET_BINARY_MODE(stdout);
+				SET_BINARY_MODE(stdin);
+				SET_BINARY_MODE(stderr);
+			}
 		}
 	}
 #endif
@@ -926,7 +1013,7 @@ Copyright (c) 1989-2001 Brian Berliner, david d `zoo' zuhn, \n\
 	   it is worth the trouble.  */
 
 	if (server_active)
-	    CurDir = xstrdup ("<remote>");
+		CurDir = xstrdup (remote_host_name?remote_host_name:"<remote>");
 	else
 	{
 	    CurDir = xgetwd ();
@@ -979,9 +1066,7 @@ Copyright (c) 1989-2001 Brian Berliner, david d `zoo' zuhn, \n\
 	    /* Gets username and password from client, authenticates, then
 	       switches to run as that user and sends an ACK back to the
 	       client. */
-		server_active = 0; /* FIXME: server_active is set too early */
 	    server_authenticate_connection ();
-		server_active = 1;
     }
 #endif
 	if(!CVS_Username)
@@ -1023,6 +1108,7 @@ Copyright (c) 1989-2001 Brian Berliner, david d `zoo' zuhn, \n\
 		{
 		    CVSroot = CVSADM_Root;
 		    cvs_update_env = 1;	/* need to update environment */
+			free_CVSroot = 1;
 		}
 	    }
 
@@ -1032,7 +1118,7 @@ Copyright (c) 1989-2001 Brian Berliner, david d `zoo' zuhn, \n\
 
 	    if (!(cm->attr & CVS_CMD_NO_ROOT_NEEDED))
 		{
-			if (! CVSroot)
+			if (!(cm->attr & CVS_CMD_OPTIONAL_ROOT) && !CVSroot)
 			{
 			error (0, 0,
 				"No CVSROOT specified!  Please use the `-d' option");
@@ -1040,7 +1126,7 @@ Copyright (c) 1989-2001 Brian Berliner, david d `zoo' zuhn, \n\
 				"or set the %s environment variable.", CVSROOT_ENV);
 			}
 		    
-			if (! *CVSroot)
+			if (CVSroot && !*CVSroot)
 			{
 			error (0, 0,
 				"CVSROOT is set but empty!  Make sure that the");
@@ -1084,27 +1170,30 @@ Copyright (c) 1989-2001 Brian Berliner, david d `zoo' zuhn, \n\
 	   once).  To get out of the loop, we perform a "break" at the
 	   end of things.  */
 
+	seen_root = 0;
 	while (
 	       server_active || (cm->attr & CVS_CMD_NO_ROOT_NEEDED) ||
-	       walklist (root_directories, set_root_directory, NULL)
+	       walklist (root_directories, set_root_directory, NULL) ||
+	       (!seen_root && (cm->attr & CVS_CMD_OPTIONAL_ROOT) && !current_root) 
 	       )
 	{
 	    /* Fiddling with CVSROOT doesn't make sense if we're running
 	       in server mode, since the client will send the repository
 	       directory after the connection is made. */
 
-	    if (!server_active && !(cm->attr & CVS_CMD_NO_ROOT_NEEDED))
+	    if (!server_active && !(cm->attr & CVS_CMD_NO_ROOT_NEEDED) && !((cm->attr & CVS_CMD_OPTIONAL_ROOT) && !current_root))
 	    {
 		/* Now we're 100% sure that we have a valid CVSROOT
 		   variable.  Parse it to see if we're supposed to do
 		   remote accesses or use a special access method. */
 
+		seen_root = 1;
 		if (current_parsed_root != NULL)
 		    free_cvsroot_t (current_parsed_root);
 		if ((current_parsed_root = parse_cvsroot (current_root)) == NULL)
 		    error (1, 0, "Bad CVSROOT.");
 
-		TRACE(1,"main loop with CVSROOT=%s",current_root);
+		TRACE(1,"main loop with CVSROOT=%s",PATCH_NULL(current_root));
 
 		/*
 		 * Check to see if the repository exists.
@@ -1147,7 +1236,7 @@ Copyright (c) 1989-2001 Brian Berliner, david d `zoo' zuhn, \n\
 	       predetermine whether CVSROOT/config overrides things from
 	       read_cvsrc and other such places or vice versa.  That sort
 	       of thing probably needs more thought.  */
-	    if (!server_active && !(cm->attr & CVS_CMD_NO_ROOT_NEEDED)
+	    if (!server_active && !(cm->attr & CVS_CMD_NO_ROOT_NEEDED) && !((cm->attr & CVS_CMD_OPTIONAL_ROOT) && !current_parsed_root)
 #ifdef CLIENT_SUPPORT
 		&& !current_parsed_root->isremote
 #endif
@@ -1158,7 +1247,35 @@ Copyright (c) 1989-2001 Brian Berliner, david d `zoo' zuhn, \n\
 		   if we didn't, then there would be no way to check in a new
 		   CVSROOT/config file to fix the broken one!  */
 		parse_config (current_parsed_root->directory);
+#ifdef _WIN32
+		if(!force_network_share && w32_is_network_share(current_parsed_root->directory))
+		{
+			error(1,0,"Local access to network share not supported (Use -N to override this error).");
 	    }
+
+		if(!server_active && !lock_server && !local_lockserver() && !w32_is_network_share(current_parsed_root->directory))
+		{
+			HINSTANCE hInst;
+			
+			TRACE(3,"Attempting to start local lockserver");
+			hInst = ShellExecute(NULL,"open","cvslock.exe","-systray",NULL,SW_HIDE);
+			if(hInst)
+			{
+				WaitForInputIdle(hInst,INFINITE);
+				Sleep(200);
+			}
+		}
+#endif
+
+		/* Try to use the lockserver if we can */
+		if(!lock_server && local_lockserver())
+		{
+			lock_server = xstrdup("127.0.0.1:2402");
+			TRACE(3,"Using local lockserver on port 2402");
+		}
+
+		lock_register_client(getcaller(),current_parsed_root->directory);
+		}
 
 #ifdef CLIENT_SUPPORT
 	    /* Need to check for current_parsed_root != NULL here since
@@ -1205,16 +1322,16 @@ Copyright (c) 1989-2001 Brian Berliner, david d `zoo' zuhn, \n\
 		Node *n = findnode_fn (root_directories, current_root);
 		assert (n != NULL);
 		n->data = (void *) 1;
-		current_root = NULL;
 	    }
 	
-#if 0
-	    /* This will not work yet, since it tries to xfree (void *) 1. */
 	    dellist (&root_directories);
-#endif
 
-	    if (server_active || (cm->attr & CVS_CMD_NO_ROOT_NEEDED))
+	    if (server_active || (cm->attr & CVS_CMD_NO_ROOT_NEEDED) || ((cm->attr & CVS_CMD_OPTIONAL_ROOT) && !current_root))
+	    {
+	      current_root = NULL;
 	      break;
+	    }
+	    current_root = NULL;
 	} /* end of loop for cvsroot values */
 
     } /* end of stuff that gets done if the user DOESN'T ask for help */
@@ -1222,15 +1339,26 @@ Copyright (c) 1989-2001 Brian Berliner, david d `zoo' zuhn, \n\
     Lock_Cleanup ();
 
     xfree (program_path);
-    if (CVSroot_cmdline != NULL)
 	xfree (CVSroot_cmdline);
     if (free_CVSroot)
-	xfree (CVSroot);
+		xfree (CVSroot);
     if (free_Editor)
-	xfree (Editor);
+		xfree (Editor);
     if (free_Tmpdir)
-	xfree (Tmpdir);
+		xfree (Tmpdir);
     root_allow_free ();
+
+	free_cvsroot_t (current_parsed_root);
+
+	perms_close();
+	free_modules2();
+	wrap_close();
+	ign_close();
+	freenodecache();
+	freelistcache();
+	close_cvsrc();
+	xfree(lock_server);
+	xfree(CVS_Username);
 
 #ifdef SYSTEM_CLEANUP
     /* Hook for OS-specific behavior, for example socket subsystems on
@@ -1241,9 +1369,7 @@ Copyright (c) 1989-2001 Brian Berliner, david d `zoo' zuhn, \n\
     return err ? EXIT_FAILURE : 0;
 }
 
-char *
-Make_Date (rawdate)
-    char *rawdate;
+char *Make_Date (char *rawdate)
 {
     time_t unixtime;
 	int y,m,d,h,mm,s;
@@ -1308,24 +1434,19 @@ date_to_internet (dest, source)
     tm_to_internet (dest, &date);
 }
 
-void
-date_to_tm (dest, source)
-    struct tm *dest;
-    const char *source;
+int date_to_tm (struct tm *dest, const char *source)
 {
     if (sscanf (source, SDATEFORM,
 		&dest->tm_year, &dest->tm_mon, &dest->tm_mday,
 		&dest->tm_hour, &dest->tm_min, &dest->tm_sec)
 	    != 6)
-	/* Is there a better way to handle errors here?  I made this
-	   non-fatal in case we are called from the code which can't
-	   deal with fatal errors.  */
-	error (0, 0, "internal error: bad date %s", source);
+	return 1;
 
     if (dest->tm_year > 100)
 	dest->tm_year -= 1900;
 
     dest->tm_mon -= 1;
+    return 0;
 }
 
 /* Convert a date to RFC822/1123 format.  This is used in contexts like

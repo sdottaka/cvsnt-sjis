@@ -263,11 +263,7 @@ void cvsguiglue_flushconsole(int closeit)
 	\return The exit code
 	\note Detects whether the cvsgui protocol should be activated
 */
-#ifdef _UNICODE
-int real_main(int argc, char* argv[])
-#else
 int main(int argc, char* argv[])
-#endif
 {
 	int res;
 	char** tmparg = 0L;
